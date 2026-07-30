@@ -1,0 +1,40 @@
+/* Status bar readouts. */
+
+.pk-statusbar .pk-sb-zoom {
+  width: 50px;
+  height: 18px;
+  text-align: right;
+  padding: 0 4px;
+  font-size: 11px;
+}
+.pk-statusbar .pk-unit { margin-left: -6px; }
+
+.pk-statusbar .pk-sb-zoomsel,
+.pk-statusbar .pk-sb-mode {
+  height: 18px;
+  font-size: 11px;
+  padding: 0 2px 0 4px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-dim);
+  max-width: 140px;
+}
+.pk-statusbar .pk-sb-zoomsel:hover,
+.pk-statusbar .pk-sb-mode:hover { border-color: #4a4a4a; color: var(--fg); }
+
+.pk-sb-dims,
+.pk-sb-status,
+.pk-sb-tool,
+.pk-sb-mem { flex: 0 0 auto; }
+
+.pk-sb-status { color: var(--fg); }
+.pk-sb-tool { color: var(--fg); }
+
+.pk-sb-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: right;
+  color: #7d7d7d;
+}
+
+.pk-statusbar .pk-vsep { height: 13px; }

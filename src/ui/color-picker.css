@@ -1,0 +1,58 @@
+.pk-colorpicker .pk-dialog-body { padding: 12px; }
+
+.pkcp { display: flex; flex-direction: column; gap: 10px; }
+.pkcp-top { display: flex; gap: 8px; align-items: flex-start; }
+
+.pkcp-sv {
+  width: 256px; height: 256px; flex: 0 0 auto;
+  border: 1px solid var(--line-soft); border-radius: 2px;
+  cursor: crosshair; touch-action: none;
+}
+.pkcp-strips { display: flex; gap: 6px; flex: 0 0 auto; }
+.pkcp-strip {
+  width: 18px; height: 256px;
+  border: 1px solid var(--line-soft); border-radius: 2px;
+  cursor: ns-resize; touch-action: none;
+}
+
+.pkcp-side { flex: 1 1 auto; display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+
+.pkcp-compare {
+  display: flex; flex-direction: column;
+  height: 52px; border: 1px solid var(--line-soft); border-radius: 2px; overflow: hidden;
+}
+.pkcp-half { flex: 1 1 0; border: none; padding: 0; display: block; width: 100%; }
+.pkcp-half:not(.is-new) { cursor: pointer; }
+.pkcp-half.is-new { border-bottom: 1px solid rgba(0, 0, 0, .35); }
+
+.pkcp-group { display: flex; flex-direction: column; gap: 4px; }
+.pkcp-group.pkcp-wide { flex-direction: row; gap: 8px; }
+.pkcp-group.pkcp-wide .pkcp-field { flex: 1 1 0; }
+
+.pkcp-field { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--fg-dim); }
+.pkcp-field > span { width: 12px; flex: 0 0 auto; color: var(--fg); text-align: right; }
+.pkcp-field > em { font-style: normal; width: 10px; flex: 0 0 auto; }
+.pkcp-num { flex: 1 1 auto; min-width: 0; text-align: right; }
+.pkcp-hexrow > span { font-family: var(--mono); }
+.pkcp-hex { flex: 1 1 auto; min-width: 0; font-family: var(--mono); text-transform: lowercase; }
+
+.pkcp-bottom { display: flex; flex-direction: column; gap: 8px; }
+.pkcp-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+.pkcp-recent { display: flex; align-items: center; gap: 3px; flex: 1 1 auto; flex-wrap: wrap; }
+.pkcp-recent-label { font-size: 11px; color: var(--fg-dim); margin-right: 3px; }
+.pkcp-recent-empty { font-size: 11px; color: var(--fg-dim); opacity: .7; }
+.pkcp-chip {
+  width: 16px; height: 16px; padding: 0; flex: 0 0 auto;
+  border: 1px solid var(--line-soft); border-radius: 2px; cursor: pointer;
+}
+.pkcp-chip:hover { border-color: var(--fg-bright); }
+
+/* --- the reusable swatch button ---------------------------------- */
+
+.pk-color-btn {
+  position: relative; width: 26px; height: 26px; padding: 0; flex: 0 0 auto;
+  border: 1px solid var(--line-soft); border-radius: 3px; cursor: pointer;
+}
+.pk-color-btn:hover { border-color: var(--fg-bright); }
+.pk-color-btn-fill { position: absolute; inset: 0; border-radius: 2px; }

@@ -1,0 +1,316 @@
+/* ==========================================================================
+   Shared styling for the Pikado document / export / preference dialogs.
+   Imported by every module in src/ui/dialogs/.
+   ========================================================================== */
+
+.pkd-cols {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.pkd-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pkd-col.grow { flex: 1 1 auto; }
+
+.pkd-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.pkd-row .pk-field { flex: 1 1 0; min-width: 0; }
+.pkd-row .pk-field.fixed { flex: 0 0 92px; }
+
+.pkd-section {
+  color: var(--fg-bright);
+  font-weight: 600;
+  margin: 2px 0 -2px;
+}
+
+.pkd-note {
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+
+.pkd-readout {
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  color: var(--fg-dim);
+  line-height: 1.55;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.pkd-readout b { color: var(--fg-bright); font-weight: 600; }
+
+/* ---------------------------------------------------------------- presets */
+
+.pkd-presets {
+  flex: 0 0 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-right: 1px solid var(--line-soft);
+  padding-right: 12px;
+}
+
+.pkd-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pkd-cat {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--fg-dim);
+  padding: 3px 9px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.pkd-cat:hover { background: var(--bg-3); color: var(--fg); }
+.pkd-cat.active { background: var(--accent-soft); border-color: var(--accent); color: var(--fg-bright); }
+
+.pkd-preset-list {
+  max-height: 268px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pkd-preset {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 5px 7px;
+  cursor: pointer;
+  color: var(--fg);
+}
+
+.pkd-preset:hover { background: var(--bg-3); }
+.pkd-preset.active { background: var(--accent-soft); border-color: var(--accent); }
+.pkd-preset small { color: var(--fg-dim); font-size: 10.5px; }
+
+/* ------------------------------------------------------------- orientation */
+
+.pkd-seg {
+  display: inline-flex;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.pkd-seg button {
+  background: var(--bg-2);
+  border: none;
+  color: var(--fg-dim);
+  padding: 4px 10px;
+  cursor: pointer;
+  height: var(--row-h);
+}
+
+.pkd-seg button + button { border-left: 1px solid var(--line-soft); }
+.pkd-seg button:hover { background: var(--bg-3); color: var(--fg); }
+.pkd-seg button.active { background: var(--accent); color: #fff; }
+
+/* ----------------------------------------------------------- chain / links */
+
+.pkd-chain {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 46px;
+  margin-bottom: 2px;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  position: relative;
+  padding: 0;
+}
+
+.pkd-chain::before,
+.pkd-chain::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  right: 9px;
+  height: 9px;
+  border: 1px solid currentColor;
+}
+
+.pkd-chain::before { top: 6px; border-bottom: none; border-radius: 3px 3px 0 0; }
+.pkd-chain::after { bottom: 6px; border-top: none; border-radius: 0 0 3px 3px; }
+.pkd-chain.on { color: var(--accent); }
+.pkd-chain.off::before { top: 3px; }
+.pkd-chain.off::after { bottom: 3px; }
+.pkd-chain:hover { color: var(--fg-bright); }
+
+/* ------------------------------------------------------------ anchor grid */
+
+.pkd-anchor {
+  display: grid;
+  grid-template-columns: repeat(3, 26px);
+  grid-template-rows: repeat(3, 26px);
+  gap: 2px;
+  width: max-content;
+}
+
+.pkd-anchor button {
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--fg-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.pkd-anchor button:hover { background: var(--bg-3); }
+.pkd-anchor button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---------------------------------------------------------------- preview */
+
+.pkd-preview {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background-color: #6a6a6a;
+  background-image:
+    linear-gradient(45deg, #9a9a9a 25%, transparent 25%),
+    linear-gradient(-45deg, #9a9a9a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #9a9a9a 75%),
+    linear-gradient(-45deg, transparent 75%, #9a9a9a 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  min-height: 120px;
+}
+
+.pkd-preview canvas { display: block; max-width: 100%; max-height: 100%; }
+
+/* ------------------------------------------------------------ preferences */
+
+.pkd-prefs { display: flex; gap: 14px; align-items: stretch; min-height: 330px; }
+
+.pkd-prefs-nav {
+  flex: 0 0 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-right: 1px solid var(--line-soft);
+  padding-right: 10px;
+}
+
+.pkd-prefs-nav button {
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--fg);
+  padding: 6px 9px;
+  cursor: pointer;
+}
+
+.pkd-prefs-nav button:hover { background: var(--bg-3); }
+.pkd-prefs-nav button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--fg-bright); }
+
+.pkd-prefs-body { flex: 1 1 auto; min-width: 0; overflow: auto; max-height: 62vh; }
+
+/* -------------------------------------------------------------- shortcuts */
+
+.pkd-keys-search { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.pkd-keys-search .pk-input { flex: 1 1 auto; }
+
+.pkd-keys-scroll { max-height: 56vh; overflow: auto; border: 1px solid var(--line-soft); border-radius: var(--radius); }
+
+.pkd-keys-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+
+.pkd-keys-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-3);
+  text-align: left;
+  padding: 6px 9px;
+  color: var(--fg-dim);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line-soft);
+  z-index: 1;
+}
+
+.pkd-keys-table td { padding: 4px 9px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.pkd-keys-table tr:hover td { background: var(--bg-2); }
+.pkd-keys-group td { background: var(--bg-1); color: var(--fg-bright); font-weight: 600; }
+.pkd-keys-table tr:hover .pkd-keys-group td { background: var(--bg-1); }
+
+.pkd-key-btn {
+  min-width: 96px;
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  color: var(--fg);
+  padding: 2px 7px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.pkd-key-btn:hover { border-color: var(--accent); }
+.pkd-key-btn.recording { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pkd-key-btn.custom { color: var(--accent); border-color: var(--accent); }
+.pkd-key-clear { visibility: hidden; }
+.pkd-keys-table tr:hover .pkd-key-clear { visibility: visible; }
+
+/* ----------------------------------------------------------- export sizes */
+
+.pkd-size-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.pkd-size-btns button {
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  color: var(--fg-dim);
+  padding: 3px 10px;
+  cursor: pointer;
+  height: var(--row-h);
+}
+
+.pkd-size-btns button:hover { background: var(--bg-3); color: var(--fg); }
+.pkd-size-btns button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ----------------------------------------------------------------- about */
+
+.pkd-about { font-size: 12px; line-height: 1.55; }
+.pkd-about p { margin: 0 0 4px; color: var(--fg); }
+
+.pkd-about ul {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+  color: var(--fg-dim);
+  max-height: 190px;
+  overflow: auto;
+}
+
+.pkd-about li { margin: 1px 0; }

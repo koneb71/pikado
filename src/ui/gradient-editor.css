@@ -1,0 +1,139 @@
+/* Gradient stop editor (src/ui/gradient-editor.js) */
+
+.pk-grad {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.pk-grad-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.pk-grad-preset {
+  width: 30px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  cursor: pointer;
+  background-color: transparent;
+  background-size: 100% 100%;
+}
+
+.pk-grad-preset:hover { border-color: var(--accent); }
+
+.pk-grad-track {
+  position: relative;
+  width: 100%;
+  padding: 13px 0;
+}
+
+.pk-grad-bar {
+  display: block;
+  width: 100%;
+  height: 26px;
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  cursor: copy;
+}
+
+.pk-grad-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 13px;
+}
+
+.pk-grad-row.opacity { top: 0; cursor: copy; }
+.pk-grad-row.colors { bottom: 0; cursor: copy; }
+
+.pk-grad-stop {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  margin-left: -6.5px;
+  cursor: ew-resize;
+}
+
+.pk-grad-stop.opacity { top: 0; }
+.pk-grad-stop.color { bottom: 0; }
+
+.pk-grad-chip {
+  position: absolute;
+  left: 1px;
+  width: 11px;
+  height: 8px;
+  border: 1px solid #0d0d0d;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+  box-sizing: border-box;
+}
+
+.pk-grad-stop.opacity .pk-grad-chip { top: 0; }
+.pk-grad-stop.color .pk-grad-chip { bottom: 0; }
+
+/* Little pointer triangle aimed at the bar. */
+.pk-grad-stop::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  width: 0;
+  height: 0;
+  border-left: 3.5px solid transparent;
+  border-right: 3.5px solid transparent;
+}
+
+.pk-grad-stop.opacity::after {
+  bottom: 0;
+  border-top: 5px solid #d8d8d8;
+}
+
+.pk-grad-stop.color::after {
+  top: 0;
+  border-bottom: 5px solid #d8d8d8;
+}
+
+.pk-grad-stop.active .pk-grad-chip {
+  box-shadow: 0 0 0 1.5px var(--accent-hi);
+}
+
+.pk-grad-stop.active::after {
+  border-top-color: var(--accent-hi);
+  border-bottom-color: var(--accent-hi);
+}
+
+.pk-grad-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pk-grad-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pk-grad-lbl {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.pk-grad-edit .pk-num { width: 52px; }
+.pk-grad-edit .pk-spacer { flex: 1 1 auto; }
+
+.pk-grad-swatch {
+  width: 30px;
+  height: 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.pk-grad-edit.is-opacity .only-color { display: none; }
+.pk-grad-edit:not(.is-opacity) .only-opacity { display: none; }

@@ -1,0 +1,50 @@
+/* Gradient tool — options-bar swatch and the preset picker dialog. */
+
+.pk-grad-swatch {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  background: var(--bg-0);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.pk-grad-swatch:hover { border-color: var(--accent); }
+.pk-grad-swatch canvas { display: block; border-radius: 2px; }
+
+.pk-pattern-select { min-width: 120px; }
+
+.pk-grad-dialog .pk-dialog-body { max-height: 60vh; overflow: auto; }
+
+.pk-grad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.pk-grad-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 5px;
+  background: var(--bg-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--fg-dim);
+  cursor: pointer;
+  text-align: left;
+}
+
+.pk-grad-cell:hover { background: var(--bg-3); color: var(--fg-bright); }
+.pk-grad-cell.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--fg-bright); }
+.pk-grad-cell canvas { display: block; width: 100%; height: 26px; border-radius: 2px; }
+
+.pk-grad-name {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

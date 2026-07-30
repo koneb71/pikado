@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Pikado — Image Editor</title>
+    <meta name="description" content="Pikado — a browser-based raster and vector image editor." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231473e6'/%3E%3Cpath d='M9 23V9h6.4a4.6 4.6 0 0 1 0 9.2H12V23H9z' fill='%23fff'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <div id="app" class="pk-app">
+      <header id="menubar" class="pk-menubar"></header>
+      <div id="optionsbar" class="pk-optionsbar"></div>
+      <div id="main" class="pk-main">
+        <aside id="toolbar" class="pk-toolbar"></aside>
+        <section id="workspace" class="pk-workspace">
+          <div id="tabbar" class="pk-tabbar"></div>
+          <div id="canvas-area" class="pk-canvas-area">
+            <canvas id="view" class="pk-view"></canvas>
+            <div id="canvas-overlay" class="pk-canvas-overlay"></div>
+          </div>
+          <div id="statusbar" class="pk-statusbar"></div>
+        </section>
+        <aside id="panels" class="pk-panels"></aside>
+      </div>
+      <div id="toasts" class="pk-toasts"></div>
+      <div id="busy" class="pk-busy" hidden><div class="pk-busy-box"><div class="pk-spinner"></div><span id="busy-label"></span></div></div>
+    </div>
+    <input id="file-input" type="file" multiple accept="image/*,.psd,.psb,.svg,.pkd" hidden />
+    <script type="module" src="/src/main.js"></script>
+    <noscript>Pikado needs JavaScript enabled.</noscript>
+  </body>
+</html>

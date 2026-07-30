@@ -1,0 +1,196 @@
+/* ==========================================================================
+   Layer Style dialog (src/effects/styles-dialog.js)
+   Two columns: the effect list on the left, the selected effect's form on
+   the right. The dialog body itself never scrolls — each column does.
+   ========================================================================== */
+
+.pk-fx-dialog .pk-dialog-body {
+  padding: 0;
+  overflow: hidden;
+}
+
+.pk-fx-cols {
+  display: flex;
+  align-items: stretch;
+  height: min(62vh, 520px);
+  min-height: 320px;
+}
+
+/* ------------------------------------------------------------ left list */
+
+.pk-fx-list {
+  flex: 0 0 206px;
+  min-width: 0;
+  padding: 6px 0;
+  background: var(--bg-1);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+
+.pk-fx-listsep {
+  margin: 6px 10px;
+}
+
+.pk-fx-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 10px;
+  cursor: pointer;
+  color: var(--fg-dim);
+}
+.pk-fx-row:hover { background: var(--bg-2); }
+.pk-fx-row.active { background: var(--accent-soft); }
+.pk-fx-row.active .pk-fx-name { color: var(--fg-bright); }
+.pk-fx-row.on .pk-fx-name { color: var(--fg); font-weight: 600; }
+
+.pk-fx-row .pk-check { flex: 0 0 auto; }
+.pk-fx-nocheck { flex: 0 0 13px; }
+.pk-fx-name { flex: 1 1 auto; min-width: 0; }
+
+/* ------------------------------------------------------------ right pane */
+
+.pk-fx-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 12px 16px 20px;
+  overflow-y: auto;
+}
+
+.pk-fx-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-bright);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.pk-fx-reset {
+  height: 20px;
+  padding: 0 9px;
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
+.pk-fx-enable {
+  margin-bottom: 12px;
+  color: var(--fg-bright);
+}
+
+.pk-fx-pane .pk-form-label {
+  margin-top: 4px;
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* Photoshop puts the caption to the left of the control rather than above it;
+   the pane is wide enough that the extra rows are worth the narrower field. */
+
+.pk-fx-pane .pk-field {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 10px;
+}
+.pk-fx-pane .pk-field > label {
+  text-align: right;
+}
+.pk-fx-pane .pk-field > .pk-hint {
+  grid-column: 2;
+}
+
+/* Checkbox rows have no caption — indent them onto the control column. */
+.pk-fx-pane .pk-field.inline {
+  display: flex;
+  align-items: center;
+  padding-left: 126px;
+}
+
+.pk-fx-pane .pk-field.pk-custom > label {
+  align-self: start;
+  margin-top: 3px;
+}
+.pk-fx-pane .pk-custom-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+}
+
+/* --------------------------------------------------------- gradient stops */
+
+.pk-fx-ramp {
+  display: block;
+  width: 100%;
+  height: 18px;
+  border: 1px solid #4a4a4a;
+  border-radius: 3px;
+  background-image:
+    linear-gradient(45deg, #7a7a7a 25%, transparent 25%),
+    linear-gradient(-45deg, #7a7a7a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #7a7a7a 75%),
+    linear-gradient(-45deg, transparent 75%, #7a7a7a 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+  background-color: #a8a8a8;
+}
+
+.pk-fx-stops {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 7px;
+}
+
+.pk-fx-stop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pk-fx-stop-color {
+  width: 44px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid #555;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+}
+
+.pk-fx-stop-del {
+  width: 20px;
+  height: 20px;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.pk-fx-add-stop {
+  height: 20px;
+  margin-top: 7px;
+  padding: 0 9px;
+  font-size: 11px;
+  align-self: flex-start;
+}
+
+/* ------------------------------------------------------------- narrow */
+
+@media (max-width: 760px) {
+  .pk-fx-cols {
+    flex-direction: column;
+    height: min(70vh, 560px);
+  }
+  .pk-fx-list {
+    flex: 0 0 132px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+}

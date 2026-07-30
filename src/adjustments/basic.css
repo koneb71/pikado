@@ -1,0 +1,39 @@
+/* Widgets used by the tone/colour adjustments (src/adjustments/basic.js) */
+
+.pk-preset-select { width: 100%; }
+
+.pk-levels {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+
+.pk-levels-head,
+.pk-levels-nums {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.pk-levels-head .pk-spacer,
+.pk-levels-nums .pk-spacer { flex: 1 1 auto; }
+
+.pk-levels-lbl {
+  color: var(--fg-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pk-levels-chan { flex: 1 1 auto; min-width: 0; }
+
+.pk-levels-head .pk-btn { padding: 2px 8px; }
+
+.pk-levels-canvas {
+  display: block;
+  touch-action: none;
+  cursor: ew-resize;
+}
+
+.pk-levels-nums .pk-num { width: 52px; }

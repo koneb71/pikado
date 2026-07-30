@@ -1,0 +1,25 @@
+/* Smart Object affordances shared by the Layers and Properties panels. */
+
+.pk-lay-thumbbox { position: relative; }
+
+.pk-lay-smartbadge {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 13px;
+  height: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-1, #2a2a2a);
+  border: 1px solid #101010;
+  color: var(--fg-bright, #eee);
+  pointer-events: none;
+}
+.pk-lay-smartbadge[hidden] { display: none; }
+.pk-lay-smartbadge svg { width: 9px; height: 9px; display: block; }
+
+.pk-lay-fxrow.smart .pk-lay-fxname { font-style: italic; }
+.pk-lay-fxrow.smart.disabled .pk-lay-fxname { text-decoration: line-through; opacity: .6; }
+
+.pk-prop-smart-grid { font-variant-numeric: tabular-nums; }

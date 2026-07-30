@@ -1,0 +1,27 @@
+/* 5x5 kernel grid (Filter > Other > Custom) */
+
+.pk-matrix {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.pk-matrix-cell {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 2px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+
+.pk-matrix-cell::-webkit-outer-spin-button,
+.pk-matrix-cell::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pk-matrix-cell.center {
+  border-color: var(--accent);
+  color: var(--fg-bright);
+}

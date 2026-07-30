@@ -1,0 +1,30 @@
+/* Workspace chrome states driven by keyboard shortcuts (Tab / Shift+Tab / F). */
+
+.pk-hide-panels #toolbar,
+.pk-hide-panels #panels,
+.pk-hide-panels #optionsbar {
+  display: none;
+}
+
+.pk-hide-right #panels {
+  display: none;
+}
+
+/* Full screen with menu bar: keep the menu + options bar, drop the rest. */
+.pk-screen-full-menu #tabbar,
+.pk-screen-full-menu #statusbar {
+  display: none;
+}
+
+/* Full screen: canvas only. */
+.pk-screen-full #menubar,
+.pk-screen-full #optionsbar,
+.pk-screen-full #tabbar,
+.pk-screen-full #statusbar,
+.pk-screen-full #toolbar,
+.pk-screen-full #panels {
+  display: none;
+}
+.pk-screen-full #canvas-area {
+  background: #000;
+}

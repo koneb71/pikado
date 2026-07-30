@@ -1,0 +1,19 @@
+/* Widgets used by the advanced adjustments (src/adjustments/advanced.js) */
+
+.pk-thr-canvas {
+  display: block;
+  width: 100%;
+  max-width: 272px;
+  margin: 0 auto;
+  touch-action: none;
+  cursor: ew-resize;
+}
+
+.pk-rc-thumb {
+  display: block;
+  margin: 0 auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  cursor: crosshair;
+  background: var(--bg-0);
+}

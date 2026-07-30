@@ -1,0 +1,29 @@
+.pkch-body { display: flex; flex-direction: column; min-height: 0; }
+
+.pkch-list { flex: 1 1 auto; min-height: 0; padding: 2px 0; }
+.pkch-row {
+  display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 6px;
+  cursor: pointer; user-select: none;
+}
+.pkch-row:hover { background: var(--bg-3); }
+.pkch-row.is-selected { background: var(--accent-soft); }
+
+.pkch-eye { width: 20px; flex: 0 0 auto; display: flex; justify-content: center; }
+.pkch-eyebtn { width: 20px; height: 20px; }
+.pkch-eyebtn svg { width: 14px; height: 14px; }
+
+.pkch-thumb {
+  width: 38px; height: 28px; flex: 0 0 auto;
+  border: 1px solid var(--line-soft); border-radius: 2px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.pkch-thumb canvas { display: block; width: 38px; height: 28px; }
+
+.pkch-name { flex: 1 1 auto; min-width: 0; font-size: 12px; }
+
+.pkch-empty { color: var(--fg-dim); font-size: 11px; padding: 10px 8px; }
+
+.pkch-foot {
+  display: flex; align-items: center; gap: 2px; padding: 4px 6px;
+  border-top: 1px solid var(--line); flex: 0 0 auto;
+}

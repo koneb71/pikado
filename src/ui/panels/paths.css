@@ -1,0 +1,31 @@
+.pkp-body { display: flex; flex-direction: column; min-height: 0; }
+
+.pkp-list { flex: 1 1 auto; min-height: 60px; padding: 2px 0; }
+.pkp-row {
+  display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 8px;
+  cursor: pointer; user-select: none;
+}
+.pkp-row:hover { background: var(--bg-3); }
+.pkp-row.is-selected { background: var(--accent-soft); }
+.pkp-row.is-ghost { opacity: .5; cursor: default; }
+.pkp-row.is-ghost:hover { background: none; }
+
+.pkp-thumb {
+  width: 38px; height: 28px; flex: 0 0 auto; overflow: hidden;
+  border: 1px solid var(--line-soft); border-radius: 2px;
+}
+.pkp-thumb canvas { display: block; width: 38px; height: 28px; }
+
+.pkp-name { flex: 1 1 auto; min-width: 0; font-size: 12px; }
+.pkp-tag {
+  flex: 0 0 auto; font-size: 10px; color: var(--fg-dim);
+  border: 1px solid var(--line-soft); border-radius: 8px; padding: 0 6px;
+}
+
+.pkp-blank { min-height: 18px; flex: 1 1 auto; }
+.pkp-empty { color: var(--fg-dim); font-size: 11px; padding: 10px 8px; }
+
+.pkp-foot {
+  display: flex; align-items: center; gap: 2px; padding: 4px 6px;
+  border-top: 1px solid var(--line); flex: 0 0 auto;
+}

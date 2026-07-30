@@ -1,0 +1,52 @@
+.pkc-body { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+
+.pkc-head { display: flex; gap: 10px; align-items: flex-start; }
+.pkc-headcol { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+
+.pkc-chips { display: flex; gap: 4px; flex: 0 0 auto; }
+.pkc-stack { position: relative; width: 44px; height: 44px; }
+.pkc-chip {
+  position: absolute; width: 28px; height: 28px; padding: 0;
+  border: 1px solid var(--line-soft); border-radius: 2px; cursor: pointer;
+}
+.pkc-chip-fill { position: absolute; inset: 0; }
+.pkc-fg { left: 0; top: 0; z-index: 2; }
+.pkc-bg { right: 0; bottom: 0; z-index: 1; }
+.pkc-chip.is-target { border-color: var(--fg-bright); box-shadow: 0 0 0 1px var(--accent); z-index: 3; }
+
+.pkc-chip-tools { display: flex; flex-direction: column; justify-content: space-between; }
+.pkc-mini { width: 20px; height: 20px; }
+.pkc-mini svg { width: 12px; height: 12px; }
+.pkc-reset {
+  position: relative; width: 18px; height: 18px; padding: 0;
+  background: none; border: none; cursor: pointer;
+}
+.pkc-reset-b, .pkc-reset-w {
+  position: absolute; width: 11px; height: 11px; border: 1px solid var(--line-soft);
+}
+.pkc-reset-b { left: 0; top: 0; background: #000; z-index: 2; }
+.pkc-reset-w { right: 0; bottom: 0; background: #fff; z-index: 1; }
+
+.pkc-mode { width: 100%; }
+.pkc-hexrow { display: flex; align-items: center; gap: 4px; }
+.pkc-hexrow > span { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
+.pkc-hex { flex: 1 1 auto; min-width: 0; font-family: var(--mono); }
+
+.pkc-sliders { display: flex; flex-direction: column; gap: 6px; }
+.pkc-slider { display: flex; align-items: center; gap: 6px; }
+.pkc-sname { width: 12px; flex: 0 0 auto; font-size: 11px; color: var(--fg-dim); text-align: center; }
+.pkc-track {
+  position: relative; flex: 1 1 auto; height: 12px; min-width: 40px;
+  border: 1px solid var(--line-soft); border-radius: 2px; cursor: pointer; touch-action: none;
+}
+.pkc-thumb {
+  position: absolute; top: -3px; width: 9px; height: 16px; margin-left: -4.5px;
+  border: 1px solid #101010; border-radius: 2px; background: #e2e2e2;
+  pointer-events: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, .25) inset;
+}
+.pkc-num { width: 46px; flex: 0 0 auto; text-align: right; }
+
+.pkc-ramp {
+  display: block; width: 100%; height: 30px; cursor: crosshair; touch-action: none;
+  border: 1px solid var(--line-soft); border-radius: 2px;
+}

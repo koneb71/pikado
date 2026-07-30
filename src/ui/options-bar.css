@@ -1,0 +1,86 @@
+/* Tool options bar — one horizontal strip, never stacked. */
+
+.pk-ob-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  color: var(--fg-bright);
+  padding-right: 2px;
+}
+.pk-ob-tool-ico { display: flex; color: var(--fg); }
+.pk-ob-tool-ico svg { stroke: currentColor; fill: none; }
+.pk-ob-tool-name { white-space: nowrap; font-weight: 500; }
+
+.pk-ob-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.pk-ob-label {
+  color: var(--fg-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pk-scrub {
+  cursor: ew-resize;
+  padding: 2px 1px;
+  border-bottom: 1px dashed rgba(255, 255, 255, .22);
+  touch-action: none;
+  user-select: none;
+}
+.pk-scrub:hover { color: var(--fg-bright); border-bottom-color: var(--accent-hi); }
+.pk-scrub.dragging { color: #fff; border-bottom-color: var(--accent-hi); }
+
+.pk-optionsbar input[type="number"].pk-ob-num { width: 54px; height: 21px; text-align: right; background: var(--bg-0); border: 1px solid #4a4a4a; border-radius: 3px; padding: 0 4px; }
+.pk-optionsbar input[type="number"].pk-ob-num:focus { border-color: var(--accent); outline: none; }
+.pk-ob-select { height: 22px; max-width: 150px; }
+.pk-ob-text { height: 22px; width: 120px; }
+.pk-ob-btn { height: 22px; padding: 0 9px; }
+.pk-ob-static { color: var(--fg-dim); white-space: nowrap; }
+.pk-ob-custom { display: flex; align-items: center; gap: 5px; }
+
+.pk-ob-color { position: relative; width: 34px; height: 20px; overflow: hidden; }
+.pk-ob-color-fill { position: absolute; inset: 0; display: block; }
+
+.pk-optionsbar .pk-vsep { margin: 0 3px; }
+
+/* segmented radio */
+.pk-seg { display: flex; align-items: stretch; border: 1px solid #4a4a4a; border-radius: 3px; overflow: hidden; }
+.pk-seg-btn {
+  height: 20px;
+  padding: 0 8px;
+  background: var(--bg-0);
+  border: none;
+  border-right: 1px solid #4a4a4a;
+  color: var(--fg-dim);
+  cursor: default;
+  white-space: nowrap;
+}
+.pk-seg-btn:last-child { border-right: none; }
+.pk-seg-btn:hover { background: var(--bg-3); color: var(--fg); }
+.pk-seg-btn.active { background: var(--accent); color: #fff; }
+
+/* popover slider */
+.pk-ob-popover {
+  position: fixed;
+  z-index: 9200;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 210px;
+  padding: 9px 11px;
+  background: var(--bg-2);
+  border: 1px solid #4c4c4c;
+  border-radius: 5px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .55);
+}
+.pk-ob-popover-title { color: var(--fg-dim); font-size: 11px; }
+
+.pk-ob-commit { color: var(--ok); }
+.pk-ob-cancel { color: var(--danger); }
+.pk-ob-commit:hover, .pk-ob-cancel:hover { color: #fff; }

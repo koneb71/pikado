@@ -1,0 +1,11 @@
+.pkn-body { display: flex; flex-direction: column; gap: 6px; padding: 6px; }
+
+.pkn-view {
+  display: block; width: 100%; height: 132px; cursor: move; touch-action: none;
+  background: var(--bg-1); border: 1px solid var(--line); border-radius: 2px;
+}
+
+.pkn-controls { display: flex; align-items: center; gap: 4px; }
+.pkn-pctwrap { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.pkn-pct { width: 56px; text-align: right; }
+.pkn-range { flex: 1 1 auto; min-width: 40px; }

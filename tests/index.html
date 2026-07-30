@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Pikado — test suite</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; padding: 20px 24px 60px;
+        background: #1b1b1b; color: #d6d6d6;
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; color: #f2f2f2; }
+      .sub { color: #9a9a9a; margin-bottom: 18px; max-width: 90ch; }
+      #summary {
+        position: sticky; top: 0; z-index: 2; margin: -20px -24px 18px; padding: 14px 24px;
+        background: #232323; border-bottom: 1px solid #171717;
+        display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+      }
+      .tag { font-variant-numeric: tabular-nums; font-weight: 600; }
+      .pass { color: #4fb96a; } .fail { color: #e04545; } .err { color: #e0a545; }
+      .dim { color: #9a9a9a; font-weight: 400; }
+      .suite { border: 1px solid #333; border-radius: 5px; margin-bottom: 8px; overflow: hidden; }
+      .suite > summary {
+        padding: 8px 12px; cursor: pointer; background: #262626;
+        display: flex; gap: 10px; align-items: baseline;
+      }
+      .suite > summary::-webkit-details-marker { display: none; }
+      .suite .name { font-weight: 600; flex: 1; }
+      .suite.ok > summary { border-left: 3px solid #4fb96a; }
+      .suite.bad > summary { border-left: 3px solid #e04545; background: #2e2323; }
+      .rows { padding: 4px 0; }
+      .row { padding: 3px 12px 3px 30px; position: relative; }
+      .row::before { position: absolute; left: 12px; }
+      .row.p::before { content: "\2713"; color: #4fb96a; }
+      .row.f::before { content: "\2717"; color: #e04545; }
+      .row.f { background: rgba(224,69,69,.08); }
+      .detail { color: #e08585; font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding-left: 30px; }
+      pre.stack {
+        margin: 6px 12px; padding: 8px 10px; background: #2a2020; border-radius: 4px;
+        color: #e08585; font-size: 12px; overflow-x: auto; white-space: pre-wrap;
+      }
+      button {
+        background: #1473e6; border: none; color: #fff; padding: 6px 14px;
+        border-radius: 4px; cursor: pointer; font: inherit; font-weight: 600;
+      }
+      code { background: #2b2b2b; padding: 1px 5px; border-radius: 3px; }
+
+      /* The real app shell. main.js boots into it, so the suites exercise the
+         genuine boot path (tool init, panels, menus) rather than a stub. It is
+         parked off-screen at a real size so layout and ResizeObserver behave. */
+      #app-host {
+        position: absolute; left: -20000px; top: 0;
+        width: 1280px; height: 860px; overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="summary"><span class="dim">Booting the app…</span></div>
+    <h1>Pikado test suite</h1>
+    <p class="sub">
+      Runs against the real modules in a real browser — Canvas2D and WebGL have to be genuine for these to
+      mean anything. The full app boots off-screen first, so tool registration, panels and menus are exercised too.
+      Automation can read <code>window.__pikadoTests</code> once <code>window.__pikadoTestsDone</code> is true.
+    </p>
+    <div id="out"></div>
+
+    <div id="app-host">
+      <div id="app" class="pk-app">
+        <header id="menubar" class="pk-menubar"></header>
+        <div id="optionsbar" class="pk-optionsbar"></div>
+        <div id="main" class="pk-main">
+          <aside id="toolbar" class="pk-toolbar"></aside>
+          <section id="workspace" class="pk-workspace">
+            <div id="tabbar" class="pk-tabbar"></div>
+            <div id="canvas-area" class="pk-canvas-area">
+              <canvas id="view" class="pk-view"></canvas>
+              <div id="canvas-overlay" class="pk-canvas-overlay"></div>
+            </div>
+            <div id="statusbar" class="pk-statusbar"></div>
+          </section>
+          <aside id="panels" class="pk-panels"></aside>
+        </div>
+        <div id="toasts" class="pk-toasts"></div>
+        <div id="busy" class="pk-busy" hidden>
+          <div class="pk-busy-box"><div class="pk-spinner"></div><span id="busy-label"></span></div>
+        </div>
+      </div>
+      <input id="file-input" type="file" multiple hidden />
+    </div>
+
+    <script type="module" src="./run.js"></script>
+  </body>
+</html>

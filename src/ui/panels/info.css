@@ -1,0 +1,23 @@
+.pki-body { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+
+.pki-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.pki-block { display: flex; flex-direction: column; gap: 1px; }
+
+.pki-row { display: flex; align-items: baseline; gap: 6px; font-size: 11px; line-height: 1.5; }
+.pki-k { width: 22px; flex: 0 0 auto; color: var(--fg-dim); text-align: right; }
+.pki-v { font-family: var(--mono); color: var(--fg-bright); }
+.pki-sub { font-size: 10px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 2px; }
+
+.pki-doc { font-size: 11px; color: var(--fg-dim); border-top: 1px solid var(--line-soft); padding-top: 6px; }
+
+.pki-samplers { display: flex; flex-direction: column; gap: 3px; }
+.pki-sampler { display: flex; align-items: center; gap: 6px; font-size: 11px; font-family: var(--mono); color: var(--fg); }
+.pki-sampler-chip {
+  width: 11px; height: 11px; flex: 0 0 auto;
+  border: 1px solid var(--line-soft); border-radius: 2px;
+}
+
+.pki-hint {
+  font-size: 11px; color: var(--fg-dim); line-height: 1.5;
+  border-top: 1px solid var(--line-soft); padding-top: 6px;
+}

@@ -1,0 +1,28 @@
+/* Liquify mesh editor (Filter > Distort > Liquify) */
+
+.pk-liquify {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pk-liquify-view {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.pk-liquify-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pk-liquify-tools .pk-hint {
+  margin-left: auto;
+}

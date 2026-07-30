@@ -1,0 +1,27 @@
+/* Move tool — align / distribute cluster in the options bar. */
+
+.pk-align-bar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.pk-align-bar .pk-icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.pk-align-bar .pk-vsep {
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  background: var(--line-soft);
+  display: inline-block;
+}
+
+.pk-align-bar .pk-align-dist {
+  height: 22px;
+  padding: 0 7px;
+  font-size: 11px;
+  margin-left: 2px;
+}

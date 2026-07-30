@@ -1,0 +1,48 @@
+/* The live type editor: a real <textarea> laid over the canvas so the browser
+   owns the caret, selection, IME and clipboard. Its glyphs are transparent —
+   the visible text is the rasterised layer underneath. */
+
+.pk-type-edit {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  white-space: pre;
+  overflow-wrap: normal;
+  text-rendering: geometricPrecision;
+  font-kerning: normal;
+  scrollbar-width: none;
+}
+
+.pk-type-edit::-webkit-scrollbar { width: 0; height: 0; }
+
+.pk-type-edit.is-paragraph {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.pk-type-edit.is-vertical {
+  writing-mode: vertical-lr;
+  text-orientation: upright;
+}
+
+.pk-type-edit::selection {
+  background: rgba(61, 169, 255, 0.35);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.pk-type-edit::-moz-selection {
+  background: rgba(61, 169, 255, 0.35);
+  color: transparent;
+}
