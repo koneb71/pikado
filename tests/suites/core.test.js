@@ -87,6 +87,86 @@ suite('core / selection mask', async (t) => {
 
   t.ok(g.contour() instanceof Path2D, 'contour() builds a Path2D for the marching ants');
   t.eq(g.toAlphaCanvas().width, 40, 'toAlphaCanvas matches the document width');
+});
+
+suite('core / selection contour tracing', async (t) => {
+  // The outline must be CONTINUOUS closed loops, not one subpath per pixel edge.
+  // setLineDash restarts its phase at every moveTo, so a per-edge path renders
+  // every dash "on" — a solid line that cannot march, and the black/white pair
+  // overdraws into one thin invisible line. This is the bug these tests lock.
+  const rect = new Selection(30, 20);
+  rect.combine(Selection.rectMask(5, 4, 10, 6, 30, 20), 'replace');
+  const rl = rect.contourLoops();
+  t.eq(rl.length, 1, 'a rectangle traces to exactly one loop');
+  t.eq(rl[0], [5, 4, 15, 4, 15, 10, 5, 10], 'and to its four exact corners, with collinear runs merged');
+
+  const one = new Selection(10, 10);
+  one.combine(Selection.rectMask(4, 4, 1, 1, 10, 10), 'replace');
+  t.eq(one.contourLoops()[0], [4, 4, 5, 4, 5, 5, 4, 5], 'a single pixel still traces to a closed square');
+
+  // A hole must come back as its own loop, or the ants would not outline it.
+  const donut = new Selection(60, 60);
+  donut.combine(Selection.rectMask(10, 10, 40, 40, 60, 60), 'replace');
+  donut.combine(Selection.rectMask(24, 24, 12, 12, 60, 60), 'subtract');
+  const dl = donut.contourLoops();
+  t.eq(dl.length, 2, 'a ring traces to two loops (outer edge and hole)');
+  t.eq(dl.map((l) => l.length / 2).sort(), [4, 4], 'both are clean four-corner squares');
+
+  const two = new Selection(60, 30);
+  two.combine(Selection.rectMask(4, 4, 10, 10, 60, 30), 'replace');
+  two.combine(Selection.rectMask(30, 4, 10, 10, 60, 30), 'add');
+  t.eq(two.contourLoops().length, 2, 'two disjoint regions trace to two loops');
+
+  // Regions meeting corner-to-corner must stay separate outlines rather than
+  // being stitched into one figure-of-eight at the shared vertex.
+  const diag = new Selection(20, 20);
+  diag.combine(Selection.rectMask(4, 4, 4, 4, 20, 20), 'replace');
+  diag.combine(Selection.rectMask(8, 8, 4, 4, 20, 20), 'add');
+  t.eq(diag.contourLoops().length, 2, 'a diagonal corner touch traces to two loops');
+
+  /**
+   * Total traced perimeter must equal the number of mask boundary edges: no
+   * edge dropped (which would leave a gap in the outline) and none walked twice.
+   */
+  const perimeterOf = (sel) => {
+    let perim = 0;
+    for (const l of sel.contourLoops()) {
+      for (let i = 0; i < l.length; i += 2) {
+        const j = (i + 2) % l.length;
+        perim += Math.abs(l[j] - l[i]) + Math.abs(l[j + 1] - l[i + 1]);
+      }
+    }
+    return perim;
+  };
+  const edgeCountOf = (sel) => {
+    const w = sel.width, h = sel.height, m = sel.mask;
+    const on = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? false : m[y * w + x] > 127);
+    let edges = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (!on(x, y)) continue;
+      if (!on(x, y - 1)) edges++;
+      if (!on(x, y + 1)) edges++;
+      if (!on(x - 1, y)) edges++;
+      if (!on(x + 1, y)) edges++;
+    }
+    return edges;
+  };
+
+  const circle = new Selection(200, 200);
+  circle.combine(Selection.ellipseMask(100, 100, 70, 70, 200, 200), 'replace');
+  t.eq(circle.contourLoops().length, 1, 'a disc traces to one loop');
+  t.eq(perimeterOf(circle), edgeCountOf(circle), 'disc: every boundary edge is walked exactly once');
+  t.eq(perimeterOf(diag), edgeCountOf(diag), 'diagonal touch: every boundary edge is walked exactly once');
+  t.eq(perimeterOf(donut), edgeCountOf(donut), 'ring: every boundary edge is walked exactly once');
+
+  // Loops must be long enough for a dash pattern to actually run along them.
+  t.gt(circle.contourLoops()[0].length / 2, 50, 'a disc outline is one long loop, not a pile of 1px subpaths');
+
+  // The cache must not outlive an edit, or the ants would show a stale outline.
+  const before = circle.contourLoops();
+  t.is(circle.contourLoops(), before, 'contourLoops() is cached between calls');
+  circle.combine(Selection.rectMask(0, 0, 10, 10, 200, 200), 'add');
+  t.isNot(circle.contourLoops(), before, 'and the cache is dropped when the mask changes');
 
   // morph / boxBlurMask are used by tools directly.
   const m = new Uint8ClampedArray(400);

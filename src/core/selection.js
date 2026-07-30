@@ -13,6 +13,7 @@ export class Selection {
     this.mask = null;
     this._boundsCache = null;
     this._contourCache = null;
+    this._loopCache = null;
     this.version = 0;
   }
 
@@ -23,6 +24,7 @@ export class Selection {
   _touch() {
     this._boundsCache = null;
     this._contourCache = null;
+    this._loopCache = null;
     this.version++;
   }
 
@@ -265,25 +267,127 @@ export class Selection {
   }
 
   /**
-   * Marching-ants outline. Returns a Path2D in document coordinates traced
-   * along pixel edges where coverage crosses 50%.
+   * Closed boundary loops of the selection, in document coordinates.
+   *
+   * Each loop is a flat `[x0, y0, x1, y1, …]` array of vertices on the pixel
+   * grid, walking clockwise around selected regions (holes come back
+   * anticlockwise). Collinear runs are merged, so a rectangle is four points
+   * rather than one per pixel.
+   *
+   * The loops matter for more than tidiness: `setLineDash` restarts its phase at
+   * every `moveTo`, so a path made of one subpath per pixel edge renders every
+   * dash "on" — a solid line that cannot march. Continuous loops are what make
+   * marching ants actually march.
+   *
+   * @returns {number[][]} one flat vertex array per closed loop
+   */
+  contourLoops() {
+    if (!this.mask) return [];
+    if (this._loopCache) return this._loopCache;
+
+    const w = this.width, h = this.height, m = this.mask;
+    const on = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? false : m[y * w + x] > 127);
+    const vw = w + 1; // vertex grid is one wider than the pixel grid
+    const key = (vx, vy) => vy * vw + vx;
+
+    // Directed boundary edges, oriented clockwise around each selected pixel
+    // (y grows downward). Only sides facing an unselected neighbour are added,
+    // so shared interior edges never appear and the result is already a set of
+    // closed loops. Stored as startVertex -> [endVertex, …].
+    /** @type {Map<number, number[]>} */
+    const out = new Map();
+    const add = (ax, ay, bx, by) => {
+      const a = key(ax, ay), b = key(bx, by);
+      const list = out.get(a);
+      if (list) list.push(b);
+      else out.set(a, [b]);
+    };
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (!on(x, y)) continue;
+        if (!on(x, y - 1)) add(x, y, x + 1, y);             // top, rightwards
+        if (!on(x + 1, y)) add(x + 1, y, x + 1, y + 1);     // right, downwards
+        if (!on(x, y + 1)) add(x + 1, y + 1, x, y + 1);     // bottom, leftwards
+        if (!on(x - 1, y)) add(x, y + 1, x, y);             // left, upwards
+      }
+    }
+
+    const dirOf = (a, b) => {
+      const d = b - a;
+      if (d === 1) return 0;   // +x
+      if (d === vw) return 1;  // +y
+      if (d === -1) return 2;  // -x
+      return 3;                // -y
+    };
+
+    const loops = [];
+    for (const startKey of out.keys()) {
+      // A vertex can begin several loops where regions touch diagonally.
+      while (out.get(startKey) && out.get(startKey).length) {
+        const pts = [];
+        let cur = startKey;
+        let dir = -1;
+        do {
+          const list = out.get(cur);
+          if (!list || !list.length) break;
+
+          let pick = 0;
+          if (list.length > 1 && dir >= 0) {
+            // Ambiguous vertex (two regions meeting corner to corner). Turning
+            // as sharply clockwise as possible keeps the two outlines separate
+            // instead of stitching them into one figure-of-eight.
+            const want = [(dir + 1) % 4, dir, (dir + 3) % 4, (dir + 2) % 4];
+            for (const d of want) {
+              const i = list.findIndex((n) => dirOf(cur, n) === d);
+              if (i >= 0) { pick = i; break; }
+            }
+          }
+          const next = list.splice(pick, 1)[0];
+          if (!list.length) out.delete(cur);
+
+          const nd = dirOf(cur, next);
+          // Only a change of direction is a corner. Carrying straight on needs no
+          // vertex at all — the previous corner still holds, and the segment
+          // simply continues to wherever it next turns.
+          if (nd !== dir) {
+            const vx = cur % vw;
+            pts.push(vx, (cur - vx) / vw);
+          }
+          dir = nd;
+          cur = next;
+        } while (cur !== startKey);
+
+        // The walk starts wherever the edge map happened to be indexed, which
+        // may be part-way along a straight run. If so the first vertex is
+        // collinear with the closing segment and is not a corner — drop it.
+        if (pts.length >= 8) {
+          const n = pts.length;
+          const inDx = Math.sign(pts[0] - pts[n - 2]);
+          const inDy = Math.sign(pts[1] - pts[n - 1]);
+          const outDx = Math.sign(pts[2] - pts[0]);
+          const outDy = Math.sign(pts[3] - pts[1]);
+          if (inDx === outDx && inDy === outDy) pts.splice(0, 2);
+        }
+        if (pts.length >= 6) loops.push(pts);
+      }
+    }
+
+    this._loopCache = loops;
+    return loops;
+  }
+
+  /**
+   * Marching-ants outline as a Path2D in document coordinates, built from
+   * {@link contourLoops} so dash patterns run continuously along each loop.
    */
   contour() {
     if (!this.mask) return null;
     if (this._contourCache) return this._contourCache;
-    const w = this.width, h = this.height, m = this.mask;
     const p = new Path2D();
-    const on = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? false : m[y * w + x] > 127);
-    // Emit the boundary edge between each selected pixel and its unselected
-    // neighbour. Cheap, exact, and renders identically to a traced contour.
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (!on(x, y)) continue;
-        if (!on(x, y - 1)) { p.moveTo(x, y); p.lineTo(x + 1, y); }
-        if (!on(x, y + 1)) { p.moveTo(x, y + 1); p.lineTo(x + 1, y + 1); }
-        if (!on(x - 1, y)) { p.moveTo(x, y); p.lineTo(x, y + 1); }
-        if (!on(x + 1, y)) { p.moveTo(x + 1, y); p.lineTo(x + 1, y + 1); }
-      }
+    for (const loop of this.contourLoops()) {
+      p.moveTo(loop[0], loop[1]);
+      for (let i = 2; i < loop.length; i += 2) p.lineTo(loop[i], loop[i + 1]);
+      p.closePath();
     }
     this._contourCache = p;
     return p;
