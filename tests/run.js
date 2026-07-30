@@ -23,6 +23,7 @@ import './suites/smart.test.js';
 import './suites/liquify.test.js';
 import './suites/channels.test.js';
 import './suites/select.test.js';
+import './suites/camera-raw.test.js';
 import './suites/perf.test.js';
 
 const out = document.getElementById('out');

@@ -37,6 +37,7 @@ import './filters/render.js';
 import './filters/sharpen.js';
 import './filters/stylize.js';
 import './filters/other.js';
+import './filters/camera-raw.js';
 
 // Adjustments
 import './adjustments/basic.js';

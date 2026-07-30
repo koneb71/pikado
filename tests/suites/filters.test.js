@@ -125,8 +125,8 @@ const run = (id, img, params, app) => runFilter(id, img, params, fctx(img, app))
 /* ------------------------------------------------------------------ */
 
 suite('filters / registry integrity', async (t) => {
-  t.eq(filters.size, 61, 'all 61 filters are registered');
-  t.eq(new Set([...filters.keys()]).size, 61, 'filter ids are unique');
+  t.eq(filters.size, 62, 'all 62 filters are registered');
+  t.eq(new Set([...filters.keys()]).size, 62, 'filter ids are unique');
 
   const problems = [];
   for (const [id, def] of filters) {
@@ -155,15 +155,15 @@ suite('filters / registry integrity', async (t) => {
     'FILTER_MENUS is the eight Photoshop submenus, in order');
   const counts = {};
   for (const m of FILTER_MENUS) counts[m] = listFilters(m).length;
-  t.eq(counts, { Blur: 11, Distort: 11, Noise: 5, Pixelate: 7, Render: 6, Sharpen: 5, Stylize: 10, Other: 6 },
+  t.eq(counts, { Blur: 11, Distort: 11, Noise: 5, Pixelate: 7, Render: 6, Sharpen: 5, Stylize: 10, Other: 7 },
     'each submenu holds the expected number of filters');
-  t.eq(Object.values(counts).reduce((a, b) => a + b, 0), 61, 'the submenus partition every filter');
+  t.eq(Object.values(counts).reduce((a, b) => a + b, 0), 62, 'the submenus partition every filter');
 
   const byMenu = filtersByMenu();
   t.eq([...byMenu.keys()], FILTER_MENUS, 'filtersByMenu() keys follow FILTER_MENUS order');
   let total = 0;
   for (const [, list] of byMenu) total += list.length;
-  t.eq(total, 61, 'filtersByMenu() loses nothing');
+  t.eq(total, 62, 'filtersByMenu() loses nothing');
   const blur = byMenu.get('Blur').map((f) => f.name);
   t.eq(blur, [...blur].sort((a, b) => a.localeCompare(b)), 'filtersByMenu() sorts each submenu by name');
 
@@ -224,11 +224,14 @@ suite('filters / every filter runs at its defaults', async (t) => {
     t.eq(problems, [], `filter "${id}" runs cleanly at its defaults`);
   }
 
-  // Exactly four filters are the identity at their defaults, and each has a
-  // reason to be: no distortion, no mesh, an identity kernel, a zero offset.
-  // Anything else appearing here means a filter has silently stopped working.
-  t.eq(unchanged.sort(), ['custom', 'lens-correction', 'liquify', 'offset'],
-    'only the four genuinely neutral filters leave the image bit-identical at defaults');
+  // Exactly five filters are the identity at their defaults, and each has a
+  // reason to be: no distortion, no mesh, an identity kernel, a zero offset, and
+  // a develop module whose every control starts neutral (which is also what makes
+  // Camera Raw usable as a smart filter — adding it changes nothing until you
+  // move something). Anything else appearing here means a filter has silently
+  // stopped working.
+  t.eq(unchanged.sort(), ['camera-raw', 'custom', 'lens-correction', 'liquify', 'offset'],
+    'only the five genuinely neutral filters leave the image bit-identical at defaults');
 });
 
 /* ------------------------------------------------------------------ */

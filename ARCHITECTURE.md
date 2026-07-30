@@ -606,6 +606,59 @@ routes through `setLayerPreview`, which is why a **mask** edit cannot preview
 Do not add a `renderUI` to a filter — nothing reads it. For a custom dialog body,
 use a `custom` ParamDescriptor, which `paramDialog` does render.
 
+## Camera Raw — `src/filters/camera-raw.js`
+
+A develop module registered as an ordinary filter, which is the whole design: a
+filter is what a Smart Object's filter stack stores, so registering here makes
+Camera Raw non-destructive, re-editable and re-orderable on a smart object with
+no new machinery.
+
+```
+developImage(imageData, params) -> imageData        // mutates in place
+isNeutralDevelop(params) -> boolean                 // true when nothing would change
+CAMERA_RAW_DEFAULTS                                 // every key, at its neutral value
+CAMERA_RAW_BANDS                                    // the eight colour-mixer bands
+```
+
+Stage order, which is Camera Raw's own and is not arbitrary:
+
+1. white balance — before exposure, so a multiply cannot shift hue
+2. exposure — a multiply in **linear light**
+3. highlights / shadows / whites / blacks
+4. contrast — before the curve, so the curve is the last word on tonality
+5. tone curve
+6. texture, clarity, dehaze
+7. colour mixer, vibrance, saturation, black-and-white mix
+8. colour grading (split toning)
+9. sharpening, noise reduction
+10. grain, vignette — last, so neither gets sharpened
+
+Everything tonal happens in linear light through a 256-entry decode table and a
+4096-entry encode table. Every stage is skipped at its neutral value, and all the
+defaults are neutral, so `developImage` with no params is bit-identical to its
+input — which is what lets Camera Raw sit in a smart filter stack doing nothing
+until you move a slider.
+
+Three decisions worth knowing before changing anything:
+
+- **Temperature is a relative −100…+100 slider, not Kelvin.** A rendered sRGB
+  image has no sensor white balance to set, so a Kelvin number would be a claim
+  about the file that nothing supports; Photoshop shows the same relative slider
+  for the Camera Raw filter on a non-raw layer. It maps geometrically onto the
+  daylight locus (±100 ≈ 3900 K and 10900 K) and is applied as **von Kries channel
+  gains**, normalised to preserve luminance. A full Bradford adaptation is the
+  colorimetrically correct operation and was the first implementation, but adapting
+  a rendered image to a distant white point leaves the sRGB gamut and returns
+  negative channel values — at 2000 K a mid grey came back with red clipped to 0.
+- **The four tone sliders work on encoded lightness, not linear light.** Each adds
+  `slider × regionWeight × 0.3` to the perceptual lightness and the result is
+  applied back as a gain on all three channels, so hue and saturation survive. In
+  linear light the same slider positions are invisible in deep shadow, which made
+  "Shadows +80" move a dark patch by four levels out of 255.
+- **The region weights deliberately overlap.** Shadows and Blacks both act at the
+  bottom; damping one to keep it out of the other's territory is what made the
+  slider useless.
+
 ## Adjustments — `src/adjustments/registry.js`
 
 ```js
@@ -971,6 +1024,7 @@ Never write outside your own list — parallel work depends on it.
 
 - `src/tools/*.js` — one file per tool group (see the table above)
 - `src/filters/{blur,distort,noise,pixelate,render,sharpen,stylize,other}.js`
+- `src/filters/camera-raw.js`
 - `src/adjustments/{basic,advanced}.js`
 - `src/effects/{effect-renderers,styles-dialog}.js`
 - `src/ui/{menubar,toolbar,options-bar,statusbar,tabbar,shortcuts,panel-host}.js`

@@ -14,7 +14,7 @@ import * as smart from '../core/smart.js';
 import * as img from './image-ops.js';
 import * as tf from '../tools/transform.js';
 import { growSelection, similarSelection } from '../tools/wand.js';
-import { applyAdjustmentCommand, repeatLastFilter } from '../filters/run.js';
+import { applyAdjustmentCommand, applyFilterCommand, repeatLastFilter } from '../filters/run.js';
 import { rasterizeTextLayer, WARP_STYLES } from '../text/text-render.js';
 import { createShapeLayer, defaultShapeStyle, fitCurve } from '../vector/path.js';
 
@@ -1666,6 +1666,14 @@ registerCommands([
     run: () => repeatLastFilter(),
   },
   {
+    // Camera Raw is a registered filter, so it also appears under Filter > Other
+    // and works as a smart filter. This is the top-level entry Photoshop gives
+    // it, with the same shortcut.
+    id: 'filter.camera-raw', label: 'Camera Raw Filter…', accel: 'Shift+Ctrl+A',
+    enabled: hasLayer,
+    run: () => applyFilterCommand('camera-raw'),
+  },
+  {
     id: 'filter.smart.convert', label: 'Convert for Smart Filters',
     enabled: () => hasLayer() && !isSmart(),
     run: () => {
@@ -1987,7 +1995,7 @@ export const MENU_TREE = [
   },
   {
     label: 'Filter',
-    items: ['filter.last', '---', 'filter.smart.convert', '---', { dynamic: 'filters' }],
+    items: ['filter.last', '---', 'filter.camera-raw', '---', 'filter.smart.convert', '---', { dynamic: 'filters' }],
   },
   {
     label: 'View',

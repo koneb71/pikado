@@ -136,6 +136,31 @@ that stands out from its background. It does not know what a person is, and when
 saliency finds nothing convincing it says so instead of selecting the whole
 frame.
 
+## Camera Raw
+
+A develop module: white balance, exposure, the four tone-region sliders, contrast,
+a tone curve, texture, clarity, dehaze, an eight-band colour mixer, colour
+grading, sharpening, noise reduction, grain and vignette. `Shift+Ctrl+A`, or
+Filter > Camera Raw Filter.
+
+It is registered as an ordinary filter, and that is the interesting part: a filter
+is what a Smart Object's filter stack stores, so on a Smart Object the whole
+develop module becomes non-destructive — re-editable, re-orderable, switchable
+off — with no extra machinery. At its defaults it renders the source *byte for
+byte*, so adding it costs nothing until you move something.
+
+Everything tonal runs in linear light, which is where exposure is a multiply:
++1 EV takes a mid grey from 128 to 176, not to 255. The tone-region sliders work
+on encoded lightness instead, because that is what makes them feel linear — the
+same gain applied to linear light is invisible in deep shadow.
+
+Two honest notes. This is the Camera Raw *filter*, working on 8-bit RGB, so
+highlight and black recovery has an 8-bit ceiling: what is clipped in the file is
+gone, and no slider can invent it. And Temperature is a relative −100…+100 slider
+rather than a Kelvin reading, because a rendered sRGB image has no sensor white
+balance to set — the same choice Photoshop makes for this filter on a non-raw
+layer.
+
 ## Right-click does the right thing
 
 Right-clicking the canvas asks the active tool what it can do *here*, at the
@@ -270,8 +295,10 @@ nesting, blend modes and fill opacity — but see the limits below.
 
 Stated plainly so you don't find out by clicking:
 
-- **Camera Raw, the 3D workspace, and the video timeline.** Not present. Nor is
-  proprietary raw decoding (CR2/NEF/ARW) or video import/export.
+- **Raw decoding, the 3D workspace, and the video timeline.** Camera Raw is
+  present as a develop module (see below), but Pikado cannot *decode* a raw file —
+  CR2/NEF/ARW need per-sensor demosaicing and calibration data, and that is not
+  here. No 3D workspace and no video import/export either.
 - **A trained model behind Select Subject.** Photoshop's is a neural network;
   Pikado's is classical computer vision — histogram-contrast saliency to guess
   where the subject is, then GrabCut (iterated graph cuts over Gaussian mixture
