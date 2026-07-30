@@ -16,6 +16,20 @@ Vite is the only dependency. There is no build step to configure, no framework,
 and no TypeScript — the source is plain ES modules that a browser could load
 directly.
 
+Or with Docker, which builds the bundle and serves it from nginx:
+
+```bash
+docker build -t pikado .
+docker run --rm -p 8080:80 pikado    # http://localhost:8080
+```
+
+Nothing runs server-side, so the image carries no Node at all — just nginx and
+about 1.2 MB of static files. The nginx config in `docker/nginx.conf` is not
+boilerplate: it caches the content-hashed `/assets/` forever and forbids caching
+`index.html` and `sw.js`, because those two name everything else and a stale copy
+of either is how a browser ends up asking for asset hashes the server no longer
+has.
+
 ## What it is
 
 Pikado is a real layered image editor, not a canvas demo. The document model,

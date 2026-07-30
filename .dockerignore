@@ -1,0 +1,32 @@
+# Everything the build does not read. Keeping the context small matters here
+# because .git alone is several times the size of the source.
+.git
+.github
+.gitignore
+node_modules
+dist
+dist-ssr
+
+# Built inside the image instead
+.vite
+node_modules/.vite
+.eslintcache
+
+# Docs and local tooling — none of it reaches the bundle
+*.md
+!README.md
+.claude
+.vscode
+.idea
+
+# Docker's own files
+Dockerfile
+.dockerignore
+
+# Scratch and noise
+scratch/
+*.pkd.bak
+*.log
+.DS_Store
+.env
+.env.*
