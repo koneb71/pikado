@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "A browser-based raster and vector image editor in the spirit of Photopea and Photoshop. Runs entirely client-side.",
+  "description": "Free, open-source Photoshop alternative that runs in your browser. Layers, masks, PSD files, filters and adjustments — no install, no account, nothing uploaded.",
   "license": "MIT",
   "author": "Neiell Care L. Paradiang",
   "homepage": "https://github.com/koneb71/pikado#readme",
