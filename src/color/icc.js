@@ -499,6 +499,7 @@ function parseICCInner(buffer) {
       profile: {
         id: 'embedded', name: description, space: 'gray',
         white: readXYZTag(dv, tags.get('wtpt')) || WHITE_POINTS.D50,
+        blackPoint: readBlackPoint(dv, tags.get('bkpt')),
         trc, embedded: true, deviceClass,
       },
     };
@@ -542,6 +543,7 @@ function parseICCInner(buffer) {
       name: description,
       space: 'rgb',
       white: WHITE_POINTS.D50,
+      blackPoint: readBlackPoint(dv, tags.get('bkpt')),
       matrix,
       trc: rTRC,
       perChannelTRC: perChannel,
@@ -549,6 +551,25 @@ function parseICCInner(buffer) {
       deviceClass,
     },
   };
+}
+
+/**
+ * The `bkpt` tag's luminance, which is what black point compensation needs.
+ *
+ * Without this, `makeTransform`'s black-point arithmetic was correct and dead: no
+ * profile ever carried a `blackPoint`, so the checkbox in the Convert dialog had
+ * nothing to act on. Built-in working spaces genuinely have a black point of zero —
+ * they are idealised — so it still only does anything for an embedded profile that
+ * declares a real one, which is the case it exists for.
+ *
+ * @returns {number} 0..1, and 0 when the tag is absent
+ */
+function readBlackPoint(dv, tag) {
+  const xyz = readXYZTag(dv, tag);
+  if (!xyz) return 0;
+  const y = xyz[1];
+  // A media black above a few per cent is a broken profile, not a dark medium.
+  return Number.isFinite(y) && y > 0 && y < 0.2 ? y : 0;
 }
 
 function readXYZTag(dv, tag) {

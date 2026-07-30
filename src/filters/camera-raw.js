@@ -59,7 +59,14 @@ for (let i = 0; i <= ENCODE_STEPS; i++) {
   const s = l <= 0.0031308 ? l * 12.92 : 1.055 * l ** (1 / 2.4) - 0.055;
   TO_SRGB[i] = Math.max(0, Math.min(255, Math.round(s * 255)));
 }
-const encode = (l) => TO_SRGB[l <= 0 ? 0 : l >= 1 ? ENCODE_STEPS : (l * ENCODE_STEPS) | 0];
+/*
+ * Rounds rather than truncates. Near black one table step is about 0.8 sRGB
+ * levels, so truncation biased every dark value downward and the linear round
+ * trip was not value-preserving: several dark inputs came back one level lower
+ * than they went in, which is a filter that is not quite the identity at its
+ * defaults.
+ */
+const encode = (l) => TO_SRGB[l <= 0 ? 0 : l >= 1 ? ENCODE_STEPS : Math.round(l * ENCODE_STEPS)];
 
 /** Rec. 709 luminance of a linear triple — the weighting sRGB is defined with. */
 const luminance = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -356,12 +363,43 @@ const BANDS = [
   { key: 'magenta', label: 'Magentas', hue: 320 },
 ];
 
-/** Band weight for a hue in degrees. */
+/**
+ * Band weight for a hue, as a partition of unity.
+ *
+ * Each band's window reaches exactly to its neighbouring centres rather than a
+ * fixed ±60 degrees, and falls as a raised cosine across that span. Two facts make
+ * this the right shape:
+ *
+ *   - the eight centres are NOT evenly spaced (0, 30, 60, 120, 180, 240, 280, 320),
+ *     so a fixed window overlapped three bands around orange and two around green.
+ *     The weights then summed to about 2 in one place and 1.5 in another, and the
+ *     same slider value did visibly different amounts of work depending on hue.
+ *   - normalising a fixed window by the total weight fixes that ratio but breaks
+ *     something users rely on: with neighbours at zero diluting it, one band's
+ *     slider at -100 could only remove 44% of its own hue's saturation. Reds at
+ *     -100 has to fully desaturate red.
+ *
+ * Reaching to the neighbours gives both. For a hue a fraction `t` of the way from
+ * one centre to the next, the two weights are `(1 + cos πt)/2` and `(1 - cos πt)/2`,
+ * which sum to exactly 1 — so a single band at full strength owns its own centre
+ * completely, and every hue in between receives exactly what its two bands ask for.
+ */
+const BAND_GAPS = BANDS.map((band, i) => {
+  const prev = BANDS[(i - 1 + BANDS.length) % BANDS.length].hue;
+  const next = BANDS[(i + 1) % BANDS.length].hue;
+  const wrap = (d) => ((d % 360) + 360) % 360;
+  return { left: wrap(band.hue - prev) || 360, right: wrap(next - band.hue) || 360 };
+});
+
 function bandWeight(hue, centre) {
-  let d = Math.abs(hue - centre);
-  if (d > 180) d = 360 - d;
-  if (d >= 60) return 0;
-  return 0.5 * (1 + Math.cos((d / 60) * Math.PI));
+  const i = BANDS.findIndex((b) => b.hue === centre);
+  if (i < 0) return 0;
+  let d = ((hue - centre) % 360 + 360) % 360;
+  if (d > 180) d -= 360;                       // signed offset, -180..180
+  const span = d >= 0 ? BAND_GAPS[i].right : BAND_GAPS[i].left;
+  const a = Math.abs(d);
+  if (a >= span) return 0;
+  return 0.5 * (1 + Math.cos((a / span) * Math.PI));
 }
 
 /** RGB (0..1, any space) -> HSL with hue in degrees. */
@@ -596,6 +634,9 @@ export function developImage(image, params = {}) {
       let [hue, sat, light] = rgbToHsl(r, g, b);
 
       if (anyHsl && sat > 0.004) {
+        // The band weights are a partition of unity, so this is already a weighted
+        // average — see `bandWeight`. No normalisation, which would dilute a single
+        // band's slider by its neighbours sitting at zero.
         let dh = 0, ds = 0, dl = 0;
         for (const band of BANDS) {
           const wgt = bandWeight(hue, band.hue);

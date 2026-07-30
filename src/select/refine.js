@@ -367,15 +367,37 @@ export function shiftEdge(mask, w, h, percent) {
  * @param {ImageData} image
  * @param {Uint8ClampedArray} mask
  * @param {number} amount 0..100
+ * @param {{radius?:number}} [opts] band half-width; derived from the mask's own
+ *   edge softness when omitted
  */
-export function decontaminateColors(image, mask, amount = 100) {
+export function decontaminateColors(image, mask, amount = 100, opts = {}) {
   const w = image.width, h = image.height;
   const d = image.data;
   const strength = Math.max(0, Math.min(100, amount)) / 100;
   if (!strength) return image;
 
-  const { band } = edgeBand(mask, w, h, 6);
-  const win = 4;
+  /*
+   * The band and the sampling window scale with the mask's own edge, rather than
+   * being fixed at 6 px and 4 px as they first were. A matte with a 30 px falloff —
+   * which a Radius of 40 produces, and which is exactly the case that needs
+   * decontaminating — had most of its fringe outside a 6 px band, and inside a 4 px
+   * window there was often no confident background left to sample, so the pass
+   * quietly did nothing on the very edges it exists for.
+   *
+   * The falloff width is estimated the same way `shiftEdge` estimates it: partial
+   * pixels per unit of contour length.
+   */
+  let partialCount = 0, edgeCount = 0;
+  for (let i = 0; i < mask.length; i++) {
+    const v = mask[i];
+    if (v > 8 && v < 247) partialCount++;
+    if ((v > 127) !== (mask[i > 0 ? i - 1 : 0] > 127)) edgeCount++;
+  }
+  const falloff = edgeCount > 0 ? partialCount / edgeCount : 0;
+  const bandRadius = Math.max(6, Math.min(64, Math.round(opts.radius || falloff * 1.6)));
+  const win = Math.max(4, Math.round(bandRadius * 0.8));
+
+  const { band } = edgeBand(mask, w, h, bandRadius);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;

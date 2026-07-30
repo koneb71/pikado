@@ -115,6 +115,9 @@ suite('select / max flow agrees with Edmonds-Karp', async (t) => {
       if (mf.inSource(j) && !mf.inSource(i)) cut += rc;
     }
     if (Math.abs(cut - want) > 1e-9) problems.push(`n=${n}: cut ${cut} != flow ${want}`);
+    // The invariant a flow comparison cannot see.
+    const leak = residualLeak(mf, n);
+    if (leak) problems.push(`n=${n} d=${density}: ${leak}`);
   }
   }
   t.eq(problems.slice(0, 4), [], `the same maximum flow on ${trials} random integer graphs across three densities, and the min cut equals it`);
@@ -145,6 +148,75 @@ suite('select / max flow agrees with Edmonds-Karp', async (t) => {
   t.eq(both.compute(), 4, 'flow that runs straight through a node is counted');
 });
 
+/**
+ * Is the source side of the cut closed under residual arcs?
+ *
+ * This is THE invariant that makes a partition a minimum cut, and it is the one a
+ * flow-value comparison cannot see. `_adopt` once tested the wrong arc of a sister
+ * pair, which left nodes stranded outside the source tree: the flow value stayed
+ * correct — the augmenting phase was fine — and only the *labelling* was wrong, so
+ * comparing against Edmonds-Karp passed every time. A broadened random sweep did
+ * not catch it either (verified: 360 graphs across three densities, zero
+ * failures against the buggy code). Checking closure directly does catch it,
+ * because a stranded node is by definition reachable from the source through a
+ * residual arc.
+ *
+ * @returns {string|null} a description of the first leak, or null
+ */
+function residualLeak(mf, n) {
+  for (let i = 0; i < n; i++) {
+    if (!mf.inSource(i)) continue;
+    for (let a = mf.firstArc[i]; a !== -1; a = mf.nextArc[a]) {
+      if (mf.cap[a] <= 1e-9) continue;
+      const q = mf.head[a];
+      if (!mf.inSource(q)) return `node ${i} reaches ${q} with residual ${mf.cap[a]} but ${q} is on the sink side`;
+    }
+  }
+  return null;
+}
+
+suite('select / the cut is closed under residual arcs', async (t) => {
+  /*
+   * The exact nine-node graph that exposed the `_adopt` sister-arc bug, pinned as a
+   * fixed case rather than left to a random sweep that provably does not find it.
+   * The shape that matters: an edge whose two directions have *different*
+   * capacities (0 one way), so testing the wrong arc reads 0 and skips the
+   * re-activation.
+   */
+  const terminals = [[2, 0], [0, 0], [1, 3], [1, 0], [2, 1], [2, 1], [2, 3], [0, 3], [2, 0]];
+  const edges = [
+    [0, 1, 1, 5], [0, 2, 4, 5], [0, 8, 4, 6], [1, 2, 4, 3], [1, 4, 3, 0], [1, 6, 5, 0],
+    [2, 4, 0, 1], [2, 8, 1, 1], [3, 5, 3, 1], [3, 6, 2, 3], [5, 7, 4, 6], [6, 8, 5, 2],
+  ];
+  const n = 9;
+  const mf = new MaxFlow(n, edges.length * 2);
+  for (const [i, j, c, rc] of edges) mf.addEdge(i, j, c, rc);
+  terminals.forEach(([a, b], i) => mf.addTerminal(i, a, b));
+  const flow = mf.compute();
+
+  t.eq(flow, edmondsKarp(n, edges, terminals), 'the flow value is right — it always was, which is the point');
+  t.eq(residualLeak(mf, n), null, 'and the source side is closed under residual arcs');
+
+  // The cut this partition describes must actually be the minimum, checked
+  // against brute force over all 512 partitions.
+  const cutOf = (mask) => {
+    let cut = 0;
+    for (let i = 0; i < n; i++) cut += (mask >> i) & 1 ? terminals[i][1] : terminals[i][0];
+    for (const [i, j, c, rc] of edges) {
+      const si = (mask >> i) & 1, sj = (mask >> j) & 1;
+      if (si && !sj) cut += c;
+      if (sj && !si) cut += rc;
+    }
+    return cut;
+  };
+  let best = Infinity;
+  for (let mask = 0; mask < 1 << n; mask++) best = Math.min(best, cutOf(mask));
+  let ours = 0;
+  for (let i = 0; i < n; i++) ours |= (mf.inSource(i) ? 1 : 0) << i;
+  t.eq(cutOf(ours), best, `the returned partition is a minimum cut (${cutOf(ours)} vs the best possible ${best})`);
+  t.eq(best, flow, 'and the minimum cut equals the maximum flow');
+});
+
 suite('select / max flow finds the cut a grid is seeded with', async (t) => {
   const W = 120, H = 90, n = W * H;
   const g = new MaxFlow(n, n * 8);
@@ -170,6 +242,7 @@ suite('select / max flow finds the cut a grid is seeded with', async (t) => {
   }
   t.gt(kept, area * 0.98, `the circle comes back (${kept} of ${area} pixels)`);
   t.lt(stray, area * 0.02, `with almost nothing outside it (${stray} stray pixels)`);
+  t.eq(residualLeak(g, n), null, 'and the source side of a grid cut is closed under residual arcs too');
 });
 
 /* ------------------------------------------------------------------ */

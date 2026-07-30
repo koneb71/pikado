@@ -251,6 +251,65 @@ suite('camera raw / the colour mixer works per band', async (t) => {
   t.close(sat(skin(desatRed)), sat(skin(base)), 0.25, 'without flattening a different hue as much');
 });
 
+suite('camera raw / the colour bands are a partition of unity', async (t) => {
+  /*
+   * The eight band centres are unevenly spaced (0, 30, 60, 120, 180, 240, 280, 320),
+   * so a fixed ±60 degree window overlapped three bands around orange and two around
+   * green: the same slider did about twice as much work on an orange as on a green.
+   *
+   * Normalising by the total weight fixes that ratio and breaks something worse —
+   * with its neighbours sitting at zero, one band at -100 could only remove 44% of
+   * its own hue's saturation, when "Reds -100" has to fully desaturate red. So each
+   * band's window reaches exactly to its neighbouring centres instead, which sums to
+   * one by construction AND leaves each band owning its own centre outright.
+   *
+   * Both halves are asserted here, because fixing either one alone regressed the
+   * other.
+   */
+  const hslPatch = (hue) => {
+    const img = new ImageData(8, 8);
+    const ch = (n) => {
+      const k = (n + hue / 30) % 12;
+      return 255 * (0.5 - 0.5 * Math.max(-1, Math.min(1, Math.min(k - 3, 9 - k))));
+    };
+    for (let i = 0; i < 64; i++) {
+      const o = i * 4;
+      img.data[o] = Math.round(ch(0));
+      img.data[o + 1] = Math.round(ch(8));
+      img.data[o + 2] = Math.round(ch(4));
+      img.data[o + 3] = 255;
+    }
+    return img;
+  };
+  const satOf = (img) => {
+    const d = img.data;
+    const mx = Math.max(d[0], d[1], d[2]), mn = Math.min(d[0], d[1], d[2]);
+    return mx ? (mx - mn) / mx : 0;
+  };
+  const dropAt = (hue, params) => {
+    const before = satOf(hslPatch(hue));
+    const after = satOf(developImage(hslPatch(hue), params));
+    return before > 0.01 ? (before - after) / before : 0;
+  };
+
+  // Every band, at its own centre, must be fully effective — including the ones
+  // whose neighbours are only 30 degrees away.
+  for (const band of CAMERA_RAW_BANDS) {
+    const drop = dropAt(band.hue, { [`${band.key}Sat`]: -100 });
+    t.gt(drop, 0.85, `${band.label} at -100 desaturates its own centre (${(drop * 100).toFixed(0)}%)`);
+  }
+
+  // And must stop at its neighbours' centres, so the bands do not fight.
+  t.lt(dropAt(30, { redSat: -100 }), 0.15, 'Reds does not reach the orange centre');
+  t.lt(dropAt(0, { orangeSat: -100 }), 0.15, 'and Oranges does not reach the red centre');
+  t.lt(dropAt(120, { redSat: -100 }), 0.03, 'nor anywhere far away');
+
+  // Smoothly, not as a step: halfway between two centres both contribute.
+  const between = dropAt(15, { redSat: -100 });
+  t.gt(between, 0.2, `midway between two centres the roll-off is partial (${(between * 100).toFixed(0)}%)`);
+  t.lt(between, 0.9, 'rather than a hard step');
+});
+
 suite('camera raw / colour grading tints the ends separately', async (t) => {
   const graded = dev({ shadowHue: 220, shadowSat: 80, highlightHue: 45, highlightSat: 80 });
   const s = shadow(graded), w = white(graded);

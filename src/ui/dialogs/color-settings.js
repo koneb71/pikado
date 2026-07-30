@@ -80,6 +80,15 @@ export async function showConvertProfileDialog(doc = app.activeDoc) {
     { key: 'profile', label: 'Destination', type: 'select', options: profileOptions(doc) },
     { key: 'intent', label: 'Intent', type: 'select', options: INTENTS },
     { key: 'blackPoint', label: 'Use Black Point Compensation', type: 'checkbox' },
+    {
+      type: 'label',
+      className: 'pk-hint',
+      // Honest about when it does nothing: the built-in spaces are idealised and
+      // have a black point of zero, so there is nothing to compensate between them.
+      label: 'Black point compensation only has an effect when a profile declares a '
+        + 'real media black — an embedded profile with a bkpt tag. The built-in '
+        + 'working spaces have a black point of zero.',
+    },
   ], state, (key, value) => {
     state[key] = value;
     syncNote();
