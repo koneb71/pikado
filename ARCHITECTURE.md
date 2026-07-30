@@ -243,9 +243,30 @@ wrong answer rather than a crash:
   what. That is a constant, banked in `constantFlow` and added back by `compute`.
   Forgetting it leaves the cut correct and the flow value silently too small.
 
-Verified in `tests/suites/select.test.js` against an independent Edmonds–Karp
-implementation over ~190 random graphs, integer and real-valued, plus the
-max-flow-min-cut identity on every one.
+Verified in `tests/suites/select.test.js` two ways, and it needs both.
+
+**The flow value** is compared against an independent Edmonds–Karp implementation
+over ~400 random graphs across three densities, integer and real-valued. **The cut
+is checked separately**, because a labelling bug does not change the flow value: the
+augmenting phase can be perfectly correct while `inSource()` returns a partition
+that is not minimal. That is exactly what happened here — a wrong sister arc in
+`_adopt` left nodes stranded outside the source tree, Edmonds–Karp agreed on the
+flow every single time, and a broadened random sweep across three densities still
+found nothing.
+
+What catches it is `residualLeak()` in the suite: **the source side of the cut must
+be closed under residual arcs.** A stranded node is by definition reachable from the
+source through one, so closure fails immediately. The nine-node graph that exposed
+it is pinned as an explicit case, with a brute-force minimum over all 512
+partitions:
+
+```
+buggy: flow 11 (correct), partition 111010001, cut 16, leak 1 -> 6
+fixed: flow 11,           partition 111111111, cut 11, no leak
+```
+
+If you change the orientation of any arc pair in this file, that closure assertion
+is the one that will tell you.
 
 ### `src/select/grabcut.js` — iterated graph cuts
 
@@ -619,6 +640,27 @@ isNeutralDevelop(params) -> boolean                 // true when nothing would c
 CAMERA_RAW_DEFAULTS                                 // every key, at its neutral value
 CAMERA_RAW_BANDS                                    // the eight colour-mixer bands
 ```
+
+Three invariants that are easy to "simplify" away, each of which was a real bug:
+
+- **The tone-region curve is a LUT made monotonic by construction.** The weights have
+  real slope — `wBlacks` is `(1 - l)^6`, derivative -6 at black — so at Blacks +100
+  the transfer function's own slope was `1 + 0.3 x (-6)`, i.e. negative: darker
+  input, lighter output, a visible inversion in the deepest shadows that got worse
+  when two sliders stacked. Hand-tuning coefficients until it happens not to occur
+  breaks again the moment a weight changes; `enforceMonotonic` flattens exactly the
+  stretch that would have inverted and leaves the rest alone.
+- **`bandWeight` is a partition of unity, and must stay one.** The eight centres are
+  unevenly spaced (0, 30, 60, 120, 180, 240, 280, 320), so a fixed +/-60 degree
+  window overlapped three bands around orange: the same slider did about twice the
+  work there as on a green. Normalising by the total weight fixes that ratio and
+  breaks something worse — with its neighbours sitting at zero diluting it, Reds at
+  -100 could only remove 44% of red's saturation. Each window therefore reaches
+  exactly to its neighbouring centres, which sums to one *and* leaves each band
+  owning its own centre outright. Do not widen the windows and normalise.
+- **The encode table rounds, it does not truncate.** Truncating biased every dark
+  value downward, so the linear round trip was not value-preserving and the filter
+  was not quite the identity at its defaults.
 
 Stage order, which is Camera Raw's own and is not arbitrary:
 
