@@ -84,6 +84,21 @@ export class Tool {
   onKeyDown(e) { return false; }
   onKeyUp(e) { return false; }
 
+  /**
+   * Entries for the canvas context menu (right-click).
+   *
+   * Return an array of `{command: 'id'}` refs, explicit
+   * `{label, run, checked, disabled, accel}` items, `{separator: true}` or
+   * `{header: 'Text'}`. Command refs inherit their label, accelerator and
+   * enabled state from the command registry, so a tool never has to restate
+   * them. See src/ui/canvas-menu.js — it appends the shared transform/view
+   * entries after whatever the tool returns, so returning `[]` is fine.
+   *
+   * @param {object} e normalised pointer event at the click position
+   * @returns {Array<object>}
+   */
+  contextMenu(e) { return []; }
+
   /** Commit any in-progress interaction (Enter, tool switch, etc.). */
   commit() {}
   /** Abandon any in-progress interaction (Escape). */

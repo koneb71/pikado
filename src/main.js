@@ -70,6 +70,7 @@ import { buildTabBar } from './ui/tabbar.js';
 import { buildPanelDock } from './ui/panel-host.js';
 import { installShortcuts } from './ui/shortcuts.js';
 import { installFileDrop, openFiles } from './io/open.js';
+import { installCanvasMenu } from './ui/canvas-menu.js';
 import { tools } from './tools/base.js';
 
 /* ------------------------------------------------------------------ */
@@ -113,6 +114,7 @@ function boot() {
   buildPanelDock(document.getElementById('panels'));
 
   installShortcuts(view);
+  installCanvasMenu(view);
   installFileDrop(areaEl);
   installToasts();
   installBusy();

@@ -40,6 +40,22 @@ function drawCloseMarker(ctx, pt) {
   ctx.restore();
 }
 
+/**
+ * Menu for a click-by-click lasso that is mid-path: finish it or throw it away.
+ * The selection workflow is not offered here — there is no finished selection to
+ * work on yet, and the two things the user can do right now should not be buried
+ * under twelve rows that are about the previous one.
+ *
+ * @param {{close:Function, cancel:Function}} tool
+ * @param {number} count anchors placed so far
+ */
+function inProgressMenu(tool, count) {
+  return [
+    { label: 'Close Path', accel: 'Enter', disabled: count < 3, run: () => tool.close() },
+    { label: 'Cancel', accel: 'Esc', run: () => tool.cancel() },
+  ];
+}
+
 function drawAnchors(ctx, pts) {
   ctx.save();
   ctx.setLineDash([]);
@@ -208,6 +224,10 @@ class PolyLassoTool extends SelectionTool {
     if (!this.active) return;
     this.reset();
     this.preview();
+  }
+
+  contextMenu(e) {
+    return this.active ? inProgressMenu(this, this.points.length) : super.contextMenu(e);
   }
 
   drawOverlay(ctx, view) {
@@ -392,6 +412,10 @@ class MagneticLassoTool extends SelectionTool {
     if (!this.active) return;
     this.reset();
     this.preview();
+  }
+
+  contextMenu(e) {
+    return this.active ? inProgressMenu(this, this.anchors.length) : super.contextMenu(e);
   }
 
   drawOverlay(ctx, view) {

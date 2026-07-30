@@ -19,6 +19,8 @@ import { Layer, LayerType } from '../core/layer.js';
 import { createCanvas, ctx2d, el, debounce } from '../core/util.js';
 import { toHex, parseColor, toCss } from '../core/color.js';
 import { paramDialog } from '../ui/dialog.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
+import { formatAccel } from '../commands/registry.js';
 import { FONT_FAMILY_OPTIONS, FONT_WEIGHTS, fontStack, ensureFont, invalidateFontMetrics } from '../text/fonts.js';
 import {
   WARP_STYLES, defaultTextProps, layoutText, textOrigin, wrapWidthFor,
@@ -413,6 +415,39 @@ function hitTextLayer(doc, x, y, tol = 0) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Context menu                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Paste at the caret of the live editor.
+ *
+ * The browser owns the clipboard here, so this reads it through
+ * `navigator.clipboard` and falls back to telling the user to use the keyboard
+ * when that is unavailable or blocked.
+ */
+async function pasteIntoEditor(node) {
+  const clip = navigator.clipboard;
+  let text = '';
+  if (clip && clip.readText) {
+    try {
+      text = await clip.readText();
+    } catch {
+      text = '';
+    }
+  }
+  if (!text) {
+    app.toast('Clipboard text is unavailable — paste with the keyboard instead.', 'warn');
+    node.focus({ preventScroll: true });
+    return;
+  }
+  const start = node.selectionStart == null ? node.value.length : node.selectionStart;
+  const end = node.selectionEnd == null ? start : node.selectionEnd;
+  node.setRangeText(text, start, end, 'end');
+  node.focus({ preventScroll: true });
+  node.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/* ------------------------------------------------------------------ */
 /* Tools                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -619,6 +654,57 @@ class TypeToolBase extends Tool {
     if (!this.mask) doc.addLayer(layer);
     startSession({ doc, layer, tool: this, isNew: true, mask: this.mask });
     return layer;
+  }
+
+  /* ---------------- context menu ---------------- */
+
+  /** The live editor, when it is editing a real type layer (not a mask). */
+  editingNode() {
+    return session && !session.mask && session.node ? session.node : null;
+  }
+
+  contextMenu(e) {
+    const doc = this.doc;
+    if (!doc) return [];
+    const items = [];
+
+    // A type layer that is not the one being edited: offer to edit it rather
+    // than showing rows that would silently act on a different layer.
+    const hit = this.mask ? null : hitTextLayer(doc, e.x, e.y, this.tol());
+    if (hit && hit !== currentTextLayer(doc)) {
+      items.push({ label: 'Edit Type Layer', run: () => editTextLayer(doc, hit) });
+      items.push(sep());
+    }
+
+    items.push(cmd('type.rasterize', { hideWhenDisabled: true }));
+    items.push(cmd('type.convert-to-shape', { hideWhenDisabled: true }));
+    items.push(cmd('type.warp', { hideWhenDisabled: true }));
+
+    // The orientation commands read the active layer, so only offer them when
+    // that is what they will act on.
+    const active = doc.activeLayer();
+    if (active && active.type === LayerType.TEXT && active.text) {
+      items.push({ header: 'Orientation' });
+      items.push(cmd('type.orientation.horizontal'));
+      items.push(cmd('type.orientation.vertical'));
+    }
+
+    const node = this.editingNode();
+    if (node) {
+      items.push(sep());
+      items.push({
+        label: 'Select All',
+        accel: formatAccel('Ctrl+A'),
+        run: () => { node.focus({ preventScroll: true }); node.select(); },
+      });
+      items.push({
+        label: 'Paste',
+        accel: formatAccel('Ctrl+V'),
+        run: () => { pasteIntoEditor(node); },
+      });
+    }
+
+    return items;
   }
 
   /* ---------------- overlay ---------------- */

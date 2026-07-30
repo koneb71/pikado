@@ -6,6 +6,7 @@ import { getComposite } from '../render/compositor.js';
 import { createCanvas, ctx2dRead, clamp, clamp255 } from '../core/util.js';
 import { rgb, rgb2hsl, hsl2rgb, toCss, luminance, colorDistance } from '../core/color.js';
 import { OVERLAY } from '../ui/brand.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
 
 /**
  * Painting tools: Brush, Pencil, Colour Replacement, Mixer Brush.
@@ -29,6 +30,87 @@ function sizeStep(size, up) {
   if (s < 200) return 25;
   if (s < 500) return 50;
   return 100;
+}
+
+/* ------------------------------------------------------------------ */
+/* The right-click brush picker                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Right-clicking with a paint tool opens Photoshop's brush preset picker. The
+ * flat-menu equivalent is a short ladder of tip sizes and hardnesses, followed
+ * by the layer/edit entries that are worth reaching for mid-stroke.
+ */
+const SIZE_PRESETS = [1, 4, 12, 30, 80, 200];
+const HARDNESS_PRESETS = [0, 50, 100];
+
+/** Is `key` an option the tool is actually showing right now? */
+function optionShown(tool, key) {
+  const d = (tool.options || []).find((o) => o.key === key);
+  if (!d) return false;
+  if (typeof d.when === 'function') {
+    try {
+      if (!d.when(tool.state)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Size / hardness preset rows for a brush-driven tool. */
+export function brushPresetItems(tool) {
+  const items = [];
+  if (optionShown(tool, 'size')) {
+    const cur = Math.round(tool.state.size);
+    items.push({ header: 'Brush Size' });
+    for (const px of SIZE_PRESETS) {
+      items.push({
+        label: `${px} px`,
+        checked: cur === px,
+        run: () => {
+          tool.setOption('size', px);
+          app.requestRender();
+        },
+      });
+    }
+  }
+  if (optionShown(tool, 'hardness')) {
+    const cur = Math.round(tool.state.hardness);
+    items.push({ header: 'Hardness' });
+    for (const pct of HARDNESS_PRESETS) {
+      items.push({
+        label: `${pct}%`,
+        checked: cur === pct,
+        run: () => {
+          tool.setOption('hardness', pct);
+          app.requestRender();
+        },
+      });
+    }
+  }
+  return items;
+}
+
+/**
+ * The whole canvas menu for a brush-driven tool: the preset picker, then any
+ * tool-specific rows (a clone source to reset, a mixer brush to clean), then
+ * the layer and edit entries that make sense while painting.
+ *
+ * @param {Tool} tool
+ * @param {Array<object>} [extra] rows inserted after the presets
+ */
+export function brushContextMenu(tool, extra = []) {
+  return [
+    ...brushPresetItems(tool),
+    sep(),
+    ...extra,
+    sep(),
+    cmd('layer.new', { label: 'New Layer' }),
+    cmd('edit.fill'),
+    sep(),
+    cmd('edit.undo'),
+  ];
 }
 
 /** Clone a descriptor list with different defaults. */
@@ -327,6 +409,16 @@ export class BrushToolBase extends Tool {
     if (v !== cur) this.setOption('size', v);
     app.requestRender();
     return true;
+  }
+
+  /* -------- context menu ----------------------------------------- */
+
+  /**
+   * Every brush-driven tool offers the preset picker. Tools with a sampled
+   * source override this and pass their own rows through `extra`.
+   */
+  contextMenu() {
+    return brushContextMenu(this);
   }
 
   /* -------- overlay ---------------------------------------------- */
@@ -771,6 +863,19 @@ class MixerBrushTool extends BrushToolBase {
 
   afterStroke() {
     if (this.state.cleanAfterStroke) this.reservoir = null;
+  }
+
+  contextMenu() {
+    // "Clean" is the mixer's equivalent of clearing a sampled source: it drops
+    // whatever colour the bristles are holding.
+    return brushContextMenu(this, [{
+      label: 'Clean Brush',
+      disabled: !this.reservoir,
+      run: () => {
+        this.reservoir = null;
+        app.toast('Mixer brush cleaned.', 'ok', 1200);
+      },
+    }]);
   }
 }
 

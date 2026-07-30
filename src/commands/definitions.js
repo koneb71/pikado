@@ -1,5 +1,5 @@
 import { app } from '../core/app.js';
-import { el, createCanvas, formatBytes, clamp } from '../core/util.js';
+import { el, uid, createCanvas, formatBytes, clamp } from '../core/util.js';
 import { registerCommand, registerCommands, getCommand } from './registry.js';
 import { Dialog, confirmDialog, paramDialog, promptDialog } from '../ui/dialog.js';
 import { toHex, toCss } from '../core/color.js';
@@ -493,6 +493,39 @@ async function loadSelection(doc) {
   commitSelection(doc, 'Load Selection');
 }
 
+/**
+ * Select > Make Work Path — trace the selection into `doc.paths`.
+ *
+ * Reuses the marching-squares tracer and the bezier pipeline that Type >
+ * Convert to Shape uses (`traceAlphaContours` + `loopsToSubpaths`, below);
+ * only the bounding box is scanned, since a selection is usually small
+ * relative to the canvas. Like the Paths panel, the traced result replaces the
+ * existing Work Path rather than piling up new ones.
+ */
+function makeWorkPath(doc) {
+  const sel = doc.selection;
+  const b = sel.active ? sel.bounds() : null;
+  if (!b) { app.toast('Make a selection first.'); return; }
+
+  // A 1px pad keeps a selection that touches the canvas edge a closed loop.
+  const pad = 1;
+  const ox = Math.max(0, b.x - pad);
+  const oy = Math.max(0, b.y - pad);
+  const crop = createCanvas(b.width + pad * 2, b.height + pad * 2);
+  crop.getContext('2d').drawImage(sel.toAlphaCanvas(), -ox, -oy);
+
+  const subpaths = loopsToSubpaths(traceAlphaContours(crop), ox, oy, 1, 1.4);
+  if (!subpaths.length) { app.toast('That selection is too small to trace.'); return; }
+
+  const i = doc.paths.findIndex((p) => p.isWork);
+  const path = { id: i >= 0 ? doc.paths[i].id : uid('path'), name: 'Work Path', isWork: true, subpaths };
+  if (i >= 0) doc.paths[i] = path;
+  else doc.paths.unshift(path);
+  doc.activePathId = path.id;
+  doc.emit('structure');
+  doc.commit('Make Work Path');
+}
+
 function selectAllLayers(doc) {
   const list = doc.flatLayers().filter((l) => !l.isBackground);
   const use = list.length ? list : doc.flatLayers();
@@ -507,6 +540,63 @@ function deselectLayers(doc) {
   doc.activeLayerId = null;
   doc.emit('selection-change');
   doc.emit('structure');
+}
+
+/* ------------------------------------------------------------------ */
+/* Layer > New > Layer Via Copy / Layer Via Cut                        */
+/* ------------------------------------------------------------------ */
+
+/** The layer Layer Via Copy/Cut reads from — real pixels, not a group or mask. */
+function viaSourceLayer() {
+  const l = activeLayer();
+  if (!l || !l.canvas || l.type === LayerType.GROUP) return null;
+  if (l.editingMask) return null; // "via copy" means the pixels, not the mask
+  return l;
+}
+
+function canLayerVia(cut) {
+  const l = viaSourceLayer();
+  if (!l || !hasSelection()) return false;
+  // Cut has to erase the source, so it needs an unlocked raster layer; copy
+  // only reads, so it happily works from type, shape and smart layers too.
+  return !cut || (l.type === LayerType.RASTER && !l.locked.all && !l.locked.pixels);
+}
+
+/**
+ * Move the selected pixels of the active layer into a new layer above it.
+ *
+ * Layer buffers are always document-sized, so writing the extracted pixels at
+ * the origin is what "keeps position" means here — there is no offset to carry.
+ * Cut additionally clears the region from the source layer; both record a
+ * single history entry.
+ *
+ * @param {import('../core/document.js').PikaDocument} doc
+ * @param {boolean} cut
+ */
+function layerViaSelection(doc, cut) {
+  const layer = viaSourceLayer();
+  if (!layer || !doc.selection.active) return;
+  if (!doc.selection.bounds()) { app.toast('The selection is empty.'); return; }
+  const alpha = doc.selection.toAlphaCanvas();
+
+  const cv = createCanvas(doc.width, doc.height);
+  const c = cv.getContext('2d');
+  c.drawImage(layer.canvas, 0, 0);
+  c.globalCompositeOperation = 'destination-in';
+  c.drawImage(alpha, 0, 0);
+
+  if (cut) {
+    // COW before the source pixels change, or older undo states lose them.
+    doc.beginEdit(layer);
+    const lc = layer.canvas.getContext('2d');
+    lc.save();
+    lc.globalCompositeOperation = 'destination-out';
+    lc.drawImage(alpha, 0, 0);
+    lc.restore();
+  }
+
+  doc.addLayer(new Layer({ type: LayerType.RASTER, name: ops.nextLayerName(doc), canvas: cv }), { above: layer });
+  doc.commit(cut ? 'Layer Via Cut' : 'Layer Via Copy');
 }
 
 /* ------------------------------------------------------------------ */
@@ -771,6 +861,39 @@ function simplifyLoop(points, tolerance) {
   return points.filter((_, i) => keep[i]);
 }
 
+/**
+ * Turn traced pixel loops into closed bezier subpaths.
+ *
+ * Shared by Type > Convert to Shape and Select > Make Work Path: both trace an
+ * alpha channel with `traceAlphaContours` and then need the same simplify →
+ * curve-fit → close pipeline.
+ *
+ * @param {{x:number,y:number}[][]} loops
+ * @param {number} [ox] offset added to every point (loops traced from a crop)
+ * @param {number} [oy]
+ * @param {number} [simplifyTol] RDP tolerance in px
+ * @param {number} [fitTol] curve-fitting tolerance in px
+ */
+function loopsToSubpaths(loops, ox = 0, oy = 0, simplifyTol = 0.6, fitTol = 1.1) {
+  const subpaths = [];
+  for (const raw of loops) {
+    const loop = ox || oy ? raw.map((p) => ({ x: p.x + ox, y: p.y + oy })) : raw;
+    const simple = simplifyLoop(loop, simplifyTol);
+    if (simple.length < 4) continue;
+    const sp = fitCurve(simple, fitTol);
+    if (sp.points.length < 3) continue;
+    const first = sp.points[0];
+    const last = sp.points[sp.points.length - 1];
+    if (Math.hypot(last.x - first.x, last.y - first.y) < 1.2) {
+      first.in = last.in ? { ...last.in } : null;
+      sp.points.pop();
+    }
+    sp.closed = true;
+    subpaths.push(sp);
+  }
+  return subpaths;
+}
+
 /** Type > Convert to Shape — trace the rendered glyphs into vector subpaths. */
 function convertTypeToShape(doc) {
   const l = textLayer();
@@ -788,22 +911,7 @@ function convertTypeToShape(doc) {
   const loops = traceAlphaContours(crop);
   if (!loops.length) { app.toast('This type layer has no visible pixels.'); return; }
 
-  const subpaths = [];
-  for (const raw of loops) {
-    const loop = raw.map((p) => ({ x: p.x + ox, y: p.y + oy }));
-    const simple = simplifyLoop(loop, 0.6);
-    if (simple.length < 4) continue;
-    const sp = fitCurve(simple, 1.1);
-    if (sp.points.length < 3) continue;
-    const first = sp.points[0];
-    const last = sp.points[sp.points.length - 1];
-    if (Math.hypot(last.x - first.x, last.y - first.y) < 1.2) {
-      first.in = last.in ? { ...last.in } : null;
-      sp.points.pop();
-    }
-    sp.closed = true;
-    subpaths.push(sp);
-  }
+  const subpaths = loopsToSubpaths(loops, ox, oy);
   if (!subpaths.length) { app.toast('The outline was too small to trace.'); return; }
 
   const color = typeof l.text.color === 'string' ? l.text.color : toCss(l.text.color || '#000000');
@@ -1249,6 +1357,20 @@ registerCommands([
     run: () => ops.convertLayerToBackground(D()),
   },
   {
+    // Photoshop puts this on Ctrl+J, but Pikado bound that to Duplicate Layer
+    // long before this command existed and `buildBindingMap` is first-wins — so
+    // claiming the accel here would print a shortcut in the menu that actually
+    // runs Duplicate Layer. Left unbound rather than advertised falsely.
+    id: 'layer.via-copy', label: 'Layer Via Copy',
+    enabled: () => canLayerVia(false),
+    run: () => layerViaSelection(D(), false),
+  },
+  {
+    id: 'layer.via-cut', label: 'Layer Via Cut', accel: 'Ctrl+Shift+J',
+    enabled: () => canLayerVia(true),
+    run: () => layerViaSelection(D(), true),
+  },
+  {
     id: 'layer.new-group', label: 'Group',
     enabled: hasDoc,
     run: () => {
@@ -1504,6 +1626,11 @@ registerCommands([
   },
   { id: 'select.load', label: 'Load Selection…', enabled: hasDoc, run: () => loadSelection(D()) },
   { id: 'select.save', label: 'Save Selection…', enabled: hasSelection, run: () => saveSelection(D()) },
+  {
+    id: 'select.make-work-path', label: 'Make Work Path',
+    enabled: hasSelection,
+    run: () => app.busy('Make Work Path', async () => makeWorkPath(D())),
+  },
 
   /* --- Filter ----------------------------------------------------- */
   {
@@ -1718,7 +1845,11 @@ export const MENU_TREE = [
     items: [
       {
         label: 'New',
-        items: ['layer.new', 'layer.from-background', 'layer.to-background', '---', 'layer.new-group', 'layer.group-from-layers'],
+        items: [
+          'layer.new', 'layer.from-background', 'layer.to-background',
+          '---', 'layer.via-copy', 'layer.via-cut',
+          '---', 'layer.new-group', 'layer.group-from-layers',
+        ],
       },
       'layer.duplicate',
       'layer.ungroup',
@@ -1823,6 +1954,7 @@ export const MENU_TREE = [
       '---',
       'select.load',
       'select.save',
+      'select.make-work-path',
     ],
   },
   {

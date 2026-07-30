@@ -7,15 +7,20 @@
  */
 
 import { app } from '../core/app.js';
-import { Tool, registerTool } from './base.js';
-import { ctx2dRead } from '../core/util.js';
+import { Tool, registerTool, getTool } from './base.js';
+import { createCanvas, ctx2d, ctx2dRead } from '../core/util.js';
+import { LayerType } from '../core/layer.js';
+import { toCss } from '../core/color.js';
 import { getComposite } from '../render/compositor.js';
+import { PaintStroke, brushFromOptions } from '../paint/brush-engine.js';
+import { sep } from '../ui/canvas-menu.js';
 import {
   createSubpath, createPoint, drawPathOverlay, hitTestPoint, hitTestSegment,
   insertPointAt, removePoint, convertPoint, smoothSubpath, fitCurve,
   createShapeLayer, appendSubpathsToDoc, paintSubpathsOnLayer, uniqueLayerName,
-  findAnchorAt, findSegmentAt, activeVectorTarget, beginVectorEdit,
-  touchVectorTarget, commitVectorTarget,
+  findAnchorAt, findSegmentAt, findShapeAt, activeVectorTarget, beginVectorEdit,
+  touchVectorTarget, commitVectorTarget, segmentOf, segmentCount, pointOnSegment,
+  pathToPath2D, pathToSelectionMask,
 } from '../vector/path.js';
 
 /* ------------------------------------------------------------------ */
@@ -158,6 +163,244 @@ export function movePointTo(p, origin, dx, dy) {
   p.y = origin.y + dy;
   if (p.in && origin.in) { p.in.x = origin.in.x + dx; p.in.y = origin.in.y + dy; }
   if (p.out && origin.out) { p.out.x = origin.out.x + dx; p.out.y = origin.out.y + dy; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Context-menu helpers (shared with path-select.js and shape.js)      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The path actions live here rather than in `ui/panels/paths.js` because that
+ * panel keeps them as closures inside `build()` and exports nothing. They call
+ * the same helpers it does (`pathToSelectionMask`, `pathToPath2D`, the brush
+ * engine) so a path filled from the canvas menu matches one filled from the
+ * panel button.
+ */
+
+/**
+ * The layer Fill/Stroke Path can draw onto, or null. Shape and text layers are
+ * excluded: their pixels are re-derived from the geometry, so a fill painted
+ * into them would silently disappear on the next edit.
+ */
+function paintablePathLayer(doc) {
+  const l = doc && doc.activeLayer();
+  if (!l) return null;
+  if (l.locked.all || l.locked.pixels) return null;
+  if (l.editingMask && l.mask) return l;
+  return l.type === LayerType.RASTER && l.canvas ? l : null;
+}
+
+/** Flatten a subpath into a polyline the brush engine can walk. */
+function flattenSubpath(sp, steps = 24) {
+  const pts = sp.points || [];
+  const out = [];
+  if (!pts.length) return out;
+  out.push({ x: pts[0].x, y: pts[0].y });
+  const segs = segmentCount(sp);
+  for (let i = 0; i < segs; i++) {
+    const s = segmentOf(sp, i);
+    if (!s) continue;
+    if (s.straight) { out.push({ x: s.p3.x, y: s.p3.y }); continue; }
+    for (let k = 1; k <= steps; k++) {
+      const p = pointOnSegment([sp], 0, i, k / steps);
+      if (p) out.push(p);
+    }
+  }
+  return out;
+}
+
+/** Load subpaths as the document selection. */
+function makeSelectionFromPath(doc, subpaths) {
+  let mask = null;
+  try {
+    mask = pathToSelectionMask(subpaths, doc.width, doc.height);
+  } catch (err) {
+    console.warn('[pen] pathToSelectionMask failed', err);
+  }
+  if (!mask || mask.length !== doc.width * doc.height) {
+    app.toast('That path cannot be turned into a selection.', 'warn');
+    return;
+  }
+  doc.selection.set(mask instanceof Uint8ClampedArray ? mask : Uint8ClampedArray.from(mask));
+  doc.emit('selection-change');
+  doc.commit('Make Selection from Path');
+}
+
+/** Fill subpaths with the foreground colour on the active raster layer. */
+function fillPathWithForeground(doc, subpaths) {
+  const layer = paintablePathLayer(doc);
+  if (!layer) { app.toast('Select an unlocked raster layer first.', 'warn'); return; }
+  const tmp = createCanvas(doc.width, doc.height);
+  const tc = ctx2d(tmp);
+  tc.fillStyle = toCss(app.foreground);
+  tc.fill(pathToPath2D(subpaths));
+  if (doc.selection.active) {
+    tc.globalCompositeOperation = 'destination-in';
+    tc.drawImage(doc.selection.toAlphaCanvas(), 0, 0);
+    tc.globalCompositeOperation = 'source-over';
+  }
+  doc.beginEdit(layer);
+  ctx2d(layer.paintTarget()).drawImage(tmp, 0, 0);
+  doc.commit('Fill Path');
+}
+
+/** Stroke subpaths with the current brush on the active raster layer. */
+function strokePathWithBrush(doc, subpaths) {
+  const layer = paintablePathLayer(doc);
+  if (!layer) { app.toast('Select an unlocked raster layer first.', 'warn'); return; }
+  const brushTool = getTool('brush');
+  const brush = brushFromOptions(brushTool ? brushTool.state : {}, { smoothing: 0, airbrush: false });
+  doc.beginEdit(layer);
+  const stroke = new PaintStroke({
+    doc, layer, target: layer.paintTarget(), brush, mode: 'paint', color: toCss(app.foreground),
+  });
+  let drew = false;
+  for (const sp of subpaths) {
+    const line = flattenSubpath(sp);
+    if (line.length < 2) continue;
+    stroke.begin(line[0].x, line[0].y, 1);
+    for (let i = 1; i < line.length; i++) stroke.move(line[i].x, line[i].y, 1);
+    if (sp.closed) stroke.move(line[0].x, line[0].y, 1);
+    stroke.end();
+    drew = true;
+  }
+  if (!drew) { app.toast('That path has nothing to stroke.', 'warn'); return; }
+  stroke.flush();
+  doc.commit('Stroke Path');
+}
+
+/** Drop a Paths-panel entry. */
+function deletePathRecord(doc, path) {
+  const i = doc.paths.indexOf(path);
+  if (i < 0) return;
+  doc.paths.splice(i, 1);
+  if (doc.activePathId === path.id) doc.activePathId = doc.paths[0] ? doc.paths[0].id : null;
+  doc.commit('Delete Path');
+}
+
+/**
+ * The vector target a canvas menu should act on: whatever the click landed on,
+ * else the active path or shape layer.
+ * @returns {{kind:'layer'|'path', layer?:object, path?:object, subpaths:Array}|null}
+ */
+export function pathTargetAt(doc, e, tol) {
+  if (!doc) return null;
+  const hit = findShapeAt(doc, e.x, e.y, tol);
+  if (hit) return hit.target;
+  const t = activeVectorTarget(doc);
+  return t && t.subpaths && t.subpaths.length ? t : null;
+}
+
+/**
+ * Make Selection / Fill Path / Stroke Path / Delete Path for `target`.
+ * Returns `[]` when there is no geometry, so the menu stays short instead of
+ * showing four dead rows.
+ */
+export function pathActionItems(doc, target) {
+  if (!doc || !target || !target.subpaths || !target.subpaths.length) return [];
+  const subpaths = target.subpaths;
+  const paintable = !!paintablePathLayer(doc);
+  const items = [
+    { label: 'Make Selection', run: () => makeSelectionFromPath(doc, subpaths) },
+    { label: 'Fill Path', run: () => fillPathWithForeground(doc, subpaths), disabled: !paintable },
+    { label: 'Stroke Path', run: () => strokePathWithBrush(doc, subpaths), disabled: !paintable },
+  ];
+  if (target.kind === 'path' && target.path) {
+    items.push(sep());
+    items.push({ label: 'Delete Path', run: () => deletePathRecord(doc, target.path) });
+  }
+  return items;
+}
+
+/**
+ * Where a right-click landed on path geometry: an anchor, or a segment.
+ * `live` describes a subpath a tool is still drawing (not yet in the document).
+ */
+function anchorSite(doc, e, tol, live) {
+  if (live && live.subpaths && live.subpaths[0] && (live.subpaths[0].points || []).length) {
+    const a = hitTestPoint(live.subpaths, e.x, e.y, tol);
+    if (a && a.kind === 'anchor') return { live, subpaths: live.subpaths, hit: a };
+    const s = hitTestSegment(live.subpaths, e.x, e.y, tol);
+    if (s) return { live, subpaths: live.subpaths, hit: s };
+  }
+  if (!doc) return null;
+  const fa = findAnchorAt(doc, e.x, e.y, tol);
+  if (fa && fa.hit.kind === 'anchor') return { target: fa.target, subpaths: fa.target.subpaths, hit: fa.hit };
+  const fs = findSegmentAt(doc, e.x, e.y, tol);
+  if (fs) return { target: fs.target, subpaths: fs.target.subpaths, hit: fs.hit };
+  return null;
+}
+
+/**
+ * Add / Delete / Convert Point rows — offered only when the click actually hits
+ * a segment or an anchor.
+ * @param {object} doc
+ * @param {object} e normalised pointer event
+ * @param {number} tol document-space hit tolerance
+ * @param {{subpaths:Array, changed:Function}} [live] subpath still being drawn
+ */
+export function anchorEditItems(doc, e, tol, live = null) {
+  const site = anchorSite(doc, e, tol, live);
+  if (!site) return [];
+
+  const begin = () => { if (site.target) beginVectorEdit(doc, site.target); };
+  const done = (label) => {
+    if (site.target) commitVectorTarget(doc, site.target, label);
+    else if (site.live && site.live.changed) site.live.changed();
+    app.requestRender();
+  };
+
+  if (site.hit.kind === 'anchor') {
+    const sp = site.subpaths[site.hit.subpathIndex];
+    const p = sp && sp.points[site.hit.pointIndex];
+    if (!p) return [];
+    const smooth = !!(p.in || p.out);
+    return [
+      {
+        label: 'Delete Anchor Point',
+        run: () => {
+          begin();
+          removePoint(site.subpaths, site.hit.subpathIndex, site.hit.pointIndex);
+          done('Delete Anchor Point');
+        },
+      },
+      {
+        label: smooth ? 'Convert to Corner Point' : 'Convert to Smooth Point',
+        run: () => {
+          begin();
+          convertPoint(site.subpaths, site.hit.subpathIndex, site.hit.pointIndex, !smooth);
+          done('Convert Anchor Point');
+        },
+      },
+    ];
+  }
+
+  return [{
+    label: 'Add Anchor Point',
+    run: () => {
+      begin();
+      insertPointAt(site.subpaths, site.hit.subpathIndex, site.hit.segmentIndex, site.hit.t);
+      done('Add Anchor Point');
+    },
+  }];
+}
+
+/**
+ * The path-flavoured canvas menu every pen tool shares: what the click hit,
+ * then the actions for the path itself.
+ * @param {Tool} tool
+ * @param {object} e normalised pointer event
+ * @param {{live?:object, extra?:Array}} [o]
+ */
+function penMenu(tool, e, o = {}) {
+  const doc = tool.doc;
+  if (!doc) return [];
+  const tol = tool.tol(7);
+  const items = anchorEditItems(doc, e, tol, o.live || null);
+  if (o.extra && o.extra.length) items.push(sep(), ...o.extra);
+  items.push(sep());
+  items.push(...pathActionItems(doc, pathTargetAt(doc, e, tol)));
+  return items;
 }
 
 /* ------------------------------------------------------------------ */
@@ -361,6 +604,34 @@ class PenTool extends VectorTool {
     app.requestRender();
   }
 
+  /** The subpath still being drawn, described for `anchorEditItems`. */
+  liveSubpath() {
+    if (!this.sp || !this.sp.points.length) return null;
+    return {
+      subpaths: [this.sp],
+      changed: () => {
+        if (!this.sp) return;
+        if (this.sp.points.length < 2) this.sp.closed = false;
+        if (!this.sp.points.length) this.sp = null;
+      },
+    };
+  }
+
+  contextMenu(e) {
+    const open = this.sp && this.sp.points.length >= 2 && !this.sp.closed;
+    return penMenu(this, e, {
+      live: this.liveSubpath(),
+      extra: open ? [{
+        label: 'Close Path',
+        run: () => {
+          if (!this.sp || this.sp.points.length < 2) return;
+          this.sp.closed = true;
+          this.finishPath();
+        },
+      }] : [],
+    });
+  }
+
   drawOverlay(ctx, view) {
     const doc = this.doc;
     if (!doc) return;
@@ -437,6 +708,10 @@ class FreeformPenTool extends VectorTool {
     this.pts = null;
     this.edges = null;
     app.requestRender();
+  }
+
+  contextMenu(e) {
+    return penMenu(this, e);
   }
 
   /** Sobel gradient magnitude over the flattened document. */
@@ -620,6 +895,32 @@ class CurvaturePenTool extends VectorTool {
     app.requestRender();
   }
 
+  contextMenu(e) {
+    const open = this.sp && this.sp.points.length >= 2 && !this.sp.closed;
+    return penMenu(this, e, {
+      live: this.sp && this.sp.points.length
+        ? {
+            subpaths: [this.sp],
+            changed: () => {
+              if (!this.sp) return;
+              if (this.sp.points.length < 2) this.sp.closed = false;
+              if (!this.sp.points.length) this.sp = null;
+              else smoothSubpath(this.sp, 1, true);
+            },
+          }
+        : null,
+      extra: open ? [{
+        label: 'Close Path',
+        run: () => {
+          if (!this.sp || this.sp.points.length < 2) return;
+          this.sp.closed = true;
+          smoothSubpath(this.sp, 1, true);
+          this.finishPath();
+        },
+      }] : [],
+    });
+  }
+
   drawOverlay(ctx, view) {
     const doc = this.doc;
     if (!doc) return;
@@ -644,6 +945,10 @@ class PointEditTool extends VectorTool {
 
   currentTarget() {
     return this.target || activeVectorTarget(this.doc);
+  }
+
+  contextMenu(e) {
+    return penMenu(this, e);
   }
 
   drawOverlay(ctx, view) {

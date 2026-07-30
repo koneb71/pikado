@@ -6,6 +6,7 @@ import { toCss, colorDistance } from '../core/color.js';
 import { getComposite } from '../render/compositor.js';
 import { BrushToolBase, tweakDefaults, buildMatchMask, samplePixel } from './brush.js';
 import { historySourceCanvasFor } from './history-brush.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
 
 /**
  * Eraser, Background Eraser and Magic Eraser.
@@ -281,6 +282,26 @@ class MagicEraserTool extends Tool {
       ],
     });
     this.app = app;
+  }
+
+  /** No brush tip here, so the menu offers the flags that shape the match. */
+  contextMenu() {
+    const flag = (key, label) => ({
+      label,
+      checked: !!this.state[key],
+      run: () => this.setOption(key, !this.state[key]),
+    });
+    return [
+      { header: 'Magic Eraser' },
+      flag('contiguous', 'Contiguous'),
+      flag('antialias', 'Anti-alias'),
+      flag('sampleAllLayers', 'Sample All Layers'),
+      sep(),
+      cmd('layer.new', { label: 'New Layer' }),
+      cmd('edit.fill'),
+      sep(),
+      cmd('edit.undo'),
+    ];
   }
 
   onPointerDown(e) {

@@ -3,6 +3,7 @@ import { isSmartLayer, getSmartTransform, setSmartTransform, matrixMultiply } fr
 import { createCanvas, cloneCanvas, clamp, deg2rad, rad2deg } from '../core/util.js';
 import { LayerType } from '../core/layer.js';
 import { OVERLAY } from '../ui/brand.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
 
 /**
  * The free-transform session.
@@ -439,6 +440,38 @@ export function transformSelectionStart(doc) {
 
 export function isTransforming() {
   return !!app.transformSession;
+}
+
+/**
+ * Canvas-menu entries for a live session. The Move tool shows these instead of
+ * its layer picker while a transform is in flight, which is what Photoshop does
+ * when you right-click inside the transform box.
+ *
+ * The mode rows are radio-like: `edit.transform.*` switches an existing session
+ * rather than starting a new one, so the current mode is ticked. Apply and
+ * Cancel have no commands of their own — they are the Enter/Escape keys.
+ *
+ * @returns {Array<object>}
+ */
+export function transformContextMenu() {
+  const s = app.transformSession;
+  if (!s) return [];
+  const mode = (id, m) => cmd(id, { checked: s.mode === m });
+  return [
+    { header: s.selectionMode ? 'Transform Selection' : 'Free Transform' },
+    mode('edit.transform.scale', 'scale'),
+    mode('edit.transform.rotate', 'rotate'),
+    mode('edit.transform.skew', 'skew'),
+    mode('edit.transform.distort', 'distort'),
+    mode('edit.transform.perspective', 'perspective'),
+    mode('edit.transform.warp', 'warp'),
+    sep(),
+    cmd('edit.transform.flip-h'),
+    cmd('edit.transform.flip-v'),
+    sep(),
+    { label: 'Apply', accel: 'Enter', run: () => commitTransform() },
+    { label: 'Cancel', accel: 'Esc', run: () => cancelTransform() },
+  ];
 }
 
 /** Re-draw every layer in the session through the current transform. */

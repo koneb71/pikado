@@ -2,6 +2,7 @@ import { registerTool } from './base.js';
 import { SelectionTool } from './marquee.js';
 import { getComposite } from '../render/compositor.js';
 import { ctx2dRead, clamp } from '../core/util.js';
+import { cmd } from '../ui/canvas-menu.js';
 
 /**
  * Magic Wand and Quick Selection, plus the Select > Grow / Similar helpers the
@@ -105,6 +106,21 @@ export function wandMask(img, sx, sy, tol, { contiguous = true, antialias = true
   return out;
 }
 
+/**
+ * Context-menu Modify group for the colour-based tools.
+ *
+ * Grow and Similar are the follow-ups you actually reach for after a wand
+ * click — they extend the same colour match — so they take the place of the
+ * geometric Expand/Contract the marquee offers.
+ */
+function colorSelectionModifyItems() {
+  return [
+    cmd('select.modify.feather', { hideWhenDisabled: true }),
+    cmd('select.grow', { hideWhenDisabled: true }),
+    cmd('select.similar', { hideWhenDisabled: true }),
+  ];
+}
+
 /* ------------------------------------------------------------------ */
 /* Magic Wand                                                          */
 /* ------------------------------------------------------------------ */
@@ -138,6 +154,10 @@ class MagicWandTool extends SelectionTool {
       antialias: this.antialiasOn(),
     });
     this.applyMask(mask, this.modeFor(e), 'Magic Wand');
+  }
+
+  selectionModifyItems() {
+    return colorSelectionModifyItems();
   }
 }
 
@@ -355,6 +375,10 @@ class QuickSelectTool extends SelectionTool {
     sel.set(out);
     doc.emit('selection-change');
     doc.touch('quick-select');
+  }
+
+  selectionModifyItems() {
+    return colorSelectionModifyItems();
   }
 
   drawOverlay(ctx, view) {

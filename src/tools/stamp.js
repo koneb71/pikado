@@ -3,7 +3,7 @@ import { app } from '../core/app.js';
 import { PaintStroke, brushOptionDescriptors, brushFromOptions } from '../paint/brush-engine.js';
 import { cloneCanvas, clamp } from '../core/util.js';
 import { getComposite } from '../render/compositor.js';
-import { BrushToolBase, tweakDefaults } from './brush.js';
+import { BrushToolBase, tweakDefaults, brushContextMenu } from './brush.js';
 import { makeTiledCanvas, patternOptions } from '../paint/patterns.js';
 
 /**
@@ -94,6 +94,20 @@ class CloneStampTool extends BrushToolBase {
   cancel() {
     this.livePoint = null;
     super.cancel();
+  }
+
+  contextMenu() {
+    return brushContextMenu(this, [{
+      label: 'Reset Clone Source',
+      disabled: !this.source,
+      run: () => {
+        this.source = null;
+        this.offset = null;
+        this.livePoint = null;
+        app.toast('Clone source cleared.', 'info', 1200);
+        app.requestRender();
+      },
+    }]);
   }
 
   drawOverlay(ctx, view) {

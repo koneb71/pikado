@@ -13,6 +13,8 @@ import {
   activeVectorTarget, beginVectorEdit, touchVectorTarget, refreshShapeLayer,
   removePoint,
 } from '../vector/path.js';
+import { sep } from '../ui/canvas-menu.js';
+import { anchorEditItems, pathActionItems, pathTargetAt } from './pen.js';
 
 function targetKey(t) {
   if (!t) return '';
@@ -187,6 +189,13 @@ class PathSelectTool extends Tool {
       return true;
     }
     return false;
+  }
+
+  /** The black arrow works on whole paths, so only the path actions apply. */
+  contextMenu(e) {
+    const doc = this.doc;
+    if (!doc) return [];
+    return pathActionItems(doc, pathTargetAt(doc, e, this.tol()));
   }
 
   drawOverlay(ctx, view) {
@@ -435,6 +444,18 @@ class DirectSelectTool extends Tool {
     doc.commit('Move Anchor Points');
     app.requestRender();
     return true;
+  }
+
+  /** The white arrow edits points, so the anchor rows come first. */
+  contextMenu(e) {
+    const doc = this.doc;
+    if (!doc) return [];
+    const tol = this.tol();
+    return [
+      ...anchorEditItems(doc, e, tol),
+      sep(),
+      ...pathActionItems(doc, pathTargetAt(doc, e, tol)),
+    ];
   }
 
   drawOverlay(ctx, view) {

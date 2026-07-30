@@ -5,6 +5,7 @@ import { toCss } from '../core/color.js';
 import { BLEND_MODES } from '../core/blend.js';
 import { blendOnto, getComposite } from '../render/compositor.js';
 import { Dialog } from '../ui/dialog.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
 import {
   GRADIENT_PRESETS, getGradientPreset, renderGradient, gradientPreviewCanvas,
 } from '../paint/gradients.js';
@@ -104,6 +105,31 @@ function renderGradientSwatch(container, state, onChange, p) {
   });
   container.appendChild(btn);
   return { sync: draw };
+}
+
+/**
+ * Checkable rows for one of the tool's own select/radio options, read straight
+ * off the option descriptor so the menu cannot drift from the options bar.
+ */
+function optionChoices(tool, key) {
+  const desc = tool.options.find((o) => o.key === key);
+  return ((desc && desc.options) || []).map((c) => {
+    const value = c && typeof c === 'object' ? c.value : c;
+    return {
+      label: c && typeof c === 'object' ? c.label : String(c),
+      checked: tool.state[key] === value,
+      run: () => tool.setOption(key, value),
+    };
+  });
+}
+
+/** A checkable row that flips a boolean option. */
+function optionToggle(tool, key, label) {
+  return {
+    label,
+    checked: !!tool.state[key],
+    run: () => tool.setOption(key, !tool.state[key]),
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -213,6 +239,22 @@ class GradientTool extends Tool {
     c.clearRect(0, 0, d.target.width, d.target.height);
     c.drawImage(d.base, 0, 0);
     d.doc.touch('gradient-cancel');
+  }
+
+  /**
+   * The gradient *type*, not the preset list — thirty preset thumbnails do not
+   * belong in a context menu, and the swatch in the options bar already picks
+   * those.
+   */
+  contextMenu() {
+    return [
+      ...optionChoices(this, 'type'),
+      sep(),
+      optionToggle(this, 'reverse', 'Reverse'),
+      sep(),
+      cmd('edit.fill', { hideWhenDisabled: true }),
+      cmd('layer.fill.gradient', { label: 'New Gradient Fill Layer…', hideWhenDisabled: true }),
+    ];
   }
 
   drawOverlay(ctx, view) {
@@ -455,6 +497,19 @@ class BucketTool extends Tool {
       maskToAlphaCanvas(mask, doc.width, doc.height)
     );
     doc.commit('Paint Bucket');
+  }
+
+  /** Fill source and the flags that do not depend on the tolerance slider. */
+  contextMenu() {
+    return [
+      ...optionChoices(this, 'fill'),
+      sep(),
+      optionToggle(this, 'contiguous', 'Contiguous'),
+      optionToggle(this, 'allLayers', 'All Layers'),
+      sep(),
+      cmd('edit.fill', { hideWhenDisabled: true }),
+      cmd('edit.fill-foreground', { hideWhenDisabled: true }),
+    ];
   }
 }
 

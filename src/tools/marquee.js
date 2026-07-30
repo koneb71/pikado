@@ -1,6 +1,7 @@
 import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { Selection } from '../core/selection.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
 
 /**
  * Marquee tools + the shared base class every selection tool builds on
@@ -108,6 +109,60 @@ export class SelectionTool extends Tool {
   screenDist(docPt, sx, sy) {
     const p = this.app.viewport.toScreen(docPt.x, docPt.y);
     return Math.hypot(p.x - sx, p.y - sy);
+  }
+
+  /**
+   * The "reshape what I just selected" group of the context menu. Split out so
+   * the colour-based tools can swap Expand/Contract for their own Grow/Similar.
+   * @returns {Array<object>}
+   */
+  selectionModifyItems() {
+    return [
+      cmd('select.modify.feather', { hideWhenDisabled: true }),
+      cmd('select.modify.expand', { hideWhenDisabled: true }),
+      cmd('select.modify.contract', { hideWhenDisabled: true }),
+    ];
+  }
+
+  /**
+   * Right-click menu for every selection tool: the selection workflow, in the
+   * order Photoshop uses. With no selection the selection-only rows drop out
+   * and what is left is how to get one — right-click on an empty canvas still
+   * has to be worth the gesture.
+   *
+   * `Transform Selection` is deliberately absent: the shared tail in
+   * src/ui/canvas-menu.js appends it.
+   */
+  contextMenu() {
+    const doc = this.doc;
+    if (!doc) return [];
+
+    if (!doc.selection.active) {
+      return [
+        cmd('select.all', { label: 'Select All' }),
+        cmd('select.reselect', { hideWhenDisabled: true }),
+        sep(),
+        cmd('layer.new', { label: 'New Layer' }),
+        cmd('select.load'),
+      ];
+    }
+
+    return [
+      cmd('select.deselect'),
+      cmd('select.inverse', { label: 'Select Inverse' }),
+      sep(),
+      ...this.selectionModifyItems(),
+      sep(),
+      cmd('layer.via-copy', { hideWhenDisabled: true }),
+      cmd('layer.via-cut', { hideWhenDisabled: true }),
+      sep(),
+      cmd('edit.fill'),
+      cmd('edit.stroke'),
+      cmd('edit.content-aware-fill', { hideWhenDisabled: true }),
+      sep(),
+      cmd('select.save'),
+      cmd('select.make-work-path'),
+    ];
   }
 }
 

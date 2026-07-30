@@ -4,9 +4,10 @@ import { EffectStroke, brushOptionDescriptors, brushFromOptions } from '../paint
 import { createCanvas, cloneCanvas, ctx2dRead, clamp, clamp255 } from '../core/util.js';
 import { Selection, morph } from '../core/selection.js';
 import { getComposite } from '../render/compositor.js';
-import { BrushToolBase, tweakDefaults, blurImageData } from './brush.js';
+import { BrushToolBase, tweakDefaults, blurImageData, brushContextMenu } from './brush.js';
 import { makeTiledCanvas, patternOptions } from '../paint/patterns.js';
 import { OVERLAY } from '../ui/brand.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
 
 /**
  * Healing family: Spot Healing Brush, Healing Brush, Patch and Red Eye.
@@ -526,6 +527,23 @@ class HealingBrushTool extends BrushToolBase {
     super.cancel();
   }
 
+  contextMenu() {
+    // In Pattern mode there is no sample point at all, so the row would be
+    // meaningless — leave it out rather than showing a dead entry.
+    const extra = this.state.source === 'pattern' ? [] : [{
+      label: 'Reset Healing Source',
+      disabled: !this.source,
+      run: () => {
+        this.source = null;
+        this.offset = null;
+        this.livePoint = null;
+        app.toast('Healing source cleared.', 'info', 1200);
+        app.requestRender();
+      },
+    }];
+    return brushContextMenu(this, extra);
+  }
+
   drawOverlay(ctx, view) {
     if (this.state.source === 'sampled') {
       if (this.livePoint) this.drawCrosshair(ctx, view, this.livePoint.x, this.livePoint.y, '#ffd166');
@@ -682,6 +700,34 @@ class PatchTool extends Tool {
 
   onDoubleClick() {
     this.cancel();
+  }
+
+  contextMenu() {
+    const s = this.state;
+    const pick = (key, value, label) => ({
+      label,
+      checked: s[key] === value,
+      run: () => this.setOption(key, value),
+    });
+    const items = [];
+    if (this.points.length) {
+      items.push({ label: 'Discard Patch Area', accel: 'Esc', run: () => this.cancel() });
+      items.push(sep());
+    }
+    items.push({ header: 'Patch' });
+    items.push(pick('mode', 'normal', 'Normal'));
+    items.push(pick('mode', 'content-aware', 'Content-Aware'));
+    items.push({
+      label: 'Transparent',
+      checked: !!s.transparent,
+      run: () => this.setOption('transparent', !s.transparent),
+    });
+    items.push({ header: 'Patch From' });
+    items.push(pick('patchSource', 'source', 'Source'));
+    items.push(pick('patchSource', 'destination', 'Destination'));
+    items.push(sep());
+    items.push(cmd('edit.undo'));
+    return items;
   }
 
   onKeyDown(e) {
@@ -943,6 +989,23 @@ class RedEyeTool extends Tool {
   cancel() {
     this.start = null;
     this.rect = null;
+  }
+
+  contextMenu() {
+    // The tool is two sliders, so the preset ladder is the whole picker.
+    const row = (key, pct) => ({
+      label: `${pct}%`,
+      checked: Math.round(this.state[key]) === pct,
+      run: () => this.setOption(key, pct),
+    });
+    return [
+      { header: 'Pupil Size' },
+      row('pupilSize', 25), row('pupilSize', 50), row('pupilSize', 75),
+      { header: 'Darken Amount' },
+      row('darkenAmount', 25), row('darkenAmount', 50), row('darkenAmount', 75),
+      sep(),
+      cmd('edit.undo'),
+    ];
   }
 
   _apply(rect) {

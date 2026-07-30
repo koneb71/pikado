@@ -283,7 +283,6 @@ export class CanvasView {
       const ev = this._normalize(e);
       if (app.tool) app.tool.onDoubleClick(ev);
     });
-    c.addEventListener('contextmenu', (e) => e.preventDefault());
     c.addEventListener('wheel', (e) => this._onWheel(e), { passive: false });
   }
 
@@ -308,6 +307,11 @@ export class CanvasView {
 
   _onDown(e) {
     if (!app.activeDoc) return;
+
+    // The right button opens the context menu and must never reach the tool —
+    // otherwise right-clicking with the brush lays down a stroke behind the menu.
+    if (e.button === 2) return;
+
     this.canvas.setPointerCapture?.(e.pointerId);
     const ev = this._normalize(e);
     this._lastDoc = { x: ev.x, y: ev.y };

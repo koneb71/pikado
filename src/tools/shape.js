@@ -11,7 +11,10 @@
 
 import { app } from '../core/app.js';
 import { registerTool } from './base.js';
-import { drawPathOverlay, smoothSubpath } from '../vector/path.js';
+import { LayerType } from '../core/layer.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
+import { getCommand, labelOf, formatAccel, runCommand } from '../commands/registry.js';
+import { drawPathOverlay, smoothSubpath, findShapeAt } from '../vector/path.js';
 import { CUSTOM_SHAPES, CUSTOM_SHAPE_OPTIONS, shapeToSubpaths } from '../vector/shapes.js';
 import { VectorTool, modeOption, vectorStyleOptions } from './pen.js';
 
@@ -161,6 +164,35 @@ export function lineSubpaths(p1, p2, weight, o = {}) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Context menu                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A command row that acts on `layer`.
+ *
+ * Command refs resolve against the *active* layer, so when the right-click
+ * landed on a different shape layer the row selects it before running. Every
+ * command used below only needs "some layer is active" to be enabled, so
+ * selecting first cannot turn a live row into a dead one.
+ */
+function layerRow(doc, layer, id, over = {}) {
+  if (doc.activeLayer() === layer) return cmd(id, over);
+  const c = getCommand(id);
+  if (!c) {
+    console.warn(`[shape] unknown command: ${id}`);
+    return null;
+  }
+  return {
+    label: over.label || labelOf(id),
+    accel: formatAccel(c.accel),
+    run: () => {
+      doc.setActiveLayer(layer.id);
+      runCommand(id);
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Base tool                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -272,6 +304,35 @@ class ShapeToolBase extends VectorTool {
   /** Extra keys stored on `layer.shape` so the geometry can be re-derived. */
   shapeMeta() {
     return { baseName: this.label };
+  }
+
+  /** The shape layer under the cursor, else the active layer if it is one. */
+  shapeLayerAt(e) {
+    const doc = this.doc;
+    if (!doc) return null;
+    const hit = findShapeAt(doc, e.x, e.y, this.tol(6));
+    if (hit && hit.target.kind === 'layer') return hit.target.layer;
+    const a = doc.activeLayer();
+    return a && a.type === LayerType.SHAPE ? a : null;
+  }
+
+  /** What you can do to the shape layer that was clicked. */
+  contextMenu(e) {
+    const doc = this.doc;
+    const layer = this.shapeLayerAt(e);
+    if (!layer) return [];
+    const row = (id, over) => layerRow(doc, layer, id, over);
+    return [
+      doc.activeLayer() === layer ? null : { header: layer.name },
+      row('layer.rasterize.shape', { label: 'Rasterize Layer' }),
+      row('layer.style.options'),
+      sep(),
+      row('layer.duplicate'),
+      row('layer.delete', { label: 'Delete Layer' }),
+      sep(),
+      row('layer.arrange.front'),
+      row('layer.arrange.back'),
+    ];
   }
 
   drawOverlay(ctx, view) {

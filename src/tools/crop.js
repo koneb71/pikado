@@ -4,6 +4,7 @@ import { Selection } from '../core/selection.js';
 import { createCanvas, ctx2dRead, clamp } from '../core/util.js';
 import { sampleBilinear } from '../filters/registry.js';
 import { OVERLAY } from '../ui/brand.js';
+import { sep } from '../ui/canvas-menu.js';
 
 /**
  * Crop family: the rotating crop box, the perspective crop and the slice tool.
@@ -165,6 +166,18 @@ function rotatedCrop(doc, rect, angle) {
 /* ------------------------------------------------------------------ */
 /* Crop tool                                                           */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Ratio presets offered in the crop context menu. `custom` is left out on
+ * purpose: it is only meaningful alongside the W/H fields in the options bar.
+ */
+const CONTEXT_RATIOS = [
+  ['free', 'Unconstrained'],
+  ['original', 'Original Ratio'],
+  ['1:1', '1:1'],
+  ['4:3', '4:3'],
+  ['16:9', '16:9'],
+];
 
 class CropTool extends Tool {
   constructor() {
@@ -537,6 +550,33 @@ class CropTool extends Tool {
     this.app.requestRender();
   }
 
+  /**
+   * Right-click menu: the ratio presets with a tick on the live one, the
+   * Delete Cropped Pixels toggle, then commit / abandon — the same four things
+   * the crop options bar offers, without leaving the canvas.
+   */
+  contextMenu() {
+    const ratio = this.state.ratio;
+    const deleteCropped = this.state.deleteCropped !== false;
+    const pending = !!this.rect;
+    return [
+      ...CONTEXT_RATIOS.map(([value, label]) => ({
+        label,
+        checked: ratio === value,
+        run: () => this.setOption('ratio', value),
+      })),
+      sep(),
+      {
+        label: 'Delete Cropped Pixels',
+        checked: deleteCropped,
+        run: () => this.setOption('deleteCropped', !deleteCropped),
+      },
+      sep(),
+      { label: 'Crop', accel: 'Enter', disabled: !pending, run: () => this.applyCrop() },
+      { label: 'Cancel', accel: 'Esc', disabled: !pending, run: () => this.cancel() },
+    ];
+  }
+
   drawOverlay(ctx, view) {
     this.syncDoc();
     if (!this.rect || this.rect.width <= 0 || this.rect.height <= 0) return;
@@ -789,6 +829,16 @@ class PerspectiveCropTool extends Tool {
     this.app.requestRender();
   }
 
+  contextMenu() {
+    const grid = this.state.showGrid !== false;
+    return [
+      { label: 'Perspective Crop', accel: 'Enter', disabled: !this.quad, run: () => this.apply() },
+      { label: 'Cancel', accel: 'Esc', disabled: !this.quad, run: () => this.cancel() },
+      sep(),
+      { label: 'Show Grid', checked: grid, run: () => this.setOption('showGrid', !grid) },
+    ];
+  }
+
   drawOverlay(ctx, view) {
     this.syncDoc();
     if (!this.quad) return;
@@ -907,6 +957,52 @@ class SliceTool extends Tool {
   cancel() {
     this.drag = null;
     this.selected = -1;
+  }
+
+  /** Topmost slice covering a document point, or null. */
+  sliceAt(x, y) {
+    const doc = this.doc;
+    const list = doc && Array.isArray(doc.slices) ? doc.slices : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const s = list[i];
+      if (x >= s.x && y >= s.y && x <= s.x + s.width && y <= s.y + s.height) return s;
+    }
+    return null;
+  }
+
+  /**
+   * Right-click menu: delete the slice under the pointer, or all of them.
+   * Slices are not part of the history stack (the options bar's "Clear All"
+   * mutates them the same way), so these repaint rather than commit.
+   */
+  contextMenu(e) {
+    const doc = this.doc;
+    if (!doc) return [];
+    const slice = this.sliceAt(e.x, e.y);
+    const count = Array.isArray(doc.slices) ? doc.slices.length : 0;
+    const items = [];
+    if (slice) {
+      items.push({
+        label: `Delete "${slice.name}"`,
+        run: () => {
+          const list = slicesOf(doc);
+          const i = list.indexOf(slice);
+          if (i >= 0) list.splice(i, 1);
+          this.selected = -1;
+          this.app.requestRender();
+        },
+      });
+    }
+    items.push({
+      label: 'Delete All Slices',
+      disabled: !count,
+      run: () => {
+        doc.slices = [];
+        this.selected = -1;
+        this.app.requestRender();
+      },
+    });
+    return items;
   }
 
   drawOverlay(ctx, view) {

@@ -6,8 +6,9 @@ import { iconEl } from '../ui/icons.js';
 import {
   isTransforming, startTransform, commitTransform, cancelTransform,
   drawTransformOverlay, transformPointerDown, transformPointerMove, transformPointerUp,
-  getTransformNumeric, setTransformNumeric,
+  getTransformNumeric, setTransformNumeric, transformContextMenu,
 } from './transform.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
 import './move.css';
 import { OVERLAY } from '../ui/brand.js';
 
@@ -126,6 +127,30 @@ export function pickLayerAt(doc, x, y, kind = 'layer') {
     return l;
   }
   return null;
+}
+
+/**
+ * Every layer with an opaque pixel under (x,y), topmost first — the list the
+ * Move tool's context menu offers so you can reach a layer buried under others.
+ * Groups, hidden layers and layers masked out at that point are skipped.
+ *
+ * @param {import('../core/document.js').PikaDocument} doc
+ * @param {number} limit most rows the menu will show
+ * @returns {import('../core/layer.js').Layer[]}
+ */
+export function layersUnderPoint(doc, x, y, limit = 10) {
+  const px = Math.floor(x), py = Math.floor(y);
+  const out = [];
+  if (!doc) return out;
+  for (const l of doc.flatLayers()) {
+    if (l.type === LayerType.GROUP || !l.visible || !l.canvas) continue;
+    if (!chainVisible(l)) continue;
+    if (alphaAt(l.canvas, px, py) < 8) continue;
+    if (l.mask && l.maskEnabled && maskValueAt(l, px, py) < 8) continue;
+    out.push(l);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 /** Union of the content bounds of `layers`, or null. */
@@ -507,6 +532,45 @@ class MoveTool extends Tool {
       });
     }
     d.doc.commit(d.pixelMove ? 'Move Selection' : 'Move Layer');
+  }
+
+  /* --- context menu ------------------------------------------------ */
+
+  contextMenu(e) {
+    // Mid-transform the box owns the gesture, so offer the transform kinds
+    // instead of a layer picker that could not be acted on anyway.
+    if (isTransforming()) return transformContextMenu();
+
+    const doc = this.doc;
+    if (!doc) return [];
+    const active = doc.activeLayer();
+    const items = [{ header: 'Select Layer' }];
+    const hits = layersUnderPoint(doc, e.x, e.y);
+    if (!hits.length) {
+      items.push({ label: 'No layer under cursor', disabled: true });
+    } else {
+      for (const l of hits) {
+        items.push({
+          label: l.name,
+          checked: !!active && active.id === l.id,
+          run: () => doc.setActiveLayer(l.id),
+        });
+      }
+    }
+    return [
+      ...items,
+      sep(),
+      cmd('layer.duplicate'),
+      cmd('layer.delete', { label: 'Delete Layer' }),
+      cmd('layer.group-from-layers', { label: 'Group Layers' }),
+      sep(),
+      cmd('layer.merge-down'),
+      cmd('layer.merge-visible'),
+      cmd('layer.flatten'),
+      sep(),
+      cmd('layer.style.options'),
+      cmd('layer.rasterize.layer', { label: 'Rasterize Layer', hideWhenDisabled: true }),
+    ];
   }
 
   async onDoubleClick(e) {

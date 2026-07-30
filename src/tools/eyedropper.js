@@ -1,9 +1,10 @@
 import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { createCanvas, clamp, uid, rad2deg } from '../core/util.js';
-import { rgb, toCss } from '../core/color.js';
+import { rgb, toCss, toHex } from '../core/color.js';
 import { getComposite } from '../render/compositor.js';
 import { promptDialog } from '../ui/dialog.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
 
 /**
  * The eyedropper fly-out: colour picker, colour samplers, ruler and notes.
@@ -54,6 +55,21 @@ export function sampleColor(doc, x, y, size = 1, source = 'all') {
   }
   if (sa <= 0) return rgb(0, 0, 0, 0);
   return rgb(Math.round(sr / sa), Math.round(sg / sa), Math.round(sb / sa), sa / (w * h));
+}
+
+/**
+ * Put `text` on the clipboard, telling the user the value instead when the
+ * browser will not let us (no `navigator.clipboard`, or permission refused).
+ */
+function copyToClipboard(text, what) {
+  const clip = navigator.clipboard;
+  if (clip && clip.writeText) {
+    clip.writeText(text)
+      .then(() => app.toast(`Copied ${text}`, 'ok'))
+      .catch(() => app.toast(`Clipboard blocked — ${what} is ${text}`, 'warn'));
+    return;
+  }
+  app.toast(`Clipboard unavailable — ${what} is ${text}`, 'warn');
 }
 
 /* ------------------------------------------------------------------ */
@@ -125,6 +141,21 @@ class EyedropperTool extends Tool {
   cancel() {
     this.sampling = false;
     this.hover = null;
+  }
+
+  contextMenu(e) {
+    const doc = this.doc;
+    if (!doc) return [];
+    const c = sampleColor(doc, e.x, e.y, Number(this.state.sampleSize) || 1, this.state.sample);
+    const items = [];
+    if (c) {
+      const hex = toHex(rgb(c.r, c.g, c.b, 1)).toUpperCase();
+      items.push({ label: 'Copy Color as HTML', run: () => copyToClipboard(`color="${hex}"`, 'the colour') });
+      items.push({ label: 'Copy Color as Hex', run: () => copyToClipboard(hex, 'the colour') });
+      items.push(sep());
+    }
+    items.push(cmd('layer.new', { label: 'New Layer' }));
+    return items;
   }
 
   drawOverlay(ctx) {
@@ -269,6 +300,25 @@ class ColorSamplerTool extends Tool {
 
   onPointerUp() {
     this.drag = null;
+  }
+
+  contextMenu(e) {
+    const doc = this.doc;
+    if (!doc || !doc.colorSamplers || !doc.colorSamplers.length) return [];
+    const list = doc.colorSamplers;
+    const i = this.indexAt(doc, e, this.app.viewport);
+    const items = [];
+    if (i >= 0) {
+      items.push({
+        label: `Delete Sampler ${i + 1}`,
+        run: () => { list.splice(i, 1); doc.touch('samplers'); },
+      });
+    }
+    items.push({
+      label: 'Clear All Samplers',
+      run: () => { doc.colorSamplers = []; doc.touch('samplers'); },
+    });
+    return items;
   }
 
   drawOverlay(ctx, view) {
@@ -458,6 +508,15 @@ class RulerTool extends Tool {
     return true;
   }
 
+  contextMenu() {
+    const doc = this.doc;
+    if (!doc || !doc.measurement) return [];
+    return [
+      { label: 'Straighten Layer', run: () => straightenFromRuler(doc) },
+      { label: 'Clear Measurement', run: () => { doc.measurement = null; doc.touch('measure'); } },
+    ];
+  }
+
   drawOverlay(ctx, view) {
     const doc = this.doc;
     const m = doc && doc.measurement;
@@ -624,6 +683,35 @@ class NoteTool extends Tool {
     this.selectedId = null;
     doc.touch('notes');
     return true;
+  }
+
+  contextMenu(e) {
+    const doc = this.doc;
+    const list = (doc && doc.notes) || [];
+    if (!list.length) return [];
+    const hit = this.noteAt(doc, e, this.app.viewport);
+    const items = [];
+    if (hit) {
+      items.push({
+        label: 'Edit Note…',
+        run: () => { this.selectedId = hit.id; this.edit(doc, hit); },
+      });
+      items.push({
+        label: 'Delete Note',
+        run: () => {
+          const i = list.indexOf(hit);
+          if (i >= 0) list.splice(i, 1);
+          if (this.selectedId === hit.id) this.selectedId = null;
+          doc.touch('notes');
+        },
+      });
+      items.push(sep());
+    }
+    items.push({
+      label: 'Delete All Notes',
+      run: () => { doc.notes = []; this.selectedId = null; doc.touch('notes'); },
+    });
+    return items;
   }
 
   drawOverlay(ctx, view) {

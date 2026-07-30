@@ -2,6 +2,7 @@ import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { deg2rad, rad2deg } from '../core/util.js';
 import { OVERLAY } from '../ui/brand.js';
+import { cmd, sep } from '../ui/canvas-menu.js';
 
 /**
  * Navigation tools: Hand, Rotate View and Zoom.
@@ -50,6 +51,18 @@ const VIEW_BUTTONS = [
   { type: 'button', label: '100%', onClick: actualPixels },
 ];
 
+/**
+ * The zoom menu the navigation tools share. `src/ui/canvas-menu.js` already
+ * appends Fit on Screen and 100%, so only the rest belongs here.
+ */
+function zoomMenu() {
+  return [
+    cmd('view.fill-screen'),
+    cmd('view.zoom-200'),
+    cmd('view.print-size'),
+  ];
+}
+
 /* ------------------------------------------------------------------ */
 /* Hand                                                                */
 /* ------------------------------------------------------------------ */
@@ -89,6 +102,10 @@ class HandTool extends Tool {
   onDoubleClick() {
     this.pan = null;
     fitScreen();
+  }
+
+  contextMenu() {
+    return zoomMenu();
   }
 }
 
@@ -175,6 +192,19 @@ class RotateViewTool extends Tool {
 
   cancel() {
     this.reset();
+  }
+
+  contextMenu() {
+    return [
+      {
+        label: 'Reset View Rotation',
+        run: () => this.reset(),
+        disabled: !this.app.viewport.rotation,
+        hideWhenDisabled: true,
+      },
+      sep(),
+      ...zoomMenu(),
+    ];
   }
 
   drawOverlay(ctx) {
@@ -297,6 +327,10 @@ class ZoomTool extends Tool {
 
   cancel() {
     this.marquee = null;
+  }
+
+  contextMenu() {
+    return zoomMenu();
   }
 
   drawOverlay(ctx) {
