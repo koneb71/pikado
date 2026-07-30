@@ -554,7 +554,14 @@ suite('camera raw / effects behave as named', async (t) => {
   const veiled = dev({ dehaze: -80 });
   t.lt(spread(veiled), spread(base) - 10,
     `negative dehaze flattens contrast (${spread(base).toFixed(0)} -> ${spread(veiled).toFixed(0)})`);
-  t.gt(lum(shadow(veiled)), lum(shadow(base)) + 8,
+  /*
+   * +80, not +8. The original threshold was set just above "goes up at all", and
+   * both wrong versions above go up a little: measured on this fixture they lift
+   * the shadow patch from 22 to 31 and 32, which cleared a +8 bar with room to
+   * spare. The forward model lifts it to 191. Anything in between separates them;
+   * +80 sits far from both.
+   */
+  t.gt(lum(shadow(veiled)), lum(shadow(base)) + 80,
     `lifting the blacks rather than crushing them (${lum(shadow(base)).toFixed(0)} -> ${lum(shadow(veiled)).toFixed(0)})`);
   t.lt(lum(white(veiled)), lum(white(base)) + 1, 'and pulling the whites down rather than blowing them');
 
@@ -614,4 +621,120 @@ suite('camera raw / is non-destructive on a Smart Object', async (t) => {
 
   removeSmartFilter(doc, doc.findLayer(id), 0);
   t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), original), 0, 'and the source survives all of it intact');
+});
+
+/* ------------------------------------------------------------------ */
+/* the shapes the tone chain must have                                 */
+/* ------------------------------------------------------------------ */
+
+/** Develop a flat patch of one colour and read the result back. */
+function flat(rgb, params) {
+  const img = new ImageData(8, 8);
+  for (let i = 0; i < 64; i += 1) {
+    img.data[i * 4] = rgb[0];
+    img.data[i * 4 + 1] = rgb[1];
+    img.data[i * 4 + 2] = rgb[2];
+    img.data[i * 4 + 3] = 255;
+  }
+  const out = developImage(img, params);
+  return [out.data[80], out.data[81], out.data[82]];
+}
+
+/** Develop a 0..255 grey ramp and return the red channel. */
+function rampOf(params) {
+  const img = new ImageData(256, 1);
+  for (let x = 0; x < 256; x += 1) {
+    img.data[x * 4] = x; img.data[x * 4 + 1] = x; img.data[x * 4 + 2] = x; img.data[x * 4 + 3] = 255;
+  }
+  const out = developImage(img, params);
+  return Array.from({ length: 256 }, (_, x) => out.data[x * 4]);
+}
+
+suite('camera raw / negative dehaze veils towards the light, not the dark', async (t) => {
+  /*
+   * Haze is bright: it is scattered daylight, so adding it washes a picture out.
+   * The airlight estimate has to come from the image at the haziest pixels, not
+   * from the dark channel's own value — the dark channel of a saturated subject
+   * is zero everywhere, so reading the value back gave a near-black airlight and
+   * negative Dehaze *darkened* saturated pictures. Measured before the fix: pure
+   * red at -100 went to (144,55,55).
+   */
+  const red = flat([255, 0, 0], { dehaze: -100 });
+  t.gt(red[1], 150, 'veiling pure red raises its green channel towards the light');
+  t.gt(red[2], 150, 'and its blue channel with it');
+  t.eq(red[0], 255, 'while the red channel stays up');
+
+  const blue = flat([0, 128, 255], { dehaze: -100 });
+  t.gt(blue[0], 150, 'veiling a saturated blue lifts its red channel too');
+  t.ok(blue[2] >= blue[1] && blue[1] >= blue[0], 'and the hue order survives the veil');
+
+  // The direction has to hold with amount, not just at the extreme.
+  const mild = flat([255, 0, 0], { dehaze: -40 });
+  t.gt(mild[1], 0, 'a mild veil already lifts the dark channels');
+  t.lt(mild[1], red[1], 'and a stronger one lifts them further');
+
+  // Removing haze must still be the other direction.
+  t.eq(flat([255, 0, 0], { dehaze: 0 }).join(), '255,0,0', 'dehaze 0 is the identity');
+});
+
+suite('camera raw / the tone curve has no kink at mid grey', async (t) => {
+  /*
+   * The Shadows and Highlights curves each own half the range, which is what
+   * keeps them from moving tones they do not name. Swapping between them AT the
+   * midpoint left the slope jumping by up to 9.2x, and a slope discontinuity is
+   * what the eye reads as a Mach band — at Shadows +100 / Highlights +100 the
+   * ramp went 126,127,128 -> 128,128,128 and then climbed away in 3s.
+   */
+  const r = rampOf({ shadows: 100, highlights: 100 });
+  const slopeL = (r[128] - r[124]) / 4;
+  const slopeR = (r[132] - r[128]) / 4;
+  t.gt(slopeL, 0, 'the curve is still rising just below mid grey');
+  t.lt(slopeR / slopeL, 3, `the slope across mid grey is continuous enough (ratio ${(slopeR / slopeL).toFixed(2)})`);
+
+  // No plateau: three inputs must not collapse onto one output.
+  let plateau = 0;
+  for (let i = 120; i < 140; i += 1) if (r[i] === r[i - 1]) plateau += 1;
+  t.lt(plateau, 3, `no flat spot around mid grey (${plateau} repeated levels in 120..140)`);
+
+  // Monotone for every combination, which is the property the halves buy.
+  for (const [s, h] of [[100, 100], [-100, -100], [100, -100], [-100, 100], [60, 20]]) {
+    const ramp = rampOf({ shadows: s, highlights: h });
+    let ok = true;
+    for (let i = 1; i < 256; i += 1) if (ramp[i] < ramp[i - 1]) ok = false;
+    t.ok(ok, `shadows ${s} with highlights ${h} stays monotone`);
+  }
+
+  // And the confinement the halves exist for is still there.
+  const base = rampOf({});
+  const hi = rampOf({ highlights: -80 });
+  t.close(hi[22], base[22], 2, 'Highlights -80 leaves a deep shadow where it was');
+});
+
+suite('camera raw / lifting near-black keeps its colour', async (t) => {
+  /*
+   * Moving a pixel's luminance by scaling its channels keeps the hue, but the
+   * ratio is meaningless at pure black, so lifting black has to write a value
+   * instead. Choosing between the two on a hard threshold was visible: a dark
+   * blue just under it was rewritten as neutral grey. Before the fix, Shadows
+   * +100 at Exposure -3 took (0,0,1..3) to (11,11,11), (19,19,19), (21,21,21)
+   * and then (0,0,4) to (0,0,94) — grey, grey, grey, then blue.
+   */
+  const img = new ImageData(10, 1);
+  for (let x = 0; x < 10; x += 1) {
+    img.data[x * 4] = 0; img.data[x * 4 + 1] = 0; img.data[x * 4 + 2] = x; img.data[x * 4 + 3] = 255;
+  }
+  const out = developImage(img, { exposure: -3, shadows: 100 });
+  const px = (x) => [out.data[x * 4], out.data[x * 4 + 1], out.data[x * 4 + 2]];
+
+  for (let x = 1; x < 10; x += 1) {
+    const [r, g, b] = px(x);
+    t.gt(b, r, `input (0,0,${x}) stays blue rather than turning grey`);
+    t.eq(r, g, `and stays neutral in the channels it started neutral in (x=${x})`);
+  }
+
+  // The blue channel has to climb steadily — the old hard switch put a cliff in it.
+  let rising = true;
+  for (let x = 2; x < 10; x += 1) if (px(x)[2] < px(x - 1)[2]) rising = false;
+  t.ok(rising, 'the blue channel rises monotonically through the lift');
+  t.eq(px(0).join(), '0,0,0', 'and true black stays black');
 });
