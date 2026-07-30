@@ -188,31 +188,6 @@ function whiteBalanceGains(temperature, tint) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Tone helpers                                                        */
-/* ------------------------------------------------------------------ */
-
-/**
- * Smooth region weights for the four tone sliders, from a 0..1 *perceptual*
- * lightness (the encoded value, not linear light).
- *
- * The four overlap deliberately, as they do in Camera Raw: Blacks and Whites act
- * on the very ends, Shadows and Highlights across the broad lower and upper
- * halves. Powers of the value and its complement keep every weight continuous,
- * so no slider can produce a visible band where its region stops.
- *
- * These are deliberately *not* damped at the extremes. An earlier version
- * multiplied the Shadows weight by `1 - (1-l)^3` to keep it out of Blacks'
- * territory, which took the weight at the bottom of the range down to 0.23 and
- * made Shadows +80 move a very dark patch by four levels out of 255 — a control
- * that appeared to do nothing. Overlap is the correct behaviour: the two sliders
- * are meant to stack there.
- */
-const wBlacks = (l) => (1 - l) ** 6;
-const wShadows = (l) => (1 - l) ** 2.2;
-const wHighlights = (l) => l ** 2.2;
-const wWhites = (l) => l ** 6;
-
-/* ------------------------------------------------------------------ */
 /* Tone transfer curves                                                */
 /* ------------------------------------------------------------------ */
 
@@ -245,9 +220,10 @@ function enforceMonotonic(lut) {
  * Four sliders, applied as four **strictly monotone** operations composed in order.
  * That construction is the point, and it took three wrong versions to arrive at:
  *
- *   1. Summing weight bumps onto the identity made the curve NON-MONOTONIC.
- *      `wBlacks` is `(1-l)^6`, derivative -6 at black, so at Blacks +100 the
- *      transfer slope was `1 + 0.3 x (-6)` — negative. Darker in, lighter out.
+ *   1. Summing weighted bumps onto the identity, one smooth region weight per
+ *      slider, made the curve NON-MONOTONIC. The Blacks weight was `(1-l)^6`,
+ *      derivative -6 at black, so at Blacks +100 the transfer slope was
+ *      `1 + 0.3 x (-6)` — negative. Darker in, lighter out.
  *   2. Clamping the running maximum afterwards made it monotonic by flattening the
  *      whole would-have-inverted stretch to one value: the shadows posterised into a
  *      single tone. Scaling the delta to its largest monotonic fraction had the same

@@ -692,14 +692,33 @@ Three decisions worth knowing before changing anything:
   colorimetrically correct operation and was the first implementation, but adapting
   a rendered image to a distant white point leaves the sRGB gamut and returns
   negative channel values — at 2000 K a mid grey came back with red clipped to 0.
-- **The four tone sliders work on encoded lightness, not linear light.** Each adds
-  `slider × regionWeight × 0.3` to the perceptual lightness and the result is
-  applied back as a gain on all three channels, so hue and saturation survive. In
-  linear light the same slider positions are invisible in deep shadow, which made
-  "Shadows +80" move a dark patch by four levels out of 255.
-- **The region weights deliberately overlap.** Shadows and Blacks both act at the
-  bottom; damping one to keep it out of the other's territory is what made the
-  slider useless.
+- **The four tone sliders work on encoded lightness, not linear light.** The curve
+  is built in perceptual lightness and applied back as a gain on all three
+  channels, so hue and saturation survive. In linear light the same slider
+  positions are invisible in deep shadow, which made "Shadows +80" move a dark
+  patch by four levels out of 255.
+- **The curve is a composition of strictly increasing operations, not a sum of
+  weighted bumps.** Blacks and Whites are a levels-style endpoint remap; Shadows
+  and Highlights are a gamma applied to each half of the range, rescaled so it
+  fixes both ends of that half. Adding weighted bumps to the identity was the
+  first design and it is not monotonic — a Blacks weight of `(1-l)^6` has
+  derivative -6 at black, so at +100 the transfer slope went negative and the
+  shadows inverted. A composition cannot do that: its slope is the product of the
+  parts' slopes, and none of them is zero.
+- **Each half-range gamma fades to identity as mid grey approaches.** Confining a
+  gamma to half the range is what stops Highlights dragging the shadows around,
+  but swapping the two AT the midpoint leaves the slope jumping by 11× at the
+  extremes, which reads as a Mach band on a gradient. Tapering each one out
+  instead brings the derivative to 1 from both sides. The taper is wide (0.4) on
+  measurement, not taste: a narrow one falls faster than the curve rises and
+  monotonicity enforcement flattens the dip into a plateau, which is a worse
+  artefact than the kink it removes.
+- **Dehaze reads its airlight from the image, not from the dark channel.** The
+  dark channel selects the haziest pixels; the airlight is the image's own
+  brightness there. Taking the dark channel's value instead collapses to the floor
+  on any saturated subject — min(R,G,B) is zero everywhere in pure red — which
+  made negative Dehaze veil towards black and darken the picture rather than wash
+  it out.
 
 ## Adjustments — `src/adjustments/registry.js`
 
