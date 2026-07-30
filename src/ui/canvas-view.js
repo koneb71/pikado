@@ -1,5 +1,5 @@
 import { app } from '../core/app.js';
-import { getComposite } from '../render/compositor.js';
+import { getViewComposite } from '../render/compositor.js';
 import { createCanvas } from '../core/util.js';
 import { OVERLAY } from './brand.js';
 
@@ -107,7 +107,10 @@ export class CanvasView {
     ctx.restore();
 
     // --- composite ------------------------------------------------------
-    const composite = getComposite(doc);
+    // The *view* composite: identical to getComposite() unless the Channels
+    // panel has hidden a channel, which is a viewing aid only — everything that
+    // leaves the app (export, flatten, save) still reads the full-colour one.
+    const composite = getViewComposite(doc);
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);

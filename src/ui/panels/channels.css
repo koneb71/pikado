@@ -40,6 +40,11 @@
 .pkch-eye { width: 20px; flex: 0 0 auto; display: flex; justify-content: center; }
 .pkch-eyebtn { width: 21px; height: 21px; border-radius: var(--r-xs); }
 .pkch-eyebtn svg { width: 14px; height: 14px; }
+/* A hidden channel reads as switched off at a glance: faded eye, faded name,
+   thumbnail left alone so it still shows what the channel actually holds. */
+.pkch-eyebtn.is-off { opacity: .45; }
+.pkch-eyebtn.is-off:hover { opacity: .8; }
+.pkch-row.is-hidden .pkch-name { color: var(--text-faint); }
 
 .pkch-thumb {
   width: 38px; height: 28px; flex: 0 0 auto;

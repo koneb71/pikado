@@ -9,6 +9,7 @@ import { rasterizeShapeLayer, createPath } from '/src/vector/path.js';
 import { savePKD, loadPKD } from '/src/io/pkd.js';
 import { writePSD, SELECTION_CHANNEL_NAME } from '/src/io/psd-write.js';
 import { readPSD } from '/src/io/psd-read.js';
+import { POSTSCRIPT_FACES, postScriptFace, familyFromPostScriptName } from '/src/text/fonts.js';
 import { encodeGIF, buildPalette } from '/src/io/gif.js';
 import { exportDocument } from '/src/io/save.js';
 import { exportSVG } from '/src/io/svg.js';
@@ -426,4 +427,275 @@ suite('io / raster + SVG export', async (t) => {
 
   const svgBlob = await exportDocument(doc, { format: 'svg', save: false });
   t.ok(svgBlob && svgBlob.type.startsWith('image/svg+xml'), 'exportDocument("svg") returns an SVG blob');
+});
+
+/* ------------------------------------------------------------------ */
+/* PSD interop — faces, live shapes, dashes, byte stability            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The parts of the PSD format that carry *parameters* rather than pixels.
+ *
+ * A PSD names a type layer's font by its PostScript name, which identifies one
+ * face — one file — so bold and italic belong in that name whenever the family
+ * ships them separately, and only fall back to `/FauxBold` and `/FauxItalic`
+ * when it does not. Live shapes work the same way: the path is authoritative for
+ * geometry, and `vogk` carries the handful of parameters a path cannot express
+ * (a polygon's side count, a line's weight, a rectangle's corner radii).
+ *
+ * The face names could not be checked against a Photoshop install — see the note
+ * in `src/io/psd-write.js`. What is checked here is the property that is ours to
+ * guarantee: every name we write maps back to the same family, weight and slant.
+ *
+ * Byte stability gets its own suite because two bugs hid behind "the pixels are
+ * fine": the reader attached an inert text warp that the writer then persisted,
+ * and the private JSON blocks inherited JavaScript's insertion order, so the
+ * same document saved from memory and saved after a reopen differed in bytes
+ * while being identical as data.
+ */
+
+const psdRoundTrip = async (doc) => readPSD(await (await writePSD(doc)).arrayBuffer());
+const psdBytes = async (doc) => new Uint8Array(await (await writePSD(doc)).arrayBuffer());
+
+/** The first differing byte of two files, or null when they are identical. */
+function firstByteDiff(a, b) {
+  if (a.length !== b.length) return `length ${a.length} vs ${b.length}`;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return `byte ${i}: ${a[i]} vs ${b[i]}`;
+  return null;
+}
+
+/** A document with one shape layer, rasterised the way the shape tools do it. */
+function shapeDoc(t, name, shape, w = 220, h = 180) {
+  const doc = t.doc(w, h, null, name);
+  doc.layers.length = 0;
+  const layer = new Layer({ name, type: LayerType.SHAPE, shape });
+  layer.canvas = rasterizeShapeLayer(layer, doc);
+  doc.layers.push(layer);
+  doc.invalidate();
+  return { doc, layer };
+}
+
+const openSubpath = (pts) => [{ closed: false, points: pts.map(([x, y]) => corner(x, y)) }];
+const closedSubpath = (pts) => [{ closed: true, points: pts.map(([x, y]) => corner(x, y)) }];
+const ringSubpath = (cx, cy, r, n) => closedSubpath(Array.from({ length: n }, (_, i) => {
+  const a = -Math.PI / 2 + (i / n) * Math.PI * 2;
+  return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+}));
+
+suite('io / PSD font faces name a real file where one exists', async (t) => {
+  const problems = [];
+  let realFaces = 0;
+  for (const id of Object.keys(POSTSCRIPT_FACES)) {
+    for (const [weight, style] of [[400, 'normal'], [700, 'normal'], [400, 'italic'], [700, 'italic']]) {
+      const face = postScriptFace(id, weight, style);
+      const back = familyFromPostScriptName(face.name);
+      // `system` is written as Helvetica, so it is deliberately excluded from the
+      // reverse table: a Helvetica document was not necessarily authored here.
+      if (id === 'system') {
+        if (back) problems.push(`system leaked into the reverse table as ${back.font}`);
+        continue;
+      }
+      if (!back) { problems.push(`${id} ${weight}/${style} -> "${face.name}" does not map back`); continue; }
+      if (back.font !== id) problems.push(`${id} ${weight}/${style} -> "${face.name}" maps back to ${back.font}`);
+      if (face.real) {
+        realFaces++;
+        if (back.weight !== weight || back.style !== style) {
+          problems.push(`${id} ${weight}/${style} -> "${face.name}" maps back to ${back.weight}/${back.style}`);
+        }
+      }
+    }
+  }
+  t.eq(problems, [], 'every face name we write maps back to its own family, weight and slant');
+  t.gt(realFaces, 80, `and most slots resolve to a real face rather than faux styling (${realFaces} of 128)`);
+
+  const bi = postScriptFace('arial', 700, 'italic');
+  t.eq(bi.name, 'Arial-BoldItalicMT', 'a family with a real bold-italic file is named, not faked');
+  t.eq([bi.fauxBold, bi.fauxItalic], [false, false], 'so neither faux flag is set');
+
+  const noItalic = postScriptFace('tahoma', 400, 'italic');
+  t.eq(noItalic.name, 'Tahoma', 'a family with no italic file falls back to its regular');
+  t.eq([noItalic.fauxBold, noItalic.fauxItalic], [false, true], 'and asks Photoshop to slant it');
+
+  const threeFace = postScriptFace('tahoma', 700, 'italic');
+  t.eq(threeFace.name, 'Tahoma-Bold', 'bold-italic on a three-face family keeps the real bold file');
+  t.eq([threeFace.fauxBold, threeFace.fauxItalic], [false, true], 'and fakes only the slant');
+
+  const single = postScriptFace('impact', 700, 'italic');
+  t.eq(single.name, 'Impact', 'a single-file family can only offer its one face');
+  t.eq([single.fauxBold, single.fauxItalic], [true, true], 'so both axes are faux');
+
+  t.eq(familyFromPostScriptName('Nobody-Ships-This'), null,
+    'an unknown face name returns null, leaving the reader its own heuristics');
+});
+
+suite('io / PSD type layers survive their font, weight and slant', async (t) => {
+  const cases = [
+    ['arial', 700, true, 'a real bold-italic face'],
+    ['tahoma', 400, true, 'faux italic'],
+    ['impact', 700, false, 'faux bold on a single-file family'],
+    ['futura', 700, true, 'a three-face family with no bold-italic'],
+    ['jetbrains', 400, false, 'a Google family'],
+  ];
+  const doc = t.doc(240, 170, null, 'faces');
+  doc.layers.length = 0;
+  cases.forEach(([font, weight, italic], i) => {
+    const l = new Layer({
+      name: `T${i}`, type: LayerType.TEXT,
+      text: { content: 'Ag', font, weight, italic, size: 20, color: '#112233', x: 8, y: 24 + i * 22 },
+    });
+    l.ensureCanvas(doc.width, doc.height);
+    doc.layers.push(l);
+    rasterizeTextLayer(l, doc);
+  });
+
+  const back = await psdRoundTrip(doc);
+  cases.forEach(([font, weight, italic, label], i) => {
+    const text = (back.layers.find((l) => l.name === `T${i}`) || {}).text;
+    t.ok(text, `layer T${i} came back`);
+    if (!text) return;
+    t.eq(text.font, font, `${label}: the family survives as ${font}`);
+    t.eq(text.weight >= 600, weight >= 600, `${label}: the weight survives`);
+    t.eq(!!text.italic, !!italic, `${label}: the slant survives`);
+  });
+});
+
+suite('io / PSD live shapes keep the parameters a path cannot carry', async (t) => {
+  const poly = shapeDoc(t, 'poly', {
+    kind: 'shape', subpaths: ringSubpath(45, 45, 32, 7), sides: 7, star: false, innerRadius: 0.5,
+    fill: { kind: 'solid', color: '#ff0000' },
+    stroke: { enabled: true, color: '#00ff00', width: 4, align: 'center', cap: 'butt', join: 'miter', dash: 'dash-dot' },
+  });
+  const backPoly = (await psdRoundTrip(poly.doc)).layers[0];
+  t.eq(backPoly.shape.sides, 7, 'a seven-sided polygon reopens knowing its side count');
+  t.eq(backPoly.shape.star, false, 'and that it is not a star');
+  t.eq(backPoly.shape.stroke.dash, 'dash-dot',
+    'a named dash preset reopens as the same preset, so it stays editable as one');
+
+  const star = shapeDoc(t, 'star', {
+    kind: 'shape', subpaths: ringSubpath(140, 45, 32, 10), sides: 5, star: true, innerRadius: 0.38,
+    fill: { kind: 'gradient', stops: [{ pos: 0, color: '#000000' }, { pos: 1, color: '#ffffff' }], angle: 35, style: 'linear', scale: 1 },
+    stroke: { enabled: false, color: '#000000', width: 1, dash: 'solid' },
+  });
+  const backStar = (await psdRoundTrip(star.doc)).layers[0];
+  t.eq(backStar.shape.sides, 5, 'a five-point star reopens with its point count');
+  t.eq(backStar.shape.star, true, 'and knows it is a star');
+  t.close(backStar.shape.innerRadius, 0.38, 0.01, 'and keeps its indent');
+  // Photoshop measures gradient angles the other way round from the renderer
+  // behind a shape fill, so the sign is flipped in both directions.
+  t.close(backStar.shape.fill.angle, 35, 1e-9, 'a shape gradient angle round trips exactly');
+
+  const line = shapeDoc(t, 'line', {
+    kind: 'shape', subpaths: openSubpath([[10, 160], [200, 168]]),
+    weight: 6, arrowStart: false, arrowEnd: true, arrowWidth: 500, arrowLength: 1000, concavity: 0,
+    fill: { kind: 'solid', color: '#0000ff' },
+    stroke: { enabled: true, color: '#0000ff', width: 6, align: 'center', cap: 'round', join: 'round', dash: [9, 4.5] },
+  });
+  const backLine = (await psdRoundTrip(line.doc)).layers[0];
+  t.close(backLine.shape.weight, 6, 1e-9, 'a line reopens with its weight');
+  t.eq([backLine.shape.arrowStart, backLine.shape.arrowEnd], [false, true],
+    'and with exactly the arrowhead it had — a plain end must not grow one');
+  t.ok(Array.isArray(backLine.shape.stroke.dash), 'an explicit dash array stays an array');
+  t.close(backLine.shape.stroke.dash[0], 9, 1e-3, 'with its dash length in document units');
+  t.close(backLine.shape.stroke.dash[1], 4.5, 1e-3, 'and its gap');
+
+  // A plain rectangle must not acquire any of the above.
+  const rect = shapeDoc(t, 'rect', {
+    kind: 'shape', subpaths: closedSubpath([[20, 20], [80, 20], [80, 60], [20, 60]]),
+    fill: { kind: 'solid', color: '#888888' },
+    stroke: { enabled: false, color: '#000000', width: 1, dash: 'solid' },
+  });
+  const backRect = (await psdRoundTrip(rect.doc)).layers[0];
+  t.eq(backRect.shape.sides, undefined, 'a plain rectangle gains no side count');
+  t.eq(backRect.shape.weight, undefined, 'no line weight');
+  t.eq(backRect.shape.arrowEnd, undefined, 'no arrowheads');
+  t.eq(backRect.shape.stroke.dash, 'solid', 'and a solid stroke stays solid');
+
+  // Rounded-rectangle radii are the one origination field that predates all of
+  // the above; it must still work.
+  const rrect = shapeDoc(t, 'rrect', {
+    kind: 'shape', subpaths: closedSubpath([[20, 20], [80, 20], [80, 60], [20, 60]]),
+    corners: [8, 8, 8, 8], radius: 8,
+    fill: { kind: 'solid', color: '#22cc99' },
+    stroke: { enabled: false, color: '#000000', width: 1, dash: 'solid' },
+  });
+  const backRR = (await psdRoundTrip(rrect.doc)).layers[0];
+  t.eq(backRR.shape.corners, [8, 8, 8, 8], 'four equal corner radii come back');
+  t.eq(backRR.shape.radius, 8, 'and collapse to the single value the tool edits');
+});
+
+suite('io / PSD write -> read -> write is byte-identical', async (t) => {
+  const doc = t.doc(220, 180, null, 'stability');
+  doc.layers.length = 0;
+  const addShape = (name, shape) => {
+    const l = new Layer({ name, type: LayerType.SHAPE, shape });
+    l.canvas = rasterizeShapeLayer(l, doc);
+    doc.layers.push(l);
+  };
+  const addText = (name, text) => {
+    const l = new Layer({ name, type: LayerType.TEXT, text });
+    l.ensureCanvas(doc.width, doc.height);
+    doc.layers.push(l);
+    rasterizeTextLayer(l, doc);
+  };
+
+  addShape('poly', {
+    kind: 'shape', subpaths: ringSubpath(45, 45, 32, 7), sides: 7, star: false, innerRadius: 0.5,
+    fill: { kind: 'solid', color: '#ff0000' },
+    stroke: { enabled: true, color: '#00ff00', width: 4, align: 'center', cap: 'butt', join: 'miter', dash: 'dash-dot' },
+  });
+  addShape('star', {
+    kind: 'shape', subpaths: ringSubpath(150, 45, 32, 10), sides: 5, star: true, innerRadius: 0.38,
+    fill: { kind: 'gradient', stops: [{ pos: 0, color: '#000000' }, { pos: 1, color: '#ffffff' }], angle: 35, style: 'linear', scale: 1 },
+    stroke: { enabled: false, color: '#000000', width: 1, dash: 'solid' },
+  });
+  addShape('line', {
+    kind: 'shape', subpaths: openSubpath([[10, 160], [200, 168]]),
+    weight: 6, arrowStart: false, arrowEnd: true, arrowWidth: 500, arrowLength: 1000, concavity: 0,
+    fill: { kind: 'solid', color: '#0000ff' },
+    stroke: { enabled: true, color: '#0000ff', width: 6, align: 'center', cap: 'round', join: 'round', dash: [9, 4.5] },
+  });
+  addText('plain', { content: 'Ag', font: 'arial', weight: 700, italic: true, size: 22, color: '#112233', x: 10, y: 110 });
+  addText('bent', {
+    content: 'Wavy', font: 'georgia', weight: 400, size: 20, color: '#8844aa', x: 60, y: 130,
+    warp: { style: 'wave', bend: 0.55, h: -0.2, v: 0.1 },
+  });
+  doc.layers.push(createAdjustmentLayer('curves', {
+    channel: 'rgb', points: [{ x: 0, y: 0 }, { x: 0.4, y: 0.62 }, { x: 1, y: 1 }],
+  }, doc.width, doc.height, 'curves'));
+  doc.invalidate();
+
+  // Precondition: every layer with pixels actually has some, or the comparisons
+  // below would be comparing empty buffers and passing for the wrong reason.
+  for (const l of doc.layers) {
+    if (l.canvas) t.gt(t.inked(l.canvas), 50, `layer "${l.name}" has real pixels before the round trip`);
+  }
+
+  const first = await psdBytes(doc);
+  const reopened = await readPSD(first.buffer.slice(0));
+  const second = await psdBytes(reopened);
+  t.eq(firstByteDiff(first, second), null,
+    `saving, reopening and saving again produces the same ${first.length} bytes`);
+
+  const twice = await psdBytes(await readPSD(second.buffer.slice(0)));
+  t.eq(firstByteDiff(second, twice), null, 'and it stays identical on a second round trip');
+
+  t.eq(reopened.layers.length, doc.layers.length, 'the layer count survives');
+  for (const l of doc.layers) {
+    if (!l.canvas) continue;
+    const other = reopened.layers.find((x) => x.name === l.name);
+    t.ok(other && other.canvas, `layer "${l.name}" came back with a canvas`);
+    if (other && other.canvas) {
+      t.eq(t.mad(t.bytes(l.canvas), t.bytes(other.canvas)), 0,
+        `layer "${l.name}" reopens pixel-for-pixel identical`);
+    }
+  }
+
+  // The two bugs this suite exists to catch.
+  t.eq(reopened.layers.find((l) => l.name === 'plain').text.warp, undefined,
+    'a plain type layer does not come back carrying an inert warp');
+  const warp = reopened.layers.find((l) => l.name === 'bent').text.warp;
+  t.eq(warp.style, 'wave', 'while a real warp keeps its style');
+  t.close(warp.bend, 0.55, 1e-9, 'its bend');
+  t.close(warp.h, -0.2, 1e-9, 'its horizontal distortion');
+  t.close(warp.v, 0.1, 1e-9, 'and its vertical distortion');
 });

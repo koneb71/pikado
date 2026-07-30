@@ -6,6 +6,9 @@ import {
   setSmartTransform, resetSmartTransform, addSmartFilter, removeSmartFilter,
   reorderSmartFilters, toggleSmartFilter, setSmartFiltersEnabled, editSmartFilter,
   renderSmartObject, matrixMultiply, decomposeMatrix, composeMatrix, IDENTITY_MATRIX,
+  NO_PERSPECTIVE, toMatrix3, fromMatrix3, matrix3Multiply, applyMatrix3, invertMatrix3,
+  unitSquareToQuad, rectToQuad, identityWarp, evalWarp,
+  getSmartPerspective, getSmartWarp, hasSmartShape, clearSmartShape,
 } from '/src/core/smart.js';
 import { convertToSmartObject, rasterizeLayer } from '/src/layers/ops.js';
 import { startTransform, setTransformNumeric, commitTransform } from '/src/tools/transform.js';
@@ -519,4 +522,163 @@ suite('smart / rasterize bakes the render and drops the payload', async (t) => {
   t.eq(setSmartTransform(doc, l, scaleMatrix(2)), null, 'setSmartTransform refuses a rasterized layer');
   t.eq(addSmartFilter(doc, l, 'gaussian-blur'), null, 'addSmartFilter refuses a rasterized layer');
   t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), rendered), 0, 'and the pixels stayed put');
+});
+
+/* ------------------------------------------------------------------ */
+/* Perspective and warp                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The projective and warp halves of a smart transform.
+ *
+ * `getSmartMatrix3` composes the affine matrix with a separate projective row,
+ * `H = A · P`, so perspective can be edited without disturbing scale or rotation
+ * and vice versa. The warp is a 4x4 bicubic Bézier control grid in *source*
+ * pixels, which is what lets it survive a later scale unchanged.
+ *
+ * The matrix helpers get exact assertions because everything above them inherits
+ * their error, and the pixel assertions always check that clearing a shape gets
+ * the original render back byte for byte — a "non-destructive" transform that
+ * cannot be undone exactly is not one.
+ */
+
+suite('smart / the matrix helpers are exact', async (t) => {
+  // decompose -> compose is the identity, on a matrix with every term active.
+  // Both halves need the source size: the decomposition is around the source's
+  // centre, so `centerX/centerY` are meaningless without it.
+  const SW = 120, SH = 80;
+  const cases = [
+    [1, 0, 0, 1, 0, 0],
+    [2, 0, 0, 3, 17, -5],
+    [1.5, 0.7, -0.4, 2.2, 30, 40],
+    [-1, 0, 0, 1, 12, 0],           // mirrored
+    [0.3, 0.9, -0.9, 0.3, -8, 60],  // rotation + scale
+  ];
+  let worst = 0;
+  for (const m of cases) {
+    const round = composeMatrix(decomposeMatrix(m, SW, SH), SW, SH);
+    for (let i = 0; i < 6; i++) worst = Math.max(worst, Math.abs(round[i] - m[i]));
+  }
+  t.lt(worst, 1e-9, `decompose -> compose reproduces every matrix (worst error ${worst.toExponential(2)})`);
+
+  // toMatrix3 / fromMatrix3 round trip. fromMatrix3 splits the homography back
+  // into `{matrix, perspective}` rather than returning a bare six-tuple.
+  const affine = [1.5, 0.7, -0.4, 2.2, 30, 40];
+  const flat = fromMatrix3(toMatrix3(affine, NO_PERSPECTIVE));
+  t.eq(m6(flat.matrix), m6(affine), 'a matrix with no perspective survives the 3x3 detour unchanged');
+  t.eq(m6(flat.perspective), [0, 0], 'and comes back with an empty projective row');
+
+  const split = fromMatrix3(toMatrix3(affine, [0.001, -0.0004]));
+  t.eq(m6(split.matrix), m6(affine), 'the affine part is recovered even with perspective present');
+  t.eq(m6(split.perspective, 8), m6([0.001, -0.0004], 8), 'and the projective row with it');
+  t.eq(fromMatrix3([1, 0, 0, 0, 1, 0, 0, 0, 0]), null, 'a degenerate homography is rejected rather than guessed at');
+
+  // A 3x3 times its own inverse is the identity.
+  const H = toMatrix3(affine, [0.001, -0.0004]);
+  const I = matrix3Multiply(H, invertMatrix3(H));
+  const expect = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  let inv = 0;
+  for (let i = 0; i < 9; i++) inv = Math.max(inv, Math.abs(I[i] / I[8] - expect[i]));
+  t.lt(inv, 1e-9, `H · H⁻¹ is the identity (worst error ${inv.toExponential(2)})`);
+
+  // unitSquareToQuad must land the four corners of the unit square on the quad.
+  const quad = [{ x: 10, y: 20 }, { x: 190, y: 5 }, { x: 175, y: 120 }, { x: 25, y: 150 }];
+  const M = unitSquareToQuad(quad);
+  const corners = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  let qerr = 0;
+  corners.forEach(([u, v], i) => {
+    const p = applyMatrix3(M, u, v);
+    qerr = Math.max(qerr, Math.abs(p.x - quad[i].x), Math.abs(p.y - quad[i].y));
+  });
+  t.lt(qerr, 1e-6, `unitSquareToQuad maps all four corners onto the quad (worst error ${qerr.toExponential(2)})`);
+
+  // rectToQuad is the same thing for an arbitrary source rectangle.
+  const box = { x: 5, y: 7, width: 80, height: 60 };
+  const R = rectToQuad(box, quad);
+  const boxCorners = [
+    [box.x, box.y], [box.x + box.width, box.y],
+    [box.x + box.width, box.y + box.height], [box.x, box.y + box.height],
+  ];
+  let rerr = 0;
+  boxCorners.forEach(([x, y], i) => {
+    const p = applyMatrix3(R, x, y);
+    rerr = Math.max(rerr, Math.abs(p.x - quad[i].x), Math.abs(p.y - quad[i].y));
+  });
+  t.lt(rerr, 1e-6, `rectToQuad maps the rectangle's corners onto the quad (worst error ${rerr.toExponential(2)})`);
+});
+
+suite('smart / the warp grid starts neutral and interpolates', async (t) => {
+  // identityWarp needs its size — called with no arguments it produces NaN, which
+  // the validator correctly rejects, and which reads as "warp is broken".
+  const w = identityWarp(120, 90);
+  t.eq(w.length, 4, 'the grid has four rows');
+  t.eq(w[0].length, 4, 'and four columns');
+  t.ok(w.every((row) => row.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))),
+    'every control point is a real number');
+  t.eq([w[0][0].x, w[0][0].y], [0, 0], 'the top-left control point sits at the source origin');
+  t.eq([w[3][3].x, w[3][3].y], [120, 90], 'and the bottom-right at the far corner');
+
+  // An untouched grid must evaluate to the point it stands over.
+  const probes = [[0, 0], [0.5, 0.5], [1, 1], [0.25, 0.75]];
+  let worst = 0;
+  for (const [u, v] of probes) {
+    const p = evalWarp(w, u, v);
+    worst = Math.max(worst, Math.abs(p.x - u * 120), Math.abs(p.y - v * 90));
+  }
+  t.lt(worst, 1e-6, `a neutral grid is the identity map (worst error ${worst.toExponential(2)})`);
+
+  // Move one interior point and the surface should follow it, locally.
+  const bent = identityWarp(120, 90);
+  bent[1][1] = { x: bent[1][1].x, y: bent[1][1].y - 30 };
+  const mid = evalWarp(bent, 1 / 3, 1 / 3);
+  t.lt(mid.y, evalWarp(w, 1 / 3, 1 / 3).y - 1, 'dragging a control point pulls the surface with it');
+  t.close(evalWarp(bent, 1, 1).y, 90, 1e-6, 'while the far corner stays exactly where it was');
+});
+
+suite('smart / perspective and warp are non-destructive', async (t) => {
+  const { doc, smart } = smartFromDetail(t, 160, 'shape');
+  const id = smart.id;
+  const flat = t.bytes(doc.findLayer(id).canvas);
+  t.notOk(hasSmartShape(doc.findLayer(id)), 'a fresh smart object has neither perspective nor warp');
+
+  // --- perspective
+  setSmartTransform(doc, doc.findLayer(id), getSmartTransform(doc.findLayer(id)), {
+    perspective: [0.0012, -0.0008], label: 'Perspective',
+  });
+  const persp = doc.findLayer(id);
+  t.eq(persp.type, LayerType.SMART, 'the layer is still a smart object afterwards');
+  t.eq(m6(getSmartPerspective(persp)), m6([0.0012, -0.0008]), 'the projective row is stored as given');
+  t.ok(hasSmartShape(persp), 'and the layer reports that it carries a shape');
+  const withPersp = t.mad(t.bytes(persp.canvas), flat);
+  t.gt(withPersp, 5, `the render really changed (mad ${withPersp.toFixed(1)})`);
+
+  clearSmartShape(doc, doc.findLayer(id), { perspective: true, warp: false });
+  t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), flat), 0,
+    'clearing the perspective restores the original render byte for byte');
+  t.notOk(hasSmartShape(doc.findLayer(id)), 'and the layer no longer claims a shape');
+
+  // --- warp
+  const src = doc.findLayer(id).smart.source;
+  const mesh = identityWarp(src.width, src.height);
+  mesh[1][1] = { x: mesh[1][1].x + src.width * 0.25, y: mesh[1][1].y - src.height * 0.2 };
+  mesh[2][2] = { x: mesh[2][2].x - src.width * 0.2, y: mesh[2][2].y + src.height * 0.25 };
+  setSmartTransform(doc, doc.findLayer(id), getSmartTransform(doc.findLayer(id)), { warp: mesh, label: 'Warp' });
+
+  const warped = doc.findLayer(id);
+  t.ok(getSmartWarp(warped), 'the warp grid is stored');
+  t.eq(warped.type, LayerType.SMART, 'and the layer is still a smart object');
+  const withWarp = t.mad(t.bytes(warped.canvas), flat);
+  t.gt(withWarp, 5, `the warp deforms the render (mad ${withWarp.toFixed(1)})`);
+
+  // The warp lives in source pixels, so scaling down and back up must not
+  // compound with it: the result has to match the warp at full size exactly.
+  const before = t.bytes(doc.findLayer(id).canvas);
+  setSmartTransform(doc, doc.findLayer(id), scaleMatrix(0.1));
+  setSmartTransform(doc, doc.findLayer(id), scaleMatrix(1));
+  t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), before), 0,
+    'scaling to 10% and back leaves the warped render byte-identical');
+
+  clearSmartShape(doc, doc.findLayer(id), { perspective: true, warp: true });
+  t.eq(getSmartWarp(doc.findLayer(id)), null, 'clearing drops the grid');
+  t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), flat), 0, 'and the original render comes back exactly');
 });

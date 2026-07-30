@@ -3,6 +3,7 @@ import { getComposite } from '../render/compositor.js';
 import { createCanvas, ctx2dRead } from '../core/util.js';
 import { parseColor } from '../core/color.js';
 import { resolveTextProps, measureTextLayer } from '../text/text-render.js';
+import { postScriptFace } from '../text/fonts.js';
 import { subpathsBounds } from '../vector/path.js';
 
 /**
@@ -1103,11 +1104,42 @@ function writePrivateAdjustment(w, adjustment) {
 }
 
 /**
+ * Every property name anywhere inside `value`, sorted — a `JSON.stringify`
+ * property list, which fixes the order objects are written in.
+ *
+ * Because the list also *filters*, it has to name every key in the tree or
+ * serialisation would silently drop the ones it misses; array elements are
+ * unaffected by a property list, so indices need no entry. Returns undefined for
+ * a value with no object in it, which leaves `stringify` in its default mode.
+ */
+function sortedKeys(value) {
+  const keys = new Set();
+  const seen = new Set();
+  const walk = (v) => {
+    if (!v || typeof v !== 'object' || seen.has(v)) return;
+    seen.add(v);
+    if (Array.isArray(v)) { for (const item of v) walk(item); return; }
+    for (const k of Object.keys(v)) { keys.add(k); walk(v[k]); }
+  };
+  walk(value);
+  return keys.size ? [...keys].sort() : undefined;
+}
+
+/**
  * The shared body of every Pikado-private block: a four-character magic, a
  * uint16 format version, a uint32 byte count and that many bytes of UTF-8 JSON.
  * `pkAd` carries `{kind, params}`, `pkTx` carries `layer.text` and `pkSh`
  * carries `layer.shape`. All three are keys Adobe has never used, and every
  * conforming reader skips additional-layer-info keys it does not know.
+ *
+ * @param {ByteWriter} w
+ * @param {string} key the four-character block key
+ * @param {string} magic the four-character payload magic
+ * Keys are emitted in sorted order. `JSON.stringify` otherwise follows
+ * insertion order, so the same document saved from memory and saved after a
+ * reopen produced byte-different files that differed *only* in key order —
+ * the payloads were equal as data. Sorting makes the bytes a function of the
+ * content alone, which is what lets the round-trip test assert byte identity.
  *
  * @param {ByteWriter} w
  * @param {string} key the four-character block key
@@ -1118,7 +1150,7 @@ function writePrivateAdjustment(w, adjustment) {
 function writePrivatePayload(w, key, magic, value, label) {
   let json;
   try {
-    json = JSON.stringify(value);
+    json = JSON.stringify(value, sortedKeys(value));
   } catch (err) {
     console.warn(`[psd] the ${label} could not be serialised; only the interoperable blocks were written`, err);
     return;
@@ -1212,6 +1244,38 @@ function patternDescriptor(patternId) {
 function pointDescriptor(x, y) {
   return DESC.obj('Pnt ', { Hrzn: DESC.pct(x), Vrtc: DESC.pct(y) });
 }
+
+/** A `Pnt ` in pixels — what the live-shape origination blocks use. */
+function pixelPointDescriptor(x, y) {
+  return DESC.obj('Pnt ', { Hrzn: DESC.px(x), Vrtc: DESC.px(y) });
+}
+
+/**
+ * Gradient angles: which way is positive.
+ *
+ * Photoshop's `Angl` is measured **anticlockwise from the positive x axis** —
+ * 0° puts the first stop at the left, 90° puts it at the bottom.
+ *
+ * Pikado has two gradient renderers and they do *not* agree:
+ *
+ *   - `src/paint/gradients.js` (`axisFrom`) and the layer-effect renderer in
+ *     `src/effects/effect-renderers.js` (`gradientAxis`) both build their axis
+ *     with `dy = -sin(angle)`, which in a y-down canvas is anticlockwise. Those
+ *     already match Photoshop, so `lfx2` gradient angles are written verbatim.
+ *   - `makeFillStyle` in `src/vector/path.js` — the renderer behind a shape or
+ *     fill layer's gradient — uses `dy = +sin(angle)`, i.e. **clockwise**. Its
+ *     90° puts the first stop at the *top*, the mirror image of Photoshop's.
+ *
+ * So a `GdFl` angle, and only a `GdFl` angle, has to change sign in both
+ * directions. Negating is an involution, so the Pikado round trip is exact; the
+ * point of doing it is that Photoshop then orients the gradient the same way we
+ * render it. If this ever looks wrong again, check which of the two renderers
+ * the layer in question actually uses before flipping the sign back.
+ */
+const psdGradientAngle = (pikadoAngle) => -num(pikadoAngle, 0);
+
+/** The inverse of `psdGradientAngle`; used by `psd-read.js` on `GdFl` only. */
+export const pikadoGradientAngle = (psdAngle) => -num(psdAngle, 0);
 
 const BEVEL_STYLE_ENUMS = {
   inner: 'InrB', outer: 'OtrB', emboss: 'Embs', pillow: 'PlEb', stroke: 'strokeEmboss',
@@ -1391,32 +1455,24 @@ function writeLayerEffects(w, layer) {
 /* ------------------------------------------------------------------ */
 
 /**
- * PostScript font names for our family ids.
+ * The face a type layer's font resolves to.
  *
- * Bold and italic are *never* folded into the name: Photoshop can only resolve
- * a PostScript name it actually has installed, and "ArialMT-Bold" is not one.
- * The regular face is named and the weight/slant travel as `/FauxBold` and
- * `/FauxItalic` in the style run, which is exactly what Photoshop itself does
- * when a family has no real bold face.
+ * A PSD names one *face* — one font file — by its PostScript name, so bold and
+ * italic belong in that name whenever the family genuinely ships them as
+ * separate files: `Arial-BoldMT` rather than `ArialMT` plus `/FauxBold`.
+ * `postScriptFace` in `src/text/fonts.js` owns the per-family table and hands
+ * back the faux flags for whatever the family cannot supply for real (Tahoma
+ * has no italic file; Impact has nothing but a regular).
+ *
+ * Not verified against Photoshop — no install was available here. What *is*
+ * verified is that every name written round trips back to the same family,
+ * weight and slant through `familyFromPostScriptName`, and that the names are
+ * the documented constants of the shipping font files rather than constructions
+ * of our own. A name Photoshop cannot resolve is worse than faux styling, which
+ * is why the table lists a face only where it is a known constant.
  */
-const POSTSCRIPT_FONTS = {
-  system: 'Helvetica', arial: 'ArialMT', helvetica: 'HelveticaNeue', verdana: 'Verdana',
-  tahoma: 'Tahoma', trebuchet: 'TrebuchetMS', segoe: 'SegoeUI', gill: 'GillSans',
-  futura: 'Futura-Medium', impact: 'Impact', inter: 'Inter-Regular', roboto: 'Roboto-Regular',
-  'open-sans': 'OpenSans-Regular', lato: 'Lato-Regular', montserrat: 'Montserrat-Regular',
-  poppins: 'Poppins-Regular', raleway: 'Raleway-Regular', oswald: 'Oswald-Regular',
-  times: 'TimesNewRomanPSMT', georgia: 'Georgia', garamond: 'Garamond',
-  palatino: 'Palatino-Roman', playfair: 'PlayfairDisplay-Regular',
-  merriweather: 'Merriweather-Regular', courier: 'CourierNewPSMT', mono: 'Menlo-Regular',
-  jetbrains: 'JetBrainsMono-Regular', comic: 'ComicSansMS', brush: 'BrushScriptMT',
-  pacifico: 'Pacifico-Regular', lobster: 'Lobster-Regular', dancing: 'DancingScript-Regular',
-};
-
-function postScriptName(font) {
-  const id = font == null ? '' : String(font);
-  if (POSTSCRIPT_FONTS[id]) return POSTSCRIPT_FONTS[id];
-  const stripped = id.replace(/[^A-Za-z0-9]/g, '');
-  return stripped || 'Helvetica';
+function textFace(t) {
+  return postScriptFace(t.font, t.weight, t.italic || t.style === 'italic' ? 'italic' : 'normal');
 }
 
 /** `/Justification` in EngineData, and the order `psd-read.js` decodes. */
@@ -1751,11 +1807,12 @@ function textRunStyle(layer) {
   const t = resolveTextProps(layer.text);
   const c = parseColor(t.color || '#000000');
   const size = Math.max(1, num(t.size, 24));
+  const face = textFace(t);
   return {
-    fontName: postScriptName(t.font),
+    fontName: face.name,
     size,
-    fauxBold: t.weight >= 600,
-    fauxItalic: !!t.italic,
+    fauxBold: face.fauxBold,
+    fauxItalic: face.fauxItalic,
     autoLeading: t.lineStep == null,
     leading: t.lineStep == null ? size * 1.2 : t.lineStep,
     tracking: size > 0 ? (num(t.letterSpacing, 0) / size) * 1000 : 0,
@@ -1869,6 +1926,42 @@ const STROKE_ALIGN_ENUMS = {
 };
 
 /**
+ * The named dash presets, as the multiples of line width that both Photoshop's
+ * `strokeStyleLineDashSet` and `dashArrayFor` in `src/vector/path.js` use.
+ *
+ * This is a copy of `DASH_PRESETS` there, which is module-private; the two must
+ * stay in step or a dashed stroke reopens with different gaps. `psd-read.js`
+ * imports this one so at least both halves of the file format agree.
+ */
+export const PSD_DASH_PRESETS = {
+  dash: [3, 2],
+  'dash-tight': [2, 1],
+  dot: [1, 2],
+  'dash-dot': [4, 2, 1, 2],
+  'long-dash': [7, 3],
+};
+
+/**
+ * A stroke's dash pattern as the multiples of line width Photoshop stores.
+ * A named preset is already in those units; an explicit array is in document
+ * units, so it is divided through by the line width.
+ * @returns {number[]} empty for a solid stroke
+ */
+function dashMultiples(dash, width) {
+  if (!dash || dash === 'solid' || dash === 'none') return [];
+  if (Array.isArray(dash)) {
+    const w = Math.max(0.01, width);
+    return dash.map(Number).filter((n) => Number.isFinite(n) && n > 0).map((n) => n / w);
+  }
+  const preset = PSD_DASH_PRESETS[dash];
+  if (!preset) {
+    console.warn(`[psd] the dash preset "${dash}" is not one this writer knows; the stroke was written solid`);
+    return [];
+  }
+  return preset.slice();
+}
+
+/**
  * Normalise `layer.shape.fill` into one shape of object, mirroring
  * `normalizeFill` in `src/vector/path.js` (which is module-private there).
  * @returns {{kind:'solid'|'gradient'|'pattern'|'none', color?:string,
@@ -1929,7 +2022,8 @@ function fillContentDescriptor(fill) {
       classID: 'GdFl',
       items: {
         Grad: gradientDescriptor(fill.stops),
-        Angl: DESC.ang(num(fill.angle, 0)),
+        // Sign-flipped — see `psdGradientAngle`.
+        Angl: DESC.ang(psdGradientAngle(fill.angle)),
         Type: DESC.enm('GrdT', GRADIENT_STYLE_ENUMS[fill.style] || 'Lnr '),
         Rvrs: DESC.bool(false),
         Dthr: DESC.bool(false),
@@ -1974,7 +2068,7 @@ function writeVectorMask(w, subpaths, doc) {
 /** `vstk` — the Photoshop CS6 vector stroke descriptor. */
 function writeVectorStroke(w, stroke, fill) {
   const width = stroke ? Math.max(0, num(stroke.width, 1)) : 1;
-  const dash = stroke && Array.isArray(stroke.dash) ? stroke.dash.filter((n) => Number(n) > 0) : [];
+  const dash = stroke ? dashMultiples(stroke.dash, width) : [];
   writeBlock(w, 'vstk', (b) => {
     writeDescriptorBlock(b, {
       classID: 'strokeStyle',
@@ -1990,7 +2084,7 @@ function writeVectorStroke(w, stroke, fill) {
         strokeStyleLineAlignment: DESC.enm('strokeStyleLineAlignment', STROKE_ALIGN_ENUMS[stroke && stroke.align] || 'strokeStyleAlignCenter'),
         strokeStyleScaleLock: DESC.bool(false),
         strokeStyleStrokeAdjust: DESC.bool(false),
-        strokeStyleLineDashSet: DESC.list(dash.map((n) => DESC.none(n / Math.max(0.01, width)))),
+        strokeStyleLineDashSet: DESC.list(dash.map((n) => DESC.none(n))),
         strokeStyleBlendMode: blendEnum('normal'),
         strokeStyleOpacity: DESC.pct(100),
         strokeStyleContent: DESC.obj('solidColorLayer', {
@@ -2011,50 +2105,171 @@ function writeVectorStrokeContent(w, key, descriptor) {
 }
 
 /**
- * `vogk` — vector origination data, which is what makes Photoshop show a
- * *live* rounded rectangle (radii editable in the Properties panel) rather
- * than a frozen path. Only written for shapes we know are rectangles; every
- * other geometry stays an ordinary vector mask, exactly as a custom shape does.
+ * `keyOriginType` — which live shape the origination block describes.
+ *
+ * 1, 2, 4 and 5 are corroborated by psd-tools' `Origination` factory, which
+ * maps exactly those four onto Rectangle, RoundedRectangle, Line and Ellipse,
+ * and 9 is the value Adobe's own developer forum shows for a named custom
+ * shape. 6 for a polygon is *inferred*: it is the value left free below the
+ * documented set, and Photoshop's live polygon (with it, the star) arrived after
+ * the four that are documented.
+ *
+ * Evidence, stated plainly because this is exactly the kind of thing that gets
+ * quietly forgotten: `keyOriginLine*` (type 4) are the names psd-tools reads, so
+ * a Pikado line should open as a live line. The `keyOriginPoly*` names are **not**
+ * documented anywhere public and no Photoshop install was available to check
+ * them against. They are written anyway because the geometry never depends on
+ * them — Photoshop draws the shape from the `vmsk` path either way — so the
+ * worst case is the block being ignored and the frozen path appearing, which is
+ * what happens today. What they do guarantee is that `psd-read.js` restores
+ * `sides` / `star` / `innerRadius` from the interoperable blocks alone, with no
+ * Pikado-private block involved.
+ */
+const ORIGIN_TYPES = { rect: 1, 'rounded-rect': 2, line: 4, ellipse: 5, polygon: 6 };
+
+/** The four corner radii a rectangle-family shape carries, or null. */
+function cornerRadiiOf(shape) {
+  if (Array.isArray(shape.corners) && shape.corners.length === 4) {
+    return shape.corners.map((v) => Math.max(0, num(v, 0)));
+  }
+  if (shape.radius != null) {
+    const r = Math.max(0, num(shape.radius, 0));
+    return [r, r, r, r];
+  }
+  return null;
+}
+
+const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+/**
+ * The two endpoints of a line shape, recovered from its shaft.
+ *
+ * `lineSubpaths` in `src/tools/shape.js` builds the shaft as
+ * `[s+n, e+n, e-n, s-n]` where `n` is the half-weight normal, so the endpoints
+ * are the midpoints of the two short edges — exact, not fitted. Arrowheads are
+ * extra subpaths, and the shaft is then inset by the arrow length, so a line
+ * that has them is only claimed as live when the shape also carries the arrow
+ * parameters needed to describe them.
+ *
+ * @returns {{start:{x,y}, end:{x,y}, arrows:boolean}|null}
+ */
+function lineOriginOf(shape, subpaths) {
+  if (shape.weight == null) return null;
+  const weight = num(shape.weight, 0);
+  if (!(weight > 0)) return null;
+  const shaft = subpaths[0];
+  if (!shaft || !shaft.closed || (shaft.points || []).length !== 4) return null;
+
+  const hasArrowMeta = shape.arrowStart !== undefined || shape.arrowEnd !== undefined;
+  if (subpaths.length !== 1 && !hasArrowMeta) return null;
+
+  const p = shaft.points;
+  const start = midpoint(p[0], p[3]);
+  const end = midpoint(p[1], p[2]);
+  // The short edge is the stroke weight; if it is not, this is not our shaft.
+  const measured = Math.hypot(p[0].x - p[3].x, p[0].y - p[3].y);
+  if (Math.abs(measured - Math.max(0.5, weight)) > 0.01) return null;
+  if (Math.hypot(end.x - start.x, end.y - start.y) < 0.01) return null;
+  return { start, end, arrows: hasArrowMeta };
+}
+
+/** Which live shape, if any, `layer.shape` is a parametric instance of. */
+function originKindOf(shape, subpaths) {
+  if (Number(shape.sides) >= 3) return 'polygon';
+  if (lineOriginOf(shape, subpaths)) return 'line';
+  const corners = cornerRadiiOf(shape);
+  if (corners) return corners.some((v) => v > 0) ? 'rounded-rect' : 'rect';
+  return null;
+}
+
+function radiiDescriptor(corners) {
+  return DESC.obj('radii', {
+    unitValueQuadVersion: DESC.long(1),
+    topRight: DESC.px(corners[1]),
+    topLeft: DESC.px(corners[0]),
+    bottomLeft: DESC.px(corners[3]),
+    bottomRight: DESC.px(corners[2]),
+  });
+}
+
+function shapeBBoxDescriptor(box) {
+  return DESC.obj('unitRect', {
+    unitValueQuadVersion: DESC.long(1),
+    'Top ': DESC.px(box.y),
+    Left: DESC.px(box.x),
+    Btom: DESC.px(box.y + box.height),
+    Rght: DESC.px(box.x + box.width),
+  });
+}
+
+/**
+ * `vogk` — vector origination data, which is what makes Photoshop show a *live*
+ * shape (parameters editable in the Properties panel) rather than a frozen path.
+ *
+ * Written for the four geometries we can describe parametrically: rectangles,
+ * rounded rectangles, lines and polygons/stars. Ellipses and custom shapes
+ * carry no marker on `layer.shape` that would distinguish them from an
+ * arbitrary path, so they stay ordinary vector masks.
+ *
+ * Every flavour carries the shared keys — resolution, bounding box, identity
+ * transform and origin index — because those are what Photoshop anchors a live
+ * shape's handles to.
  */
 function writeVectorOrigination(w, shape, subpaths) {
-  const corners = Array.isArray(shape.corners) && shape.corners.length === 4
-    ? shape.corners.map((v) => Math.max(0, num(v, 0)))
-    : shape.radius != null ? [0, 1, 2, 3].map(() => Math.max(0, num(shape.radius, 0))) : null;
-  if (!corners) return;
+  const kind = originKindOf(shape, subpaths);
+  if (!kind) return;
   const box = subpathsBounds(subpaths);
   if (!box) return;
-  const rounded = corners.some((v) => v > 0);
+
+  const items = {
+    keyShapeInvalidated: DESC.bool(false),
+    keyOriginType: DESC.long(ORIGIN_TYPES[kind]),
+    keyOriginResolution: DESC.doub(72),
+  };
+
+  if (kind === 'rect' || kind === 'rounded-rect') {
+    items.keyOriginRRectRadii = radiiDescriptor(cornerRadiiOf(shape));
+  } else if (kind === 'line') {
+    const line = lineOriginOf(shape, subpaths);
+    items.keyOriginLineStart = pixelPointDescriptor(line.start.x, line.start.y);
+    items.keyOriginLineEnd = pixelPointDescriptor(line.end.x, line.end.y);
+    items.keyOriginLineWeight = DESC.doub(num(shape.weight, 1));
+    items.keyOriginLineArrowSt = DESC.bool(!!shape.arrowStart);
+    items.keyOriginLineArrowEnd = DESC.bool(!!shape.arrowEnd);
+    // Photoshop's arrow proportions are percentages of the line weight, which
+    // is the same unit the Line tool's own options use.
+    items.keyOriginLineArrWdth = DESC.doub(shape.arrowWidth == null ? 500 : num(shape.arrowWidth, 500));
+    items.keyOriginLineArrLngth = DESC.doub(shape.arrowLength == null ? 1000 : num(shape.arrowLength, 1000));
+    items.keyOriginLineArrConc = DESC.long(Math.round(num(shape.concavity, 0)));
+  } else if (kind === 'polygon') {
+    const sides = clampi(num(shape.sides, 5), 3, 100);
+    const star = !!shape.star;
+    // Our `innerRadius` is the star's inner radius as a fraction of the outer
+    // one; the Polygon tool's "Indent sides by" slider is its complement, and
+    // that percentage is what a Photoshop star is parameterised by.
+    const inner = Math.max(0.02, Math.min(1, num(shape.innerRadius, 0.5)));
+    items.keyOriginPolySides = DESC.long(sides);
+    items.keyOriginPolyStar = DESC.bool(star);
+    items.keyOriginPolyStarRatio = DESC.doub(inner);
+    items.keyOriginPolyIndent = DESC.pct((1 - inner) * 100);
+    items.keyOriginPolySmoothCorners = DESC.bool(!!shape.smoothCorners);
+    // A polygon's corners are sharp, so the radii quad is all zeros — the block
+    // is still written because Photoshop reads it for every live shape.
+    items.keyOriginRRectRadii = radiiDescriptor([0, 0, 0, 0]);
+  }
+
+  items.keyOriginShapeBBox = shapeBBoxDescriptor(box);
+  items.Trnf = DESC.obj('Trnf', {
+    xx: DESC.doub(1), xy: DESC.doub(0), yx: DESC.doub(0),
+    yy: DESC.doub(1), tx: DESC.doub(0), ty: DESC.doub(0),
+  });
+  items.keyOriginIndex = DESC.long(0);
 
   writeBlock(w, 'vogk', (b) => {
     b.uint32(1); // vector origination version
     writeDescriptorBlock(b, {
       classID: 'null',
-      items: {
-        keyDescriptorList: DESC.list([DESC.obj('null', {
-          keyShapeInvalidated: DESC.bool(false),
-          keyOriginType: DESC.long(rounded ? 2 : 1),
-          keyOriginResolution: DESC.doub(72),
-          keyOriginRRectRadii: DESC.obj('radii', {
-            unitValueQuadVersion: DESC.long(1),
-            topRight: DESC.px(corners[1]),
-            topLeft: DESC.px(corners[0]),
-            bottomLeft: DESC.px(corners[3]),
-            bottomRight: DESC.px(corners[2]),
-          }),
-          keyOriginShapeBBox: DESC.obj('unitRect', {
-            unitValueQuadVersion: DESC.long(1),
-            'Top ': DESC.px(box.y),
-            Left: DESC.px(box.x),
-            Btom: DESC.px(box.y + box.height),
-            Rght: DESC.px(box.x + box.width),
-          }),
-          Trnf: DESC.obj('Trnf', {
-            xx: DESC.doub(1), xy: DESC.doub(0), yx: DESC.doub(0),
-            yy: DESC.doub(1), tx: DESC.doub(0), ty: DESC.doub(0),
-          }),
-          keyOriginIndex: DESC.long(0),
-        })]),
-      },
+      items: { keyDescriptorList: DESC.list([DESC.obj('null', items)]) },
     });
   });
 }

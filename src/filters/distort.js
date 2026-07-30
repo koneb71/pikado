@@ -663,17 +663,79 @@ registerFilter({
 /* Liquify                                                             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Liquify — an interactive mesh warp with the full tool set.
+ *
+ * The state is one forward-displacement mesh: `dx`/`dy` hold the offset at each
+ * node in **normalised image units** (so the same mesh applies to the preview and
+ * to the full-size layer), and `frozen` holds a 0..1 protection weight per node.
+ * Every tool is a brush that edits those three arrays; `applyLiquifyMesh` is the
+ * only thing that ever touches pixels, and it inverse-maps once from the
+ * untouched original, so no amount of pushing pixels around compounds a resample.
+ *
+ * Freezing is enforced at the point of authorship rather than at render time:
+ * every tool scales its per-node weight by `1 - frozen`, so a fully frozen node
+ * cannot move, and a fully frozen *region* comes out byte-identical (the mesh
+ * there stays exactly zero, and a zero displacement samples the source pixel
+ * centre exactly).
+ *
+ * Not implemented: face-aware liquify. Detecting eyes/nose/mouth needs a trained
+ * facial-landmark model, which is not something this file can honestly fake — see
+ * the README.
+ */
+
 const MESH_N = 65;
 
-function makeMesh(n = MESH_N) {
-  return { n, dx: new Float32Array(n * n), dy: new Float32Array(n * n) };
+/** The Liquify tool list, in the order the dialog offers them. */
+export const LIQUIFY_TOOLS = [
+  { value: 'push', label: 'Forward Warp' },
+  { value: 'reconstruct', label: 'Reconstruct' },
+  { value: 'smooth', label: 'Smooth' },
+  { value: 'twirl-cw', label: 'Twirl Clockwise' },
+  { value: 'twirl-ccw', label: 'Twirl Anticlockwise' },
+  { value: 'pucker', label: 'Pucker' },
+  { value: 'bloat', label: 'Bloat' },
+  { value: 'push-left', label: 'Push Left' },
+  { value: 'freeze', label: 'Freeze Mask' },
+  { value: 'thaw', label: 'Thaw Mask' },
+];
+
+/** Tools that keep working while the pointer is held still. */
+const HOLD_TOOLS = new Set([
+  'reconstruct', 'smooth', 'twirl-cw', 'twirl-ccw', 'pucker', 'bloat', 'freeze', 'thaw',
+]);
+
+/** Tools that paint the freeze mask rather than the displacement. */
+const MASK_TOOLS = new Set(['freeze', 'thaw']);
+
+/**
+ * A neutral Liquify mesh.
+ * @param {number} [n] nodes per axis
+ * @returns {{n:number, dx:Float32Array, dy:Float32Array, frozen:Float32Array}}
+ */
+export function createLiquifyMesh(n = MESH_N) {
+  return {
+    n,
+    dx: new Float32Array(n * n),
+    dy: new Float32Array(n * n),
+    frozen: new Float32Array(n * n),
+  };
 }
 
-function meshIsEmpty(m) {
-  if (!m || !m.dx) return true;
+/** True when the mesh would not move a single pixel. */
+export function liquifyMeshIsEmpty(m) {
+  if (!m || !m.dx || !m.dy) return true;
   const d = m.dx, e = m.dy;
+  if (d.length !== e.length) return true;
   for (let i = 0; i < d.length; i++) if (d[i] !== 0 || e[i] !== 0) return false;
   return true;
+}
+
+/** A mesh with a `frozen` channel, adopting `m`'s buffers when it already has one. */
+function withFrozen(m) {
+  if (!m || !m.dx) return createLiquifyMesh();
+  if (m.frozen && m.frozen.length === m.dx.length) return m;
+  return { n: m.n, dx: m.dx, dy: m.dy, frozen: new Float32Array(m.dx.length) };
 }
 
 /** Bilinear lookup of the forward displacement (normalised units). */
@@ -693,8 +755,13 @@ function meshAt(m, u, v, out) {
   out[1] = ya + (yb - ya) * ty;
 }
 
-/** Inverse-map an ImageData through a liquify mesh. */
-function applyMesh(imageData, mesh) {
+/**
+ * Inverse-map an ImageData through a Liquify mesh, in place.
+ * @param {ImageData} imageData
+ * @param {{n:number, dx:Float32Array, dy:Float32Array}} mesh
+ * @returns {ImageData}
+ */
+export function applyLiquifyMesh(imageData, mesh) {
   const w = imageData.width, h = imageData.height;
   const d = new Float64Array(2);
   const iw = Math.max(1, w - 1), ih = Math.max(1, h - 1);
@@ -707,49 +774,176 @@ function applyMesh(imageData, mesh) {
 
 /**
  * Paint one brush dab into the mesh.
- * @param {object} mesh
- * @param {object} o {u, v, vx, vy, mode, radius, pressure, aspectW, aspectH}
+ *
+ * @param {object} mesh from {@link createLiquifyMesh}
+ * @param {object} o
+ * @param {number} o.u normalised brush centre
+ * @param {number} o.v
+ * @param {number} [o.vx] drag velocity, normalised units (Forward Warp, Push Left)
+ * @param {number} [o.vy]
+ * @param {string} o.mode one of {@link LIQUIFY_TOOLS}
+ * @param {number} o.radius brush radius in image pixels
+ * @param {number} o.pressure 0..1 overall strength for this dab
+ * @param {number} [o.density] 0..1 edge hardness of the falloff (default 0.5)
+ * @param {number} o.aspectW image width in pixels (the radius' frame)
+ * @param {number} o.aspectH image height in pixels
+ * @returns {number} the number of nodes the dab actually changed
  */
-function meshDab(mesh, o) {
+export function liquifyDab(mesh, o) {
   const n = mesh.n;
+  const frozen = mesh.frozen;
   const rw = o.aspectW, rh = o.aspectH;
   const rad = Math.max(1, o.radius);
   const press = clamp(o.pressure, 0, 1);
+  const mode = o.mode || 'push';
+  if (press <= 0) return 0;
+  // Density shapes the falloff: 100 spreads the effect right out to the brush
+  // edge, 0 concentrates it in the middle. 50 is the classic (1-d²)².
+  const edge = 1 + (1 - clamp(o.density == null ? 0.5 : o.density, 0, 1)) * 2;
+
   // Only the nodes inside the brush footprint need visiting.
   const spanU = Math.ceil((rad / rw) * (n - 1)) + 1;
   const spanV = Math.ceil((rad / rh) * (n - 1)) + 1;
   const ci = Math.round(o.u * (n - 1)), cj = Math.round(o.v * (n - 1));
   const i0 = Math.max(0, ci - spanU), i1 = Math.min(n - 1, ci + spanU);
   const j0 = Math.max(0, cj - spanV), j1 = Math.min(n - 1, cj + spanV);
+  if (i1 < i0 || j1 < j0) return 0;
 
-  for (let j = j0; j <= j1; j++) {
-    const nv = j / (n - 1);
-    const py = (nv - o.v) * rh;
-    for (let i = i0; i <= i1; i++) {
-      const nu = i / (n - 1);
-      const pxx = (nu - o.u) * rw;
-      const dist = Math.sqrt(pxx * pxx + py * py) / rad;
-      if (dist >= 1) continue;
-      const fall = (1 - dist * dist) * (1 - dist * dist);
-      const wgt = fall * press;
-      const k = j * n + i;
-      if (o.mode === 'push') {
-        mesh.dx[k] += o.vx * wgt;
-        mesh.dy[k] += o.vy * wgt;
-      } else if (o.mode === 'twirl-cw' || o.mode === 'twirl-ccw') {
-        const ang = (o.mode === 'twirl-cw' ? 0.35 : -0.35) * wgt;
-        const cs = Math.cos(ang), sn = Math.sin(ang);
-        const qx = pxx * cs - py * sn, qy = pxx * sn + py * cs;
-        mesh.dx[k] += (qx - pxx) / rw;
-        mesh.dy[k] += (qy - py) / rh;
-      } else {
-        const dir = o.mode === 'bloat' ? 0.16 : -0.16;
-        mesh.dx[k] += (pxx / rw) * dir * wgt;
-        mesh.dy[k] += (py / rh) * dir * wgt;
+  // Smooth averages neighbours, so it reads from a snapshot of the footprint —
+  // otherwise the sweep direction would bias the result.
+  let snapX = null, snapY = null, snapW = 0, snapH = 0;
+  if (mode === 'smooth') {
+    snapW = i1 - i0 + 1;
+    snapH = j1 - j0 + 1;
+    snapX = new Float32Array(snapW * snapH);
+    snapY = new Float32Array(snapW * snapH);
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const k = (j - j0) * snapW + (i - i0);
+        snapX[k] = mesh.dx[j * n + i];
+        snapY[k] = mesh.dy[j * n + i];
       }
     }
   }
+
+  let touched = 0;
+  for (let j = j0; j <= j1; j++) {
+    const py = (j / (n - 1) - o.v) * rh;
+    for (let i = i0; i <= i1; i++) {
+      const pxx = (i / (n - 1) - o.u) * rw;
+      const dist = Math.sqrt(pxx * pxx + py * py) / rad;
+      if (dist >= 1) continue;
+      const k = j * n + i;
+      const fall = Math.pow(1 - dist * dist, edge);
+      let wgt = fall * press;
+      if (!MASK_TOOLS.has(mode)) wgt *= 1 - clamp(frozen ? frozen[k] : 0, 0, 1);
+      if (wgt <= 0) continue;
+      touched++;
+
+      switch (mode) {
+        case 'push':
+          mesh.dx[k] += o.vx * wgt;
+          mesh.dy[k] += o.vy * wgt;
+          break;
+        case 'push-left':
+          // Perpendicular to travel, on the left-hand side of the direction of
+          // motion: dragging up pushes pixels left, dragging right pushes up.
+          mesh.dx[k] += o.vy * wgt;
+          mesh.dy[k] += -o.vx * wgt;
+          break;
+        case 'twirl-cw':
+        case 'twirl-ccw': {
+          const ang = (mode === 'twirl-cw' ? 0.35 : -0.35) * wgt;
+          const cs = Math.cos(ang), sn = Math.sin(ang);
+          const qx = pxx * cs - py * sn, qy = pxx * sn + py * cs;
+          mesh.dx[k] += (qx - pxx) / rw;
+          mesh.dy[k] += (qy - py) / rh;
+          break;
+        }
+        case 'bloat':
+        case 'pucker': {
+          const dir = mode === 'bloat' ? 0.16 : -0.16;
+          mesh.dx[k] += (pxx / rw) * dir * wgt;
+          mesh.dy[k] += (py / rh) * dir * wgt;
+          break;
+        }
+        case 'reconstruct': {
+          const t = Math.min(1, wgt);
+          mesh.dx[k] -= mesh.dx[k] * t;
+          mesh.dy[k] -= mesh.dy[k] * t;
+          break;
+        }
+        case 'smooth': {
+          const t = Math.min(1, wgt);
+          const li = i - i0, lj = j - j0;
+          let sx = 0, sy = 0, cnt = 0;
+          for (let b = -1; b <= 1; b++) {
+            for (let a = -1; a <= 1; a++) {
+              const ni = li + a, nj = lj + b;
+              if (ni < 0 || nj < 0 || ni >= snapW || nj >= snapH) continue;
+              const sk = nj * snapW + ni;
+              sx += snapX[sk]; sy += snapY[sk]; cnt++;
+            }
+          }
+          if (!cnt) break;
+          mesh.dx[k] += (sx / cnt - mesh.dx[k]) * t;
+          mesh.dy[k] += (sy / cnt - mesh.dy[k]) * t;
+          break;
+        }
+        case 'freeze':
+          if (frozen) frozen[k] = Math.min(1, frozen[k] + wgt);
+          break;
+        case 'thaw':
+          if (frozen) frozen[k] = Math.max(0, frozen[k] - wgt);
+          break;
+        default:
+          mesh.dx[k] += o.vx * wgt;
+          mesh.dy[k] += o.vy * wgt;
+          break;
+      }
+    }
+  }
+  return touched;
 }
+
+/** Blend the whole mesh back toward the identity — the Reconstruct button. */
+function reconstructAll(mesh, amount) {
+  const k = clamp(1 - amount, 0, 1);
+  for (let i = 0; i < mesh.dx.length; i++) {
+    const keep = k + (1 - k) * clamp(mesh.frozen ? mesh.frozen[i] : 0, 0, 1);
+    mesh.dx[i] *= keep;
+    mesh.dy[i] *= keep;
+  }
+}
+
+/** Relax the whole mesh once — the Smooth All button. */
+function smoothAll(mesh) {
+  const n = mesh.n;
+  const sx = mesh.dx.slice(), sy = mesh.dy.slice();
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const k = j * n + i;
+      const hold = clamp(mesh.frozen ? mesh.frozen[k] : 0, 0, 1);
+      if (hold >= 1) continue;
+      let ax = 0, ay = 0, c = 0;
+      for (let b = -1; b <= 1; b++) {
+        for (let a = -1; a <= 1; a++) {
+          const ni = i + a, nj = j + b;
+          if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
+          ax += sx[nj * n + ni]; ay += sy[nj * n + ni]; c++;
+        }
+      }
+      if (!c) continue;
+      const t = 1 - hold;
+      mesh.dx[k] += (ax / c - sx[k]) * t;
+      mesh.dy[k] += (ay / c - sy[k]) * t;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* The interactive editor                                              */
+/* ------------------------------------------------------------------ */
 
 /** Interactive mesh editor rendered into the Liquify dialog. */
 function renderLiquify(container, state, onChange) {
@@ -771,90 +965,151 @@ function renderLiquify(container, state, onChange) {
   const baseData = bctx.getImageData(0, 0, pw, ph);
 
   const view = el('canvas.pk-liquify-view.pk-checker', { width: pw, height: ph });
+  const chrome = el('canvas.pk-liquify-chrome', { width: pw, height: ph });
+  const stage = el('div.pk-liquify-stage', {}, view, chrome);
   const vctx = view.getContext('2d');
+  const cctx = chrome.getContext('2d');
   const work = new ImageData(new Uint8ClampedArray(baseData.data.length), pw, ph);
 
-  let mesh = makeMesh();
+  // The frozen overlay is drawn from a node-resolution canvas scaled up, which
+  // is both cheap and an honest picture of the mesh the mask actually protects.
+  const maskCv = createCanvas(MESH_N, MESH_N);
+  const mctx = maskCv.getContext('2d');
+  const maskImg = new ImageData(MESH_N, MESH_N);
+
+  let mesh = createLiquifyMesh();
   const d = new Float64Array(2);
+  /** Brush ring position in preview pixels, or null when the pointer is away. */
+  let hover = null;
+
+  const previewRadius = () => Math.max(2, ((state.brushSize || 180) / 2) * scale);
+
+  const drawChrome = () => {
+    cctx.clearRect(0, 0, pw, ph);
+    if (state.showMask !== false && mesh.frozen) {
+      let any = false;
+      const md = maskImg.data;
+      for (let k = 0; k < mesh.frozen.length; k++) {
+        const a = clamp(mesh.frozen[k], 0, 1);
+        if (a > 0) any = true;
+        md[k * 4] = 255; md[k * 4 + 1] = 64; md[k * 4 + 2] = 64;
+        md[k * 4 + 3] = Math.round(a * 130);
+      }
+      if (any) {
+        mctx.putImageData(maskImg, 0, 0);
+        cctx.save();
+        cctx.imageSmoothingEnabled = true;
+        cctx.drawImage(maskCv, 0, 0, pw, ph);
+        cctx.restore();
+      }
+    }
+    if (state.showMesh) {
+      cctx.save();
+      cctx.strokeStyle = 'rgba(122,184,255,.45)';
+      cctx.lineWidth = 1;
+      const step = 4;
+      const n = mesh.n;
+      cctx.beginPath();
+      for (let j = 0; j < n; j += step) {
+        for (let i = 0; i < n; i += step) {
+          meshAt(mesh, i / (n - 1), j / (n - 1), d);
+          const x = (i / (n - 1) + d[0]) * pw;
+          const y = (j / (n - 1) + d[1]) * ph;
+          if (i === 0) cctx.moveTo(x, y); else cctx.lineTo(x, y);
+        }
+      }
+      for (let i = 0; i < n; i += step) {
+        for (let j = 0; j < n; j += step) {
+          meshAt(mesh, i / (n - 1), j / (n - 1), d);
+          const x = (i / (n - 1) + d[0]) * pw;
+          const y = (j / (n - 1) + d[1]) * ph;
+          if (j === 0) cctx.moveTo(x, y); else cctx.lineTo(x, y);
+        }
+      }
+      cctx.stroke();
+      cctx.restore();
+    }
+    if (hover) {
+      cctx.save();
+      cctx.beginPath();
+      cctx.arc(hover.x, hover.y, previewRadius(), 0, Math.PI * 2);
+      cctx.strokeStyle = 'rgba(0,0,0,.55)';
+      cctx.lineWidth = 3;
+      cctx.stroke();
+      cctx.strokeStyle = MASK_TOOLS.has(state.mode) ? 'rgba(255,120,120,.95)' : 'rgba(255,255,255,.95)';
+      cctx.lineWidth = 1.25;
+      cctx.stroke();
+      cctx.restore();
+    }
+  };
 
   const draw = () => {
     work.data.set(baseData.data);
-    if (!meshIsEmpty(mesh)) applyMesh(work, mesh);
+    if (!liquifyMeshIsEmpty(mesh)) applyLiquifyMesh(work, mesh);
     vctx.putImageData(work, 0, 0);
-    if (!state.showMesh) return;
-    vctx.save();
-    vctx.strokeStyle = 'rgba(122,184,255,.45)';
-    vctx.lineWidth = 1;
-    const step = 4;
-    const n = mesh.n;
-    vctx.beginPath();
-    for (let j = 0; j < n; j += step) {
-      for (let i = 0; i < n; i += step) {
-        meshAt(mesh, i / (n - 1), j / (n - 1), d);
-        const x = (i / (n - 1) + d[0]) * pw;
-        const y = (j / (n - 1) + d[1]) * ph;
-        if (i === 0) vctx.moveTo(x, y); else vctx.lineTo(x, y);
-      }
-    }
-    for (let i = 0; i < n; i += step) {
-      for (let j = 0; j < n; j += step) {
-        meshAt(mesh, i / (n - 1), j / (n - 1), d);
-        const x = (i / (n - 1) + d[0]) * pw;
-        const y = (j / (n - 1) + d[1]) * ph;
-        if (j === 0) vctx.moveTo(x, y); else vctx.lineTo(x, y);
-      }
-    }
-    vctx.stroke();
-    vctx.restore();
+    drawChrome();
   };
 
-  const publish = () => onChange('mesh', { n: mesh.n, dx: mesh.dx, dy: mesh.dy });
+  const publish = () => onChange('mesh', { n: mesh.n, dx: mesh.dx, dy: mesh.dy, frozen: mesh.frozen });
 
   let dragging = false;
   let lastU = 0, lastV = 0;
   let hold = null;
   // A mesh left over from a previous run must not be adopted: re-applying it
   // would warp pixels that already carry that warp. Ignore exactly that object.
-  const stale = state.mesh && !meshIsEmpty(state.mesh) ? state.mesh : null;
+  const stale = state.mesh && !liquifyMeshIsEmpty(state.mesh) ? state.mesh : null;
 
   const posOf = (e) => {
     const r = view.getBoundingClientRect();
     return { u: (e.clientX - r.left) / r.width, v: (e.clientY - r.top) / r.height };
   };
 
-  const dab = (u, v, vx, vy) => {
-    meshDab(mesh, {
+  const dab = (u, v, vx, vy, strength) => {
+    liquifyDab(mesh, {
       u, v, vx, vy,
       mode: state.mode || 'push',
-      radius: Math.max(2, (state.brushSize || 120) / 2),
-      pressure: (state.brushPressure || 50) / 100,
+      radius: Math.max(2, (state.brushSize || 180) / 2),
+      pressure: strength,
+      density: (state.brushDensity == null ? 50 : state.brushDensity) / 100,
       aspectW: rect.width,
       aspectH: rect.height,
     });
     draw();
   };
 
+  /** Drag strength, and the weaker per-tick strength for a held brush. */
+  const pressure = () => clamp((state.brushPressure == null ? 60 : state.brushPressure) / 100, 0, 1);
+  const tickStrength = () => pressure() * clamp((state.brushRate == null ? 40 : state.brushRate) / 100, 0, 1);
+
   view.addEventListener('pointerdown', (e) => {
     dragging = true;
     view.setPointerCapture(e.pointerId);
     const p = posOf(e);
     lastU = p.u; lastV = p.v;
-    if ((state.mode || 'push') !== 'push') {
-      dab(p.u, p.v, 0, 0);
-      // Twirl/bloat/pucker keep working while the pointer is held still.
+    hover = { x: p.u * pw, y: p.v * ph };
+    if (HOLD_TOOLS.has(state.mode || 'push')) {
+      dab(p.u, p.v, 0, 0, tickStrength());
+      // Twirl/pucker/bloat/reconstruct/smooth/freeze keep working while held.
       hold = setInterval(() => {
         if (!view.isConnected) { finish(); return; }
-        dab(lastU, lastV, 0, 0);
+        dab(lastU, lastV, 0, 0, tickStrength());
       }, 45);
     }
     e.preventDefault();
   });
 
   view.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
     const p = posOf(e);
-    dab(p.u, p.v, p.u - lastU, p.v - lastV);
+    hover = { x: p.u * pw, y: p.v * ph };
+    if (!dragging) { drawChrome(); return; }
+    dab(p.u, p.v, p.u - lastU, p.v - lastV, pressure());
     lastU = p.u; lastV = p.v;
+  });
+
+  view.addEventListener('pointerleave', () => {
+    if (dragging) return;
+    hover = null;
+    drawChrome();
   });
 
   const finish = () => {
@@ -867,29 +1122,29 @@ function renderLiquify(container, state, onChange) {
   view.addEventListener('pointercancel', finish);
   view.addEventListener('lostpointercapture', finish);
 
+  const act = (label, fn, title) => el('button.pk-btn.subtle', {
+    type: 'button', text: label, title: title || label,
+    onclick: () => {
+      fn();
+      draw();
+      publish();
+    },
+  });
+
   const tools = el('div.pk-liquify-tools', {},
-    el('button.pk-btn.subtle', {
-      type: 'button', text: 'Reconstruct',
-      onclick: () => {
-        for (let i = 0; i < mesh.dx.length; i++) { mesh.dx[i] *= 0.7; mesh.dy[i] *= 0.7; }
-        draw();
-        publish();
-      },
-    }),
-    el('button.pk-btn.subtle', {
-      type: 'button', text: 'Restore All',
-      onclick: () => {
-        mesh.dx.fill(0);
-        mesh.dy.fill(0);
-        draw();
-        publish();
-      },
-    }),
+    act('Reconstruct', () => reconstructAll(mesh, 0.3), 'Ease the whole mesh back toward its original shape'),
+    act('Smooth All', () => smoothAll(mesh), 'Relax the whole mesh'),
+    act('Restore All', () => { mesh.dx.fill(0); mesh.dy.fill(0); }, 'Remove every distortion'),
+    act('Freeze All', () => mesh.frozen.fill(1), 'Protect the whole image'),
+    act('Invert Freeze', () => {
+      for (let i = 0; i < mesh.frozen.length; i++) mesh.frozen[i] = 1 - mesh.frozen[i];
+    }, 'Swap frozen and thawed areas'),
+    act('Thaw All', () => mesh.frozen.fill(0), 'Clear the freeze mask'),
     el('span.pk-hint', { text: 'Drag on the preview to warp' })
   );
 
   container.classList.add('pk-liquify');
-  container.append(view, tools);
+  container.append(stage, tools);
 
   // `onChange` cannot run while the form is still being built, so the reset of
   // a remembered mesh is deferred to the next frame.
@@ -899,9 +1154,9 @@ function renderLiquify(container, state, onChange) {
   return {
     sync(v) {
       if (v && v.dx && v !== stale) {
-        if (v.dx !== mesh.dx) mesh = { n: v.n, dx: v.dx, dy: v.dy };
-      } else if (!meshIsEmpty(mesh)) {
-        mesh = makeMesh();
+        if (v.dx !== mesh.dx) mesh = withFrozen({ n: v.n, dx: v.dx, dy: v.dy, frozen: v.frozen });
+      } else if (!liquifyMeshIsEmpty(mesh)) {
+        mesh = createLiquifyMesh();
       }
       draw();
     },
@@ -912,25 +1167,25 @@ registerFilter({
   id: 'liquify',
   name: 'Liquify...',
   menu: 'Distort',
-  dialogWidth: 500,
+  dialogWidth: 520,
   params: [
-    {
-      key: 'mode', label: 'Tool', type: 'select', default: 'push',
-      options: [
-        { value: 'push', label: 'Forward Warp' },
-        { value: 'twirl-cw', label: 'Twirl Clockwise' },
-        { value: 'twirl-ccw', label: 'Twirl Counter-Clockwise' },
-        { value: 'bloat', label: 'Bloat' },
-        { value: 'pucker', label: 'Pucker' },
-      ],
-    },
+    { key: 'mode', label: 'Tool', type: 'select', default: 'push', options: LIQUIFY_TOOLS },
     { key: 'brushSize', label: 'Brush Size', type: 'slider', min: 4, max: 1500, step: 1, default: 180, unit: 'px' },
     { key: 'brushPressure', label: 'Brush Pressure', type: 'slider', min: 1, max: 100, step: 1, default: 60 },
+    {
+      key: 'brushRate', label: 'Brush Rate', type: 'slider', min: 1, max: 100, step: 1, default: 40,
+      hint: 'Speed of the tools that keep working while you hold still',
+    },
+    {
+      key: 'brushDensity', label: 'Brush Density', type: 'slider', min: 0, max: 100, step: 1, default: 50,
+      hint: 'How far the effect reaches toward the brush edge',
+    },
     { key: 'showMesh', label: 'Show Mesh', type: 'checkbox', default: false },
+    { key: 'showMask', label: 'Show Frozen Areas', type: 'checkbox', default: true },
     { key: 'mesh', type: 'custom', default: null, render: renderLiquify },
   ],
   apply(imageData, p) {
-    if (meshIsEmpty(p.mesh)) return imageData;
-    return applyMesh(imageData, p.mesh);
+    if (liquifyMeshIsEmpty(p.mesh)) return imageData;
+    return applyLiquifyMesh(imageData, p.mesh);
   },
 });

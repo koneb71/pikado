@@ -14,6 +14,7 @@ import * as ops from '../../layers/ops.js';
 import {
   isSmartLayer, getSmartTransform, getSmartFilters, decomposeMatrix, composeMatrix,
   setSmartTransform, resetSmartTransform, editSmartContents, exportSmartContents,
+  getSmartPerspective, getSmartWarp, clearSmartShape,
 } from '../../core/smart.js';
 
 /**
@@ -718,6 +719,7 @@ function shapeSection(doc, layer) {
 /* ------------------------------------------------------------------ */
 
 const round2 = (n) => Math.round(n * 100) / 100;
+const DEG = 180 / Math.PI;
 
 /**
  * Smart Object properties: the embedded source size, the live transform, and
@@ -727,7 +729,19 @@ const round2 = (n) => Math.round(n * 100) / 100;
  * the embedded document, so dragging Width down to 10% and back to 100% costs
  * nothing in quality. The panel therefore never calls `beginEdit` itself; the
  * committer opens the copy-on-write window and `setSmartTransform` replaces
- * `layer.canvas` outright.
+ * `layer.canvas` outright. Perspective and the warp mesh are *not* touched: the
+ * matrix is only the affine part of the layer's shape, so editing Width here
+ * leaves a perspective from Free Transform exactly where it was.
+ *
+ * Skew, and why there are two fields for one degree of freedom
+ * -----------------------------------------------------------
+ * An affine matrix has six degrees of freedom; centre, scale and rotation
+ * already account for five, so only one shear survives a round trip through the
+ * matrix. Both Skew X and Skew Y are therefore authored here and composed
+ * faithfully, but a re-read (after Free Transform, an undo, or another panel
+ * writing the matrix) shows the canonical form, where the whole shear sits in
+ * Skew X. While the panel is the one driving the matrix it keeps whatever the
+ * user typed, so the fields do not jump around under the cursor.
  */
 function smartSection(doc, layer) {
   const s = layer.smart;
@@ -739,9 +753,14 @@ function smartSection(doc, layer) {
     y: round2(d.centerY),
     scaleX: round2(d.scaleX * 100),
     scaleY: round2(d.scaleY * 100),
-    angle: round2((d.angle * 180) / Math.PI),
+    angle: round2(d.angle * DEG),
+    skewX: round2(d.skewX * DEG),
+    skewY: 0,
     linked: Math.abs(d.scaleX - d.scaleY) < 1e-6,
   };
+
+  /** The matrix this panel last wrote — see the note about Skew Y above. */
+  let owned = null;
 
   const matrixFor = () => composeMatrix({
     centerX: Number(state.x) || 0,
@@ -749,6 +768,8 @@ function smartSection(doc, layer) {
     scaleX: (Number(state.scaleX) || 0) / 100,
     scaleY: (Number(state.linked ? state.scaleX : state.scaleY) || 0) / 100,
     angle: ((Number(state.angle) || 0) * Math.PI) / 180,
+    skewX: ((Number(state.skewX) || 0) * Math.PI) / 180,
+    skewY: ((Number(state.skewY) || 0) * Math.PI) / 180,
   }, s.sourceWidth, s.sourceHeight);
 
   const committer = makeCommitter('Transform Smart Object', { layerFor: () => layer });
@@ -760,21 +781,33 @@ function smartSection(doc, layer) {
     { key: 'scaleX', label: 'Width', type: 'slider', min: 1, max: 400, step: 0.5, unit: '%' },
     { key: 'scaleY', label: 'Height', type: 'slider', min: 1, max: 400, step: 0.5, unit: '%', when: (v) => !v.linked },
     { key: 'angle', label: 'Rotate', type: 'angle' },
+    { key: 'skewX', label: 'Skew X', type: 'slider', min: -85, max: 85, step: 0.5, unit: '°' },
+    { key: 'skewY', label: 'Skew Y', type: 'slider', min: -85, max: 85, step: 0.5, unit: '°' },
   ], state, (key, value) => {
     state[key] = value;
     if (key === 'linked' && value) state.scaleY = state.scaleX;
     form.refresh();
     committer.bump();
-    setSmartTransform(doc, layer, matrixFor(), { commit: false });
+    const m = matrixFor();
+    owned = m.slice();
+    setSmartTransform(doc, layer, m, { commit: false });
   });
 
   node.appendChild(form.node);
 
   const filters = getSmartFilters(layer);
   const scaleText = () => `${round2(state.scaleX)}% × ${round2(state.linked ? state.scaleX : state.scaleY)}%`;
+  const shapeText = () => {
+    const p = getSmartPerspective(layer);
+    const bits = [];
+    if (p[0] || p[1]) bits.push(`perspective ${round2(p[0] * 1000)}, ${round2(p[1] * 1000)} ‰`);
+    if (getSmartWarp(layer)) bits.push('warp mesh');
+    return bits.length ? bits.join(' · ') : 'None';
+  };
   const sizeVal = el('span.pk-panel-val', { text: `${s.sourceWidth} × ${s.sourceHeight} px` });
   const scaleVal = el('span.pk-panel-val', { text: scaleText() });
   const posVal = el('span.pk-panel-val', { text: `${Math.round(state.x)}, ${Math.round(state.y)}` });
+  const shapeVal = el('span.pk-panel-val', { text: shapeText() });
   const layerVal = el('span.pk-panel-val', { text: String(s.source.flatLayers().length) });
   const filterVal = el('span.pk-panel-val', {
     text: filters.length ? `${filters.length} (${filters.filter((f) => f.enabled).length} on)` : 'None',
@@ -785,12 +818,18 @@ function smartSection(doc, layer) {
     el('span.pk-panel-key', { text: 'Source layers' }), layerVal,
     el('span.pk-panel-key', { text: 'Scale' }), scaleVal,
     el('span.pk-panel-key', { text: 'Center' }), posVal,
+    el('span.pk-panel-key', { text: 'Distortion' }), shapeVal,
     el('span.pk-panel-key', { text: 'Smart filters' }), filterVal
   ));
 
   node.appendChild(el('div.pk-panel-note', {
-    text: 'Transforms and smart filters are re-applied to the embedded source on every render, so nothing here is baked into pixels until you rasterize.',
+    text: 'Centre, scale, rotation and skew are one matrix; perspective and warp ride alongside it. All of them, plus the smart filters, are re-applied to the embedded source on every render, so nothing here is baked into pixels until you rasterize.',
   }));
+
+  const clearBtn = el('button.pk-mini-btn', {
+    type: 'button', text: 'Clear Distortion',
+    onclick: () => { clearSmartShape(doc, layer); sync(); },
+  });
 
   node.appendChild(el('div.pk-prop-actions', {},
     el('button.pk-mini-btn', { type: 'button', text: 'Edit Contents', onclick: () => editSmartContents(doc, layer) }),
@@ -802,6 +841,7 @@ function smartSection(doc, layer) {
       },
     }),
     el('button.pk-mini-btn', { type: 'button', text: 'Export…', onclick: () => exportSmartContents(doc, layer) }),
+    clearBtn,
     el('button.pk-mini-btn', {
       type: 'button', text: 'Reset',
       onclick: () => { resetSmartTransform(doc, layer); sync(); },
@@ -811,20 +851,32 @@ function smartSection(doc, layer) {
 
   const off = commitOnRelease(node, committer);
   const sync = () => {
-    const cur = decomposeMatrix(getSmartTransform(layer), layer.smart.sourceWidth, layer.smart.sourceHeight);
-    state.x = round2(cur.centerX);
-    state.y = round2(cur.centerY);
-    state.scaleX = round2(cur.scaleX * 100);
-    state.scaleY = round2(cur.scaleY * 100);
-    state.angle = round2((cur.angle * 180) / Math.PI);
+    const m = getSmartTransform(layer);
+    const mine = owned && m.every((n, i) => Math.abs(n - owned[i]) < 1e-9);
+    if (!mine) {
+      // Somebody else moved the matrix (Free Transform, undo, a script), so the
+      // authored skew pair no longer describes it — show the canonical form.
+      const cur = decomposeMatrix(m, layer.smart.sourceWidth, layer.smart.sourceHeight);
+      state.x = round2(cur.centerX);
+      state.y = round2(cur.centerY);
+      state.scaleX = round2(cur.scaleX * 100);
+      state.scaleY = round2(cur.scaleY * 100);
+      state.angle = round2(cur.angle * DEG);
+      state.skewX = round2(cur.skewX * DEG);
+      state.skewY = 0;
+      owned = null;
+    }
     form.refresh();
     sizeVal.textContent = `${layer.smart.sourceWidth} × ${layer.smart.sourceHeight} px`;
     scaleVal.textContent = scaleText();
     posVal.textContent = `${Math.round(state.x)}, ${Math.round(state.y)}`;
+    shapeVal.textContent = shapeText();
+    clearBtn.style.display = shapeVal.textContent === 'None' ? 'none' : '';
     layerVal.textContent = String(layer.smart.source.flatLayers().length);
     const fl = getSmartFilters(layer);
     filterVal.textContent = fl.length ? `${fl.length} (${fl.filter((f) => f.enabled).length} on)` : 'None';
   };
+  sync();
   return { node, sync, dispose: () => { off(); committer.flush(); } };
 }
 

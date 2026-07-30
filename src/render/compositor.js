@@ -1,6 +1,6 @@
 import { LayerType } from '../core/layer.js';
 import { gcoFor, isNativeBlend, blendCPU } from '../core/blend.js';
-import { createCanvas, cloneCanvas, ctx2d } from '../core/util.js';
+import { createCanvas, cloneCanvas, ctx2d, ctx2dRead } from '../core/util.js';
 import { applyLayerStyles, belowEffectResults, hasStyles } from '../effects/styles.js';
 import { blendOnGPU } from './gpu-blend.js';
 import { applyAdjustment } from '../adjustments/registry.js';
@@ -51,6 +51,136 @@ export function getComposite(doc, opts) {
   doc._composite = compositeDocument(doc);
   doc._compositeValid = true;
   return doc._composite;
+}
+
+/* ------------------------------------------------------------------ */
+/* Channel view — a viewing aid, never part of the pixels              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Per-channel view visibility, as toggled by the eyes in the Channels panel.
+ *
+ * The state lives on the *document* rather than on `app` so that two open
+ * documents each remember their own channel view — switching tabs must not
+ * carry "Red only" across with it. It is deliberately absent from
+ * `captureState()`, because it is a view setting: undo must not restore it, and
+ * nothing downstream of the composite (export, flatten, Save, PSD, the
+ * eyedropper) ever sees it. `getComposite()` keeps returning the true
+ * full-colour composite; only `getViewComposite()` — used by the canvas view —
+ * applies the filter.
+ */
+const FULL_CHANNEL_VIEW = { r: true, g: true, b: true };
+
+/** The document's channel view, created on first use. */
+export function channelViewOf(doc) {
+  if (!doc) return { ...FULL_CHANNEL_VIEW };
+  const cv = doc.channelView;
+  if (!cv || typeof cv !== 'object') {
+    doc.channelView = { ...FULL_CHANNEL_VIEW };
+    return doc.channelView;
+  }
+  // Tolerate a partially-written object (e.g. restored from storage).
+  if (typeof cv.r !== 'boolean') cv.r = true;
+  if (typeof cv.g !== 'boolean') cv.g = true;
+  if (typeof cv.b !== 'boolean') cv.b = true;
+  return cv;
+}
+
+/** True when nothing is being filtered out. */
+export function isFullChannelView(view) {
+  return !!(view && view.r && view.g && view.b);
+}
+
+/**
+ * Merge `patch` into the document's channel view.
+ * @returns {boolean} whether anything actually changed (callers repaint on true)
+ */
+export function setChannelView(doc, patch) {
+  if (!doc || !patch) return false;
+  const cv = channelViewOf(doc);
+  let changed = false;
+  for (const k of ['r', 'g', 'b']) {
+    if (patch[k] === undefined) continue;
+    const next = !!patch[k];
+    if (cv[k] !== next) {
+      cv[k] = next;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
+ * Final pass over a finished composite: hide the channels the view turned off.
+ *
+ * Photoshop's two cases, both implemented here:
+ *   - exactly one channel visible -> show it as greyscale (r = g = b = value),
+ *     which is what makes "click Red to check the red plate" useful;
+ *   - two or more (or none) visible -> keep those, zero the hidden ones.
+ * Alpha is never touched, so transparency still reads as the checkerboard.
+ *
+ * @param {CanvasRenderingContext2D} ctx composite to filter, in place
+ * @param {{r:boolean,g:boolean,b:boolean}} view
+ * @returns {boolean} whether any pixel was rewritten
+ */
+export function applyChannelView(ctx, view) {
+  if (isFullChannelView(view)) return false;
+  const w = ctx.canvas.width, h = ctx.canvas.height;
+  if (w < 1 || h < 1) return false;
+  const keep = [!!view.r, !!view.g, !!view.b];
+  const shown = (keep[0] ? 1 : 0) + (keep[1] ? 1 : 0) + (keep[2] ? 1 : 0);
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+
+  if (shown === 1) {
+    const off = keep[0] ? 0 : keep[1] ? 1 : 2;
+    for (let i = 0; i < d.length; i += 4) {
+      const v = d[i + off];
+      d[i] = v; d[i + 1] = v; d[i + 2] = v;
+    }
+  } else {
+    for (let i = 0; i < d.length; i += 4) {
+      if (!keep[0]) d[i] = 0;
+      if (!keep[1]) d[i + 1] = 0;
+      if (!keep[2]) d[i + 2] = 0;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return true;
+}
+
+/**
+ * The composite as it should appear on screen: the cached full-colour composite
+ * with the channel view applied. Returns the cached composite itself when every
+ * channel is visible, so the common case costs nothing.
+ *
+ * The filtered copy is cached against the composite it came from *by reference*.
+ * `doc.touch()`/`commit()` make `getComposite()` build a brand-new canvas, and
+ * flipping a channel changes the key, so either one invalidates this cache
+ * without needing a hook inside `document.js`.
+ */
+export function getViewComposite(doc) {
+  const full = getComposite(doc);
+  const view = channelViewOf(doc);
+  if (isFullChannelView(view)) {
+    doc._channelComposite = null;
+    doc._channelCompositeSrc = null;
+    return full;
+  }
+  const key = `${view.r ? 1 : 0}${view.g ? 1 : 0}${view.b ? 1 : 0}`;
+  const cached = doc._channelComposite;
+  if (cached && doc._channelCompositeSrc === full && doc._channelCompositeKey === key
+      && cached.width === full.width && cached.height === full.height) {
+    return cached;
+  }
+  const out = createCanvas(full.width, full.height);
+  const c = ctx2dRead(out);
+  c.drawImage(full, 0, 0);
+  applyChannelView(c, view);
+  doc._channelComposite = out;
+  doc._channelCompositeSrc = full;
+  doc._channelCompositeKey = key;
+  return out;
 }
 
 /**

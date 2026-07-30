@@ -2,7 +2,7 @@ import { registerPanel } from '../panel-host.js';
 import { app } from '../../core/app.js';
 import { el, uid, createCanvas, ctx2dRead } from '../../core/util.js';
 import { Selection } from '../../core/selection.js';
-import { getComposite } from '../../render/compositor.js';
+import { getComposite, channelViewOf, setChannelView, isFullChannelView } from '../../render/compositor.js';
 import { iconEl } from '../icons.js';
 import { promptDialog } from '../dialog.js';
 import './panels.css';
@@ -11,11 +11,16 @@ import './channels.css';
 /**
  * The Channels panel.
  *
- * Note: Pikado's compositor always renders the full RGB composite, so there is
- * no per-channel *view* toggle here — showing one would be a lie. The eye that
- * does appear belongs to Quick Mask, which the canvas view really does render.
- * Everything else (loading a channel as a selection, saving a selection into an
- * alpha channel, creating and deleting alpha channels) is fully functional.
+ * The R/G/B eyes drive `doc.channelView`, which the compositor applies as a
+ * final pass in `getViewComposite()` — so hiding a channel changes what the
+ * canvas shows and nothing else: export, flatten, Save and the eyedropper all
+ * keep reading the full-colour composite. As in Photoshop, one visible channel
+ * displays as greyscale, two or more zero the hidden ones, and the RGB
+ * composite eye switches all three at once.
+ *
+ * Alpha channels have no eye: the compositor does not render them onto the
+ * canvas, so an eye there would do nothing. They are loaded as selections
+ * (Ctrl/Cmd-click or the footer button) instead.
  */
 
 const THUMB_W = 38;
@@ -186,15 +191,39 @@ registerPanel({
       render();
     };
 
+    /** Flip one RGB channel's view visibility. View state: no history entry. */
+    const toggleChannelView = (key) => {
+      const d = doc();
+      if (!d) return;
+      const cv = channelViewOf(d);
+      if (!setChannelView(d, { [key]: !cv[key] })) return;
+      app.requestRender();
+      render();
+    };
+
+    /**
+     * The composite eye switches all three channels together: on when every
+     * channel is visible, and clicking it while any channel is hidden brings
+     * them all back — the same asymmetry Photoshop's RGB eye has.
+     */
+    const toggleCompositeView = () => {
+      const d = doc();
+      if (!d) return;
+      const on = !isFullChannelView(channelViewOf(d));
+      if (!setChannelView(d, { r: on, g: on, b: on })) return;
+      app.requestRender();
+      render();
+    };
+
     /* ---- rows ---------------------------------------------------- */
 
-    const makeRow = ({ id, name, thumb, eye, onRename }) => {
-      const row = el('div.pkch-row' + (selectedId === id ? '.is-selected' : ''), {
+    const makeRow = ({ id, name, thumb, eye, onRename, dim }) => {
+      const row = el('div.pkch-row' + (selectedId === id ? '.is-selected' : '') + (dim ? '.is-hidden' : ''), {
         title: `${name} — Ctrl/Cmd-click to load as a selection`,
       });
       const eyeCell = el('div.pkch-eye');
       if (eye) {
-        const b = el('button.pk-icon-btn.pkch-eyebtn', {
+        const b = el('button.pk-icon-btn.pkch-eyebtn' + (eye.on ? '' : '.is-off'), {
           type: 'button', title: eye.title,
           onclick: (e) => { e.stopPropagation(); eye.onToggle(); },
         }, iconEl(eye.on ? 'eye' : 'eye-off', { size: 14 }));
@@ -234,11 +263,35 @@ registerPanel({
         }));
       }
 
+      // Thumbnails always come from the true composite, never from the filtered
+      // view — the point of the Red thumbnail is to show the red plate as it is.
       const base = compositeThumbData(d);
-      list.appendChild(makeRow({ id: 'composite', name: 'RGB', thumb: base.canvas }));
-      list.appendChild(makeRow({ id: 'r', name: 'Red', thumb: channelThumb(base, 0) }));
-      list.appendChild(makeRow({ id: 'g', name: 'Green', thumb: channelThumb(base, 1) }));
-      list.appendChild(makeRow({ id: 'b', name: 'Blue', thumb: channelThumb(base, 2) }));
+      const cv = channelViewOf(d);
+      const allOn = isFullChannelView(cv);
+      list.appendChild(makeRow({
+        id: 'composite',
+        name: 'RGB',
+        thumb: base.canvas,
+        dim: !allOn,
+        eye: {
+          on: allOn,
+          title: allOn ? 'Hide all channels' : 'Show all channels',
+          onToggle: toggleCompositeView,
+        },
+      }));
+      for (const [key, name, offset] of [['r', 'Red', 0], ['g', 'Green', 1], ['b', 'Blue', 2]]) {
+        list.appendChild(makeRow({
+          id: key,
+          name,
+          thumb: channelThumb(base, offset),
+          dim: !cv[key],
+          eye: {
+            on: cv[key],
+            title: `${cv[key] ? 'Hide' : 'Show'} the ${name.toLowerCase()} channel`,
+            onToggle: () => toggleChannelView(key),
+          },
+        }));
+      }
 
       for (const ch of d.alphaChannels) {
         list.appendChild(makeRow({

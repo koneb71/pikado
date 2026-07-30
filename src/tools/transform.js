@@ -1,5 +1,9 @@
 import { app } from '../core/app.js';
-import { isSmartLayer, getSmartTransform, setSmartTransform, matrixMultiply } from '../core/smart.js';
+import {
+  isSmartLayer, getSmartTransform, getSmartPerspective, getSmartWarp, setSmartTransform,
+  toMatrix3, fromMatrix3, matrix3Multiply, invertMatrix3, applyMatrix3,
+  unitSquareToQuad, rectToQuad, identityWarp, evalWarp, drawMappedGrid,
+} from '../core/smart.js';
 import { createCanvas, cloneCanvas, clamp, deg2rad, rad2deg } from '../core/util.js';
 import { LayerType } from '../core/layer.js';
 import { OVERLAY } from '../ui/brand.js';
@@ -23,6 +27,17 @@ import { cmd, sep } from '../ui/canvas-menu.js';
  * what actually gets rendered. While the transform stays affine the quad is
  * derived from `params`; distort/perspective drags set `freeform` and edit the
  * quad directly. Warp mode replaces both with a 4×4 Bézier control mesh.
+ *
+ * Smart layers
+ * ------------
+ * Nothing in a session is ever baked into a smart layer's pixels — not scale,
+ * not perspective, not warp. `baseSmart[i]` records the layer's whole shape
+ * (affine matrix, projective row, warp grid) as it was when the session opened,
+ * and every render composes the session's own map onto that and hands the result
+ * to `setSmartTransform`, which re-renders from the embedded source. In warp mode
+ * the session's mesh is *the* mesh: for a smart layer it is initialised from the
+ * layer's stored grid mapped into document space, and mapped straight back
+ * through the inverse of its transform on every frame.
  */
 
 const HIT = 7;        // handle hit radius in screen pixels
@@ -61,7 +76,7 @@ function pivotFor(s, pivotRel) {
 
 /** Where the pivot currently sits in document space. */
 function pivotDest(s) {
-  if (s.warp) return evalPatch(s.warp.pts, s.pivotRel.x, s.pivotRel.y);
+  if (s.warp) return evalWarp(s.warp.pts, s.pivotRel.x, s.pivotRel.y);
   if (s.freeform) return bilinearQuad(s.quad, s.pivotRel.x, s.pivotRel.y);
   const p = pivotFor(s);
   return { x: p.x + s.params.tx, y: p.y + s.params.ty };
@@ -112,63 +127,6 @@ function affineFromRectToQuad(b, q) {
   };
 }
 
-/**
- * Projective map from the unit square onto `q` (Heckbert's formulation).
- * @returns {(u:number,v:number)=>{x:number,y:number}}
- */
-function homographyToQuad(q) {
-  const [p0, p1, p2, p3] = q;
-  const sx = p0.x - p1.x + p2.x - p3.x;
-  const sy = p0.y - p1.y + p2.y - p3.y;
-  let a, b, c, d, e, f, g, h;
-  if (Math.abs(sx) < 1e-9 && Math.abs(sy) < 1e-9) {
-    a = p1.x - p0.x; b = p2.x - p1.x; c = p0.x;
-    d = p1.y - p0.y; e = p2.y - p1.y; f = p0.y;
-    g = 0; h = 0;
-  } else {
-    const dx1 = p1.x - p2.x, dx2 = p3.x - p2.x;
-    const dy1 = p1.y - p2.y, dy2 = p3.y - p2.y;
-    const den = dx1 * dy2 - dy1 * dx2;
-    if (Math.abs(den) < 1e-9) {
-      a = p1.x - p0.x; b = p3.x - p0.x; c = p0.x;
-      d = p1.y - p0.y; e = p3.y - p0.y; f = p0.y;
-      g = 0; h = 0;
-    } else {
-      g = (sx * dy2 - dx2 * sy) / den;
-      h = (dx1 * sy - sx * dy1) / den;
-      a = p1.x - p0.x + g * p1.x;
-      b = p3.x - p0.x + h * p3.x;
-      c = p0.x;
-      d = p1.y - p0.y + g * p1.y;
-      e = p3.y - p0.y + h * p3.y;
-      f = p0.y;
-    }
-  }
-  return (u, v) => {
-    const w = g * u + h * v + 1 || 1e-9;
-    return { x: (a * u + b * v + c) / w, y: (d * u + e * v + f) / w };
-  };
-}
-
-function bezierBasis(t) {
-  const it = 1 - t;
-  return [it * it * it, 3 * it * it * t, 3 * it * t * t, t * t * t];
-}
-
-/** Point on the 4×4 bicubic Bézier patch. */
-function evalPatch(pts, u, v) {
-  const bu = bezierBasis(u), bv = bezierBasis(v);
-  let x = 0, y = 0;
-  for (let j = 0; j < 4; j++) {
-    for (let i = 0; i < 4; i++) {
-      const w = bu[i] * bv[j];
-      x += pts[j][i].x * w;
-      y += pts[j][i].y * w;
-    }
-  }
-  return { x, y };
-}
-
 function bilinearQuad(q, u, v) {
   const tx = q[0].x + (q[1].x - q[0].x) * u, ty = q[0].y + (q[1].y - q[0].y) * u;
   const bx = q[3].x + (q[2].x - q[3].x) * u, by = q[3].y + (q[2].y - q[3].y) * u;
@@ -197,104 +155,20 @@ function inverseBilinear(q, p) {
 /* ------------------------------------------------------------------ */
 /* Mesh rasterisation                                                  */
 /* ------------------------------------------------------------------ */
-
-/**
- * Draw one source triangle onto `ctx` through the affine map that takes it to
- * the destination triangle. Only the source cell rectangle is sampled, so the
- * cost scales with the mesh cell rather than the whole document.
- */
-function drawTriangle(ctx, img, s0, s1, s2, d0, d1, d2, rect) {
-  const u1x = s1.x - s0.x, u1y = s1.y - s0.y;
-  const u2x = s2.x - s0.x, u2y = s2.y - s0.y;
-  const det = u1x * u2y - u2x * u1y;
-  if (!det) return;
-  const v1x = d1.x - d0.x, v1y = d1.y - d0.y;
-  const v2x = d2.x - d0.x, v2y = d2.y - d0.y;
-  const a = (v1x * u2y - v2x * u1y) / det;
-  const c = (u1x * v2x - u2x * v1x) / det;
-  const b = (v1y * u2y - v2y * u1y) / det;
-  const d = (u1x * v2y - u2x * v1y) / det;
-  if (!isFinite(a) || !isFinite(b) || !isFinite(c) || !isFinite(d)) return;
-  const e = d0.x - a * s0.x - c * s0.y;
-  const f = d0.y - b * s0.x - d * s0.y;
-
-  const bleed = 1.25;
-  const sx = Math.max(0, Math.floor(rect.x - bleed));
-  const sy = Math.max(0, Math.floor(rect.y - bleed));
-  const sw = Math.min(img.width - sx, Math.ceil(rect.w + bleed * 2 + (rect.x - sx)));
-  const sh = Math.min(img.height - sy, Math.ceil(rect.h + bleed * 2 + (rect.y - sy)));
-  if (sw <= 0 || sh <= 0 || sx >= img.width || sy >= img.height) return;
-
-  // Grow the clip outward from the centroid so adjacent cells overlap slightly
-  // and no seam shows between triangles.
-  const cx = (d0.x + d1.x + d2.x) / 3, cy = (d0.y + d1.y + d2.y) / 3;
-  const grow = (p) => {
-    const gx = p.x - cx, gy = p.y - cy;
-    const L = Math.hypot(gx, gy) || 1;
-    return { x: p.x + (gx / L) * 0.7, y: p.y + (gy / L) * 0.7 };
-  };
-  const g0 = grow(d0), g1 = grow(d1), g2 = grow(d2);
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(g0.x, g0.y);
-  ctx.lineTo(g1.x, g1.y);
-  ctx.lineTo(g2.x, g2.y);
-  ctx.closePath();
-  ctx.clip();
-  ctx.transform(a, b, c, d, e, f);
-  ctx.drawImage(img, sx, sy, sw, sh, sx, sy, sw, sh);
-  ctx.restore();
-}
-
-function drawCell(ctx, img, rect, sq, dq) {
-  drawTriangle(ctx, img, sq[0], sq[1], sq[2], dq[0], dq[1], dq[2], rect);
-  drawTriangle(ctx, img, sq[0], sq[2], sq[3], dq[0], dq[2], dq[3], rect);
-}
-
-/** Walk an (N+1)² destination grid and draw every cell. */
-function drawGrid(ctx, img, b, grid, N) {
-  for (let j = 0; j < N; j++) {
-    for (let i = 0; i < N; i++) {
-      const x0 = b.x + (b.width * i) / N, x1 = b.x + (b.width * (i + 1)) / N;
-      const y0 = b.y + (b.height * j) / N, y1 = b.y + (b.height * (j + 1)) / N;
-      const sq = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
-      const dq = [grid[j][i], grid[j][i + 1], grid[j + 1][i + 1], grid[j + 1][i]];
-      drawCell(ctx, img, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, sq, dq);
-    }
-  }
-}
-
-function drawProjective(ctx, img, b, quad) {
-  const N = clamp(Math.round(Math.max(b.width, b.height) / 40), 6, 18);
-  const H = homographyToQuad(quad);
-  const grid = [];
-  for (let j = 0; j <= N; j++) {
-    const row = [];
-    for (let i = 0; i <= N; i++) row.push(H(i / N, j / N));
-    grid.push(row);
-  }
-  drawGrid(ctx, img, b, grid, N);
-}
-
-function drawWarp(ctx, img, s) {
-  const N = 14;
-  const pts = s.warp.pts;
-  const grid = [];
-  for (let j = 0; j <= N; j++) {
-    const row = [];
-    for (let i = 0; i <= N; i++) row.push(evalPatch(pts, i / N, j / N));
-    grid.push(row);
-  }
-  drawGrid(ctx, img, s.bounds, grid, N);
-}
+/* The triangle-patch resampler lives in core/smart.js (`drawMappedGrid`), which
+ * needs the very same thing to render a warped or perspective-transformed smart
+ * object. */
 
 /** Render `img` through the session's current shape into `ctx`. */
 function drawThrough(ctx, img, s) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  if (s.warp) { drawWarp(ctx, img, s); return; }
+  if (s.warp) {
+    const pts = s.warp.pts;
+    drawMappedGrid(ctx, img, s.bounds, 14, (u, v) => evalWarp(pts, u, v));
+    return;
+  }
   if (isAffineQuad(s.quad)) {
     const m = affineFromRectToQuad(s.bounds, s.quad);
     if (!isFinite(m.a) || !isFinite(m.d) || Math.abs(m.a * m.d - m.b * m.c) < 1e-9) return;
@@ -304,7 +178,9 @@ function drawThrough(ctx, img, s) {
     ctx.restore();
     return;
   }
-  drawProjective(ctx, img, s.bounds, s.quad);
+  const N = clamp(Math.round(Math.max(s.bounds.width, s.bounds.height) / 40), 6, 18);
+  const Q = unitSquareToQuad(s.quad);
+  drawMappedGrid(ctx, img, s.bounds, N, (u, v) => applyMatrix3(Q, u, v));
 }
 
 /* ------------------------------------------------------------------ */
@@ -323,6 +199,29 @@ function syncFromParams(s) {
 function syncFromQuad(s) {
   const m = affineFromRectToQuad(s.bounds, s.quad);
   s.matrix = new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f]);
+}
+
+/**
+ * The whole non-destructive shape of a smart layer, or null for a raster one.
+ * @returns {{matrix:number[], perspective:number[], warp:object[][]|null,
+ *            sourceWidth:number, sourceHeight:number}|null}
+ */
+function smartShapeOf(layer) {
+  if (!isSmartLayer(layer)) return null;
+  return {
+    matrix: getSmartTransform(layer),
+    perspective: getSmartPerspective(layer),
+    warp: getSmartWarp(layer),
+    sourceWidth: layer.smart.sourceWidth,
+    sourceHeight: layer.smart.sourceHeight,
+  };
+}
+
+/** The session's own document→document map, as a row-major 3x3. */
+function sessionDelta3(s) {
+  if (s.freeform) return rectToQuad(s.bounds, s.quad);
+  const m = s.matrix;
+  return [m.a, m.c, m.e, m.b, m.d, m.f, 0, 0, 1];
 }
 
 function rasterLayersOf(list) {
@@ -377,9 +276,9 @@ export function startTransform(doc, opts = {}) {
     mode: opts.mode || 'free',
     selectionMode: false,
     baseCanvases: layers.map((l) => cloneCanvas(l.canvas)),
-    // A smart layer is transformed by composing matrices, never by resampling
-    // its pixels, so repeated sessions cannot compound quality loss.
-    baseSmart: layers.map((l) => (isSmartLayer(l) ? getSmartTransform(l) : null)),
+    // A smart layer is transformed by composing maps, never by resampling its
+    // pixels, so repeated sessions cannot compound quality loss.
+    baseSmart: layers.map(smartShapeOf),
     baseMasks: layers.map((l) => (l.mask && l.maskLinked ? cloneCanvas(l.mask) : null)),
     baseSelection: null,
     bounds,
@@ -474,6 +373,35 @@ export function transformContextMenu() {
   ];
 }
 
+/**
+ * Push the session's current shape into one smart layer's payload.
+ * @returns {boolean} false when the maths degenerated (the caller then falls
+ *   back to the pixel path so the drag still does *something* visible)
+ */
+function renderSmartLayer(s, i) {
+  const l = s.layers[i];
+  const shape = s.baseSmart[i];
+  const H0 = toMatrix3(shape.matrix, shape.perspective);
+
+  if (s.warp) {
+    // The mesh already carries the whole session (initWarp seeded it from this
+    // layer's own grid through H0), so the affine part must not be applied twice.
+    const inv = invertMatrix3(H0);
+    const docPts = warpGridFor(s, i);
+    if (!inv || !docPts) return false;
+    const src = docPts.map((row) => row.map((p) => applyMatrix3(inv, p.x, p.y)));
+    return !!setSmartTransform(s.doc, l, shape.matrix, {
+      commit: false, perspective: shape.perspective, warp: src,
+    });
+  }
+
+  const split = fromMatrix3(matrix3Multiply(sessionDelta3(s), H0));
+  if (!split) return false;
+  return !!setSmartTransform(s.doc, l, split.matrix, {
+    commit: false, perspective: split.perspective, warp: shape.warp,
+  });
+}
+
 /** Re-draw every layer in the session through the current transform. */
 function renderSession(s) {
   if (s.selectionMode) {
@@ -482,13 +410,12 @@ function renderSession(s) {
   }
   for (let i = 0; i < s.layers.length; i++) {
     const l = s.layers[i];
-    // Warp and freeform quads are not expressible as an affine matrix, so those
-    // stay on the destructive path.
-    const bm = !s.freeform && !s.warp && s.baseSmart ? s.baseSmart[i] : null;
-    if (bm) {
-      const m = s.matrix;
-      setSmartTransform(s.doc, s.layers[i], matrixMultiply([m.a, m.b, m.c, m.d, m.e, m.f], bm), { commit: false });
-      continue;
+    if (s.baseSmart && s.baseSmart[i]) {
+      if (renderSmartLayer(s, i)) continue;
+      if (!s.smartFallbackWarned) {
+        s.smartFallbackWarned = true;
+        app.toast('That transform collapses the Smart Object — falling back to its pixels.', 'warn');
+      }
     }
     const base = s.baseCanvases[i];
     if (l.canvas && base) {
@@ -548,7 +475,17 @@ export function cancelTransform() {
   if (!s.selectionMode) {
     for (let i = 0; i < s.layers.length; i++) {
       const l = s.layers[i];
-      if (s.baseCanvases[i]) l.canvas = cloneCanvas(s.baseCanvases[i]);
+      const shape = s.baseSmart && s.baseSmart[i];
+      if (shape && isSmartLayer(l)) {
+        // Put the payload back, not just the pixels: the session edited the
+        // transform record itself, and a stale one would resurface on the next
+        // re-render.
+        setSmartTransform(s.doc, l, shape.matrix, {
+          commit: false, perspective: shape.perspective, warp: shape.warp,
+        });
+      } else if (s.baseCanvases[i]) {
+        l.canvas = cloneCanvas(s.baseCanvases[i]);
+      }
       if (s.baseMasks[i]) { l.mask = cloneCanvas(s.baseMasks[i]); l.touchMask(); }
     }
     s.doc.touch('transform-cancel');
@@ -562,14 +499,60 @@ export function cancelTransform() {
 /* Warp mesh                                                           */
 /* ------------------------------------------------------------------ */
 
-function initWarp(s) {
-  const pts = [];
-  for (let j = 0; j < 4; j++) {
-    const row = [];
-    for (let i = 0; i < 4; i++) row.push(bilinearQuad(s.quad, i / 3, j / 3));
-    pts.push(row);
+/**
+ * The document-space control grid to author for smart layer `i`: that layer's
+ * stored grid (or the neutral one) pushed through its transform *and* whatever
+ * the session has done so far. Mapping it straight back through the inverse on
+ * every frame is what makes the warp non-destructive.
+ */
+function smartWarpDocPts(s, i) {
+  const shape = s.baseSmart[i];
+  const base = shape.warp || identityWarp(shape.sourceWidth, shape.sourceHeight);
+  const H = matrix3Multiply(sessionDelta3(s), toMatrix3(shape.matrix, shape.perspective));
+  return base.map((row) => row.map((p) => applyMatrix3(H, p.x, p.y)));
+}
+
+/** The grid that drives smart layer `i`, or null when it has none. */
+function warpGridFor(s, i) {
+  const m = s.warp && s.warp.smart ? s.warp.smart[i] : null;
+  return m ? m.pts : null;
+}
+
+/**
+ * Every distinct control grid a warp session is editing: the visible one, plus
+ * one per smart layer whose box does not coincide with it. Deduplicated by
+ * identity, because the common single-smart-layer case shares one array.
+ */
+function warpGrids(s) {
+  if (!s.warp) return [];
+  const out = [s.warp.pts];
+  for (const m of s.warp.smart || []) {
+    if (m && !out.includes(m.pts)) out.push(m.pts);
   }
-  s.warp = { pts };
+  return out;
+}
+
+function initWarp(s) {
+  const smartOnly = s.layers.length === 1 && s.baseSmart && s.baseSmart[0];
+  // A lone smart object warps its own box, so the handles the user drags are
+  // exactly the control points that get stored.
+  const pts = smartOnly ? smartWarpDocPts(s, 0) : (() => {
+    const grid = [];
+    for (let j = 0; j < 4; j++) {
+      const row = [];
+      for (let i = 0; i < 4; i++) row.push(bilinearQuad(s.quad, i / 3, j / 3));
+      grid.push(row);
+    }
+    return grid;
+  })();
+
+  s.warp = { pts, smart: null };
+  if (!s.baseSmart) return;
+  const smart = s.layers.map((_, i) => {
+    if (!s.baseSmart[i]) return null;
+    return { pts: smartOnly && i === 0 ? pts : smartWarpDocPts(s, i) };
+  });
+  if (smart.some(Boolean)) s.warp.smart = smart;
 }
 
 /** Switch an in-flight session between transform kinds. */
@@ -672,7 +655,9 @@ export function setTransformNumeric(obj) {
 function applyDelta(s, m) {
   const go = (p) => applyM(m, p);
   if (s.warp) {
-    for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) s.warp.pts[j][i] = go(s.warp.pts[j][i]);
+    for (const g of warpGrids(s)) {
+      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) g[j][i] = go(g[j][i]);
+    }
   } else {
     s.quad = s.quad.map(go);
     syncFromQuad(s);
@@ -778,7 +763,7 @@ export function transformPointerDown(e, view) {
     pivotRel: { ...s.pivotRel },
     pivotDest: pivotDest(s),
     quad: s.quad.map((p) => ({ ...p })),
-    warpPts: s.warp ? s.warp.pts.map((r) => r.map((p) => ({ ...p }))) : null,
+    warpBase: warpGrids(s).map((g) => g.map((r) => r.map((p) => ({ ...p })))),
   };
   return true;
 }
@@ -829,8 +814,13 @@ function dragMove(s, e) {
     if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0;
   }
   if (s.warp) {
-    for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
-      s.warp.pts[j][i] = { x: d.warpPts[j][i].x + dx, y: d.warpPts[j][i].y + dy };
+    const grids = warpGrids(s);
+    for (let k = 0; k < grids.length; k++) {
+      const g = grids[k], b = d.warpBase[k];
+      if (!b) continue;
+      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+        g[j][i] = { x: b[j][i].x + dx, y: b[j][i].y + dy };
+      }
     }
     return;
   }
@@ -857,7 +847,12 @@ function dragRotate(s, e) {
       y: cy + (pt.x - cx) * sin + (pt.y - cy) * cos,
     });
     if (s.warp) {
-      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) s.warp.pts[j][i] = rot(d.warpPts[j][i]);
+      const grids = warpGrids(s);
+      for (let k = 0; k < grids.length; k++) {
+        const g = grids[k], b = d.warpBase[k];
+        if (!b) continue;
+        for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) g[j][i] = rot(b[j][i]);
+      }
     } else {
       s.quad = d.quad.map(rot);
       syncFromQuad(s);
@@ -992,15 +987,18 @@ function dragPivot(s, e) {
 function dragWarp(s, e) {
   const d = s.drag;
   const dx = e.x - d.startDoc.x, dy = e.y - d.startDoc.y;
-  const move = (r, c) => {
-    s.warp.pts[r][c] = { x: d.warpPts[r][c].x + dx, y: d.warpPts[r][c].y + dy };
-  };
-  move(d.row, d.col);
   // Corner points carry their two tangent handles so the corner stays rigid.
   const isCornerPt = (d.row === 0 || d.row === 3) && (d.col === 0 || d.col === 3);
-  if (isCornerPt) {
-    move(d.row, d.col === 0 ? 1 : 2);
-    move(d.row === 0 ? 1 : 2, d.col);
+  const grids = warpGrids(s);
+  for (let k = 0; k < grids.length; k++) {
+    const g = grids[k], b = d.warpBase[k];
+    if (!b) continue;
+    const move = (r, c) => { g[r][c] = { x: b[r][c].x + dx, y: b[r][c].y + dy }; };
+    move(d.row, d.col);
+    if (isCornerPt) {
+      move(d.row, d.col === 0 ? 1 : 2);
+      move(d.row === 0 ? 1 : 2, d.col);
+    }
   }
 }
 
@@ -1045,8 +1043,8 @@ export function drawTransformOverlay(ctx, view) {
     for (let k = 0; k <= 3; k++) {
       const rowPts = [], colPts = [];
       for (let i = 0; i <= N; i++) {
-        const a = evalPatch(s.warp.pts, i / N, k / 3);
-        const b = evalPatch(s.warp.pts, k / 3, i / N);
+        const a = evalWarp(s.warp.pts, i / N, k / 3);
+        const b = evalWarp(s.warp.pts, k / 3, i / N);
         rowPts.push(view.toScreen(a.x, a.y));
         colPts.push(view.toScreen(b.x, b.y));
       }
@@ -1057,8 +1055,8 @@ export function drawTransformOverlay(ctx, view) {
     for (let k = 0; k <= 3; k++) {
       const rowPts = [], colPts = [];
       for (let i = 0; i <= N; i++) {
-        const a = evalPatch(s.warp.pts, i / N, k / 3);
-        const b = evalPatch(s.warp.pts, k / 3, i / N);
+        const a = evalWarp(s.warp.pts, i / N, k / 3);
+        const b = evalWarp(s.warp.pts, k / 3, i / N);
         rowPts.push(view.toScreen(a.x, a.y));
         colPts.push(view.toScreen(b.x, b.y));
       }

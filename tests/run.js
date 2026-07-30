@@ -20,6 +20,8 @@ import './suites/effects.test.js';
 import './suites/text-vector.test.js';
 import './suites/io.test.js';
 import './suites/smart.test.js';
+import './suites/liquify.test.js';
+import './suites/channels.test.js';
 import './suites/perf.test.js';
 
 const out = document.getElementById('out');

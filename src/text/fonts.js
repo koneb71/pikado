@@ -85,6 +85,157 @@ export function getFontFamily(id) {
 }
 
 /* ------------------------------------------------------------------ */
+/* PostScript face names                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Real PostScript face names per family, for the four style slots a font file
+ * can occupy.
+ *
+ * A PSD names a type layer's font by its *PostScript* name, which identifies
+ * one face — one file — not a family. So bold and italic can only travel as a
+ * real face when that face exists as its own file. Families that ship a single
+ * file (Impact, Brush Script, Pacifico, Lobster) or that have no italic
+ * (Tahoma, Comic Sans, Oswald, Dancing Script) deliberately leave those slots
+ * out, and `postScriptFace` then names the closest face it does have and
+ * reports the remainder as FauxBold / FauxItalic — which is exactly what
+ * Photoshop does itself when a family has no real bold.
+ *
+ * The names are the ones the shipping files carry: Monotype's `MT` / `PS`
+ * suffixes for the Windows core fonts, Apple's for the macOS faces, and
+ * Google's static-face naming for the webfont families. A family is listed only
+ * where the face name is a well-known constant of the font file — an
+ * unresolvable PostScript name is worse than faux styling, because Photoshop
+ * then substitutes a completely different family. None of this could be checked
+ * against a Photoshop install; see the note in `src/io/psd-write.js`.
+ *
+ * @type {Object<string, {regular:string, bold?:string, italic?:string, boldItalic?:string}>}
+ */
+export const POSTSCRIPT_FACES = {
+  // The 35 core PostScript faces — always resolvable.
+  system: { regular: 'Helvetica', bold: 'Helvetica-Bold', italic: 'Helvetica-Oblique', boldItalic: 'Helvetica-BoldOblique' },
+
+  arial: { regular: 'ArialMT', bold: 'Arial-BoldMT', italic: 'Arial-ItalicMT', boldItalic: 'Arial-BoldItalicMT' },
+  helvetica: { regular: 'HelveticaNeue', bold: 'HelveticaNeue-Bold', italic: 'HelveticaNeue-Italic', boldItalic: 'HelveticaNeue-BoldItalic' },
+  verdana: { regular: 'Verdana', bold: 'Verdana-Bold', italic: 'Verdana-Italic', boldItalic: 'Verdana-BoldItalic' },
+  // Tahoma ships Regular and Bold only.
+  tahoma: { regular: 'Tahoma', bold: 'Tahoma-Bold' },
+  // The bold-italic file drops the "MS" — a quirk of the shipped font, not a typo.
+  trebuchet: { regular: 'TrebuchetMS', bold: 'TrebuchetMS-Bold', italic: 'TrebuchetMS-Italic', boldItalic: 'Trebuchet-BoldItalic' },
+  segoe: { regular: 'SegoeUI', bold: 'SegoeUI-Bold', italic: 'SegoeUI-Italic', boldItalic: 'SegoeUI-BoldItalic' },
+  gill: { regular: 'GillSans', bold: 'GillSans-Bold', italic: 'GillSans-Italic', boldItalic: 'GillSans-BoldItalic' },
+  // macOS Futura is a Medium-weight regular and has no bold-italic file.
+  futura: { regular: 'Futura-Medium', bold: 'Futura-Bold', italic: 'Futura-MediumItalic' },
+  impact: { regular: 'Impact' },
+
+  times: { regular: 'TimesNewRomanPSMT', bold: 'TimesNewRomanPS-BoldMT', italic: 'TimesNewRomanPS-ItalicMT', boldItalic: 'TimesNewRomanPS-BoldItalicMT' },
+  georgia: { regular: 'Georgia', bold: 'Georgia-Bold', italic: 'Georgia-Italic', boldItalic: 'Georgia-BoldItalic' },
+  // Monotype Garamond ships Regular, Italic and Bold, but no bold-italic.
+  garamond: { regular: 'Garamond', bold: 'Garamond-Bold', italic: 'Garamond-Italic' },
+  palatino: { regular: 'Palatino-Roman', bold: 'Palatino-Bold', italic: 'Palatino-Italic', boldItalic: 'Palatino-BoldItalic' },
+
+  courier: { regular: 'CourierNewPSMT', bold: 'CourierNewPS-BoldMT', italic: 'CourierNewPS-ItalicMT', boldItalic: 'CourierNewPS-BoldItalicMT' },
+  mono: { regular: 'Menlo-Regular', bold: 'Menlo-Bold', italic: 'Menlo-Italic', boldItalic: 'Menlo-BoldItalic' },
+
+  comic: { regular: 'ComicSansMS', bold: 'ComicSansMS-Bold' },
+  brush: { regular: 'BrushScriptMT' },
+
+  // Google families, using Google's own static-face names.
+  inter: { regular: 'Inter-Regular', bold: 'Inter-Bold', italic: 'Inter-Italic', boldItalic: 'Inter-BoldItalic' },
+  roboto: { regular: 'Roboto-Regular', bold: 'Roboto-Bold', italic: 'Roboto-Italic', boldItalic: 'Roboto-BoldItalic' },
+  'open-sans': { regular: 'OpenSans-Regular', bold: 'OpenSans-Bold', italic: 'OpenSans-Italic', boldItalic: 'OpenSans-BoldItalic' },
+  lato: { regular: 'Lato-Regular', bold: 'Lato-Bold', italic: 'Lato-Italic', boldItalic: 'Lato-BoldItalic' },
+  montserrat: { regular: 'Montserrat-Regular', bold: 'Montserrat-Bold', italic: 'Montserrat-Italic', boldItalic: 'Montserrat-BoldItalic' },
+  poppins: { regular: 'Poppins-Regular', bold: 'Poppins-Bold', italic: 'Poppins-Italic', boldItalic: 'Poppins-BoldItalic' },
+  raleway: { regular: 'Raleway-Regular', bold: 'Raleway-Bold', italic: 'Raleway-Italic', boldItalic: 'Raleway-BoldItalic' },
+  // Oswald and Dancing Script are upright-only families.
+  oswald: { regular: 'Oswald-Regular', bold: 'Oswald-Bold' },
+  playfair: { regular: 'PlayfairDisplay-Regular', bold: 'PlayfairDisplay-Bold', italic: 'PlayfairDisplay-Italic', boldItalic: 'PlayfairDisplay-BoldItalic' },
+  merriweather: { regular: 'Merriweather-Regular', bold: 'Merriweather-Bold', italic: 'Merriweather-Italic', boldItalic: 'Merriweather-BoldItalic' },
+  jetbrains: { regular: 'JetBrainsMono-Regular', bold: 'JetBrainsMono-Bold', italic: 'JetBrainsMono-Italic', boldItalic: 'JetBrainsMono-BoldItalic' },
+  pacifico: { regular: 'Pacifico-Regular' },
+  lobster: { regular: 'Lobster-Regular' },
+  dancing: { regular: 'DancingScript-Regular', bold: 'DancingScript-Bold' },
+};
+
+/** Weights this heavy want the bold face; the rest render on the regular one. */
+const BOLD_THRESHOLD = 600;
+
+/**
+ * The PostScript face to name for a family at a weight and slant, plus the faux
+ * flags that have to make up whatever the family cannot supply as a real face.
+ *
+ * @param {string} id a `FONT_FAMILIES` id (or any string, for old documents)
+ * @param {number} [weight] 100..900
+ * @param {string} [style] `'italic'` to slant
+ * @returns {{name:string, fauxBold:boolean, fauxItalic:boolean, real:boolean}}
+ *   `real` is true when the name is the actual face for that weight and slant.
+ */
+export function postScriptFace(id, weight = 400, style = 'normal') {
+  const wantBold = Number(weight) >= BOLD_THRESHOLD;
+  const wantItalic = style === 'italic';
+  const faces = POSTSCRIPT_FACES[id];
+
+  if (!faces) {
+    // An unknown id (a family typed in by hand, or one from a foreign file)
+    // has no face table, so the regular-plus-faux route is all there is.
+    const stripped = String(id == null ? '' : id).replace(/[^A-Za-z0-9]/g, '');
+    return { name: stripped || 'Helvetica', fauxBold: wantBold, fauxItalic: wantItalic, real: false };
+  }
+
+  const exact = wantBold && wantItalic ? faces.boldItalic : wantBold ? faces.bold : wantItalic ? faces.italic : faces.regular;
+  if (exact) return { name: exact, fauxBold: false, fauxItalic: false, real: true };
+
+  // Bold-italic on a family with only three faces: keep whichever real axis
+  // exists and synthesise the other one. Bold is the more visible of the two,
+  // so it wins the file.
+  if (wantBold && wantItalic && faces.bold) {
+    return { name: faces.bold, fauxBold: false, fauxItalic: true, real: false };
+  }
+  if (wantBold && wantItalic && faces.italic) {
+    return { name: faces.italic, fauxBold: true, fauxItalic: false, real: false };
+  }
+  return { name: faces.regular, fauxBold: wantBold, fauxItalic: wantItalic, real: false };
+}
+
+/**
+ * `system` is written as Helvetica because that is the closest resolvable face
+ * to a platform UI font, but the reverse mapping must not claim every Helvetica
+ * document was authored in Pikado's System UI — those stay with the reader's
+ * own alias table, which resolves them to a real Helvetica stack.
+ */
+const REVERSE_EXCLUDED = new Set(['system']);
+
+const _faceIndex = new Map();
+for (const [id, faces] of Object.entries(POSTSCRIPT_FACES)) {
+  if (REVERSE_EXCLUDED.has(id)) continue;
+  const slots = [
+    ['regular', 400, 'normal'],
+    ['bold', 700, 'normal'],
+    ['italic', 400, 'italic'],
+    ['boldItalic', 700, 'italic'],
+  ];
+  for (const [slot, weight, style] of slots) {
+    const name = faces[slot];
+    if (!name || _faceIndex.has(name.toLowerCase())) continue;
+    _faceIndex.set(name.toLowerCase(), { font: id, weight, style });
+  }
+}
+
+/**
+ * The exact inverse of `postScriptFace`: a face name back to the family id and
+ * the weight and slant that face stands for.
+ * @param {string} name a PostScript face name
+ * @returns {{font:string, weight:number, style:string}|null} null when the name
+ *   is not one we write, so the caller can fall back to its own heuristics.
+ */
+export function familyFromPostScriptName(name) {
+  if (!name) return null;
+  const hit = _faceIndex.get(String(name).trim().toLowerCase());
+  return hit ? { ...hit } : null;
+}
+
+/* ------------------------------------------------------------------ */
 /* Google font loading                                                 */
 /* ------------------------------------------------------------------ */
 

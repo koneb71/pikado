@@ -5,8 +5,9 @@ import { app } from '../core/app.js';
 import { DEFAULT_STYLES } from '../effects/styles.js';
 import { getPattern } from '../paint/patterns.js';
 import { rasterizeTextLayer } from '../text/text-render.js';
+import { familyFromPostScriptName } from '../text/fonts.js';
 import { rasterizeShapeLayer } from '../vector/path.js';
-import { SELECTION_CHANNEL_NAME } from './psd-write.js';
+import { SELECTION_CHANNEL_NAME, PSD_DASH_PRESETS, pikadoGradientAngle } from './psd-write.js';
 
 /**
  * Photoshop (.psd) and Photoshop Big (.psb) reader.
@@ -961,14 +962,45 @@ function vectorShapeOf(info, doc) {
     }
     : { enabled: false, color: '#000000', width: 1, align: 'center', cap: 'butt', join: 'miter', dash: 'solid' };
   const shape = { kind: 'shape', subpaths, fill: shapeFillOf(info), stroke };
-  const origin = info.vectorOrigination;
-  if (origin && origin.corners.some((v) => v > 0)) {
+  applyOrigination(shape, info.vectorOrigination);
+  return shape;
+}
+
+/**
+ * Fold a `vogk` origination block back onto the live-shape keys our tools read,
+ * so a reopened polygon still knows it has five sides and a reopened line still
+ * knows its weight. Geometry always comes from the path — these are the
+ * parameters the path cannot carry.
+ */
+function applyOrigination(shape, origin) {
+  if (!origin) return;
+
+  if (origin.corners && origin.corners.some((v) => v > 0)) {
     shape.corners = origin.corners;
     // Our `radius` is the one uniform value the Rounded Rectangle tool edits;
     // four different corners have no single number to stand for them.
     if (origin.corners.every((v) => v === origin.corners[0])) shape.radius = origin.corners[0];
   }
-  return shape;
+
+  if (origin.sides != null) {
+    shape.sides = origin.sides;
+    shape.star = !!origin.star;
+    shape.innerRadius = origin.innerRadius;
+    shape.smoothCorners = !!origin.smoothCorners;
+  }
+
+  if (origin.weight != null && origin.weight > 0) {
+    shape.weight = origin.weight;
+    // Only claim arrowheads when the file says so; a plain line must not gain a
+    // pair of them on the way back in.
+    if (origin.arrowStart || origin.arrowEnd) {
+      shape.arrowStart = !!origin.arrowStart;
+      shape.arrowEnd = !!origin.arrowEnd;
+      shape.arrowWidth = origin.arrowWidth;
+      shape.arrowLength = origin.arrowLength;
+      shape.concavity = origin.concavity;
+    }
+  }
 }
 
 function applyCommon(layer, rec, info) {
@@ -1810,7 +1842,9 @@ function readFillLayer(r, key) {
     return {
       kind: 'fill', fillKind: 'gradient',
       stops: gradientStops(it.Grad),
-      angle: numberOf(it.Angl, 90),
+      // `GdFl` is rendered by `makeFillStyle`, whose angle runs the other way
+      // round — see `psdGradientAngle` in psd-write.js.
+      angle: pikadoGradientAngle(numberOf(it.Angl, 90)),
       scale: numberOf(it['Scl '], 100) / 100,
       reverse: it.Rvrs === true,
       style: gradientStyleOf(it.Type),
@@ -1857,9 +1891,33 @@ function enumValue(v, table, fallback) {
 }
 
 /**
+ * A `strokeStyleLineDashSet` back to the dash our shape model wants.
+ *
+ * The set is stored as multiples of the line width, which is also the unit the
+ * named presets in `src/vector/path.js` are defined in — so a set that matches
+ * a preset comes back as that preset's name and stays editable as one in the
+ * Properties panel. Anything else becomes an explicit array in document units,
+ * which `dashArrayFor` accepts directly.
+ *
+ * @param {number[]} multiples the raw set, in line widths
+ * @param {number} width the stroke width, for the numeric fallback
+ * @returns {string|number[]} a preset id, or an array of document-unit lengths
+ */
+function dashFromMultiples(multiples, width) {
+  const set = multiples.filter((n) => Number.isFinite(n) && n > 0);
+  if (!set.length) return 'solid';
+  for (const [name, preset] of Object.entries(PSD_DASH_PRESETS)) {
+    if (preset.length !== set.length) continue;
+    // The values travel as doubles, so compare with a tolerance rather than ===.
+    if (preset.every((n, i) => Math.abs(n - set[i]) < 1e-4)) return name;
+  }
+  return set.map((n) => n * width);
+}
+
+/**
  * `vstk` — the CS6 vector stroke descriptor, mapped onto the stroke object
  * `src/vector/path.js` rasterises. The dash set is stored as multiples of the
- * line width; our model wants document units.
+ * line width, and comes back as a preset name when it matches one.
  * @returns {{enabled:boolean, color:string, width:number, align:string,
  *   cap:string, join:string, miterLimit:number, dash:*, fillEnabled:boolean}}
  */
@@ -1868,7 +1926,7 @@ function readVectorStroke(r) {
   const it = d.items || {};
   const width = Math.max(0, numberOf(it.strokeStyleLineWidth, 1));
   const dashSet = Array.isArray(it.strokeStyleLineDashSet) ? it.strokeStyleLineDashSet : [];
-  const dash = dashSet.map((v) => numberOf(v, 0) * width).filter((n) => n > 0);
+  const dash = dashFromMultiples(dashSet.map((v) => numberOf(v, 0)), width);
   const content = it.strokeStyleContent;
   return {
     enabled: it.strokeEnabled !== false,
@@ -1879,16 +1937,26 @@ function readVectorStroke(r) {
     cap: enumValue(it.strokeStyleLineCapType, STROKE_CAPS, 'butt'),
     join: enumValue(it.strokeStyleLineJoinType, STROKE_JOINS, 'miter'),
     miterLimit: numberOf(it.strokeStyleMiterLimit, 10),
-    dash: dash.length ? dash : 'solid',
+    dash,
   };
 }
 
+/** `keyOriginType` -> the live shape it describes. Mirrors `ORIGIN_TYPES`. */
+const ORIGIN_KINDS = { 1: 'rect', 2: 'rounded-rect', 4: 'line', 5: 'ellipse', 6: 'polygon', 9: 'custom' };
+
 /**
  * `vogk` — vector origination data, the "live shape" parameters Photoshop keeps
- * beside the frozen path. Only the rounded-rectangle radii have a home in our
- * shape model; everything else in the block describes geometry the path already
- * carries.
- * @returns {{type:number, corners:number[]}|null} corners are TL, TR, BR, BL
+ * beside the frozen path.
+ *
+ * The path itself is authoritative for geometry; what this block adds is the
+ * handful of parameters a path cannot express, so that reopening a polygon gives
+ * back a polygon with a side count rather than a decagon-shaped path. Which keys
+ * are documented and which are inferred is set out in `psd-write.js`.
+ *
+ * @returns {{kind:string, type:number, corners:number[]|null, sides?:number,
+ *   star?:boolean, innerRadius?:number, smoothCorners?:boolean, weight?:number,
+ *   arrowStart?:boolean, arrowEnd?:boolean, arrowWidth?:number,
+ *   arrowLength?:number, concavity?:number}|null} corners are TL, TR, BR, BL
  */
 function readVectorOrigination(r) {
   r.readUint32(); // vector origination version (1)
@@ -1896,15 +1964,44 @@ function readVectorOrigination(r) {
   const list = d.items && d.items.keyDescriptorList;
   const first = Array.isArray(list) ? list[0] : null;
   const it = (first && first.items) || {};
+  if (it.keyShapeInvalidated === true) return null;
+
+  const type = numberOf(it.keyOriginType, 0);
+  const kind = ORIGIN_KINDS[type] || null;
   const radii = it.keyOriginRRectRadii && it.keyOriginRRectRadii.items;
-  if (!radii) return null;
-  return {
-    type: numberOf(it.keyOriginType, 0),
-    corners: [
+  const corners = radii
+    ? [
       numberOf(radii.topLeft, 0), numberOf(radii.topRight, 0),
       numberOf(radii.bottomRight, 0), numberOf(radii.bottomLeft, 0),
-    ],
-  };
+    ]
+    : null;
+  const out = { kind, type, corners };
+
+  if (kind === 'polygon' && it.keyOriginPolySides != null) {
+    out.sides = Math.max(3, Math.min(100, Math.round(numberOf(it.keyOriginPolySides, 5))));
+    out.star = it.keyOriginPolyStar === true;
+    // Prefer the ratio; the indent percentage is its complement and is only
+    // there for a reader that thinks in the Polygon tool's own slider.
+    const ratio = it.keyOriginPolyStarRatio != null
+      ? numberOf(it.keyOriginPolyStarRatio, 0.5)
+      : 1 - numberOf(it.keyOriginPolyIndent, 50) / 100;
+    out.innerRadius = Math.max(0.02, Math.min(1, ratio));
+    out.smoothCorners = it.keyOriginPolySmoothCorners === true;
+  }
+
+  if (kind === 'line' && it.keyOriginLineWeight != null) {
+    out.weight = Math.max(0, numberOf(it.keyOriginLineWeight, 1));
+    out.arrowStart = it.keyOriginLineArrowSt === true;
+    out.arrowEnd = it.keyOriginLineArrowEnd === true;
+    out.arrowWidth = numberOf(it.keyOriginLineArrWdth, 500);
+    out.arrowLength = numberOf(it.keyOriginLineArrLngth, 1000);
+    out.concavity = numberOf(it.keyOriginLineArrConc, 0);
+  }
+
+  // A block with neither radii nor any recognised parameters says nothing our
+  // shape model can use.
+  if (!corners && out.sides == null && out.weight == null) return null;
+  return out;
 }
 
 /** `vscg` — a four-character content key followed by that content's descriptor. */
@@ -1914,7 +2011,16 @@ function readVectorStrokeContent(r) {
   return colorFromDescriptor(d.items && d.items['Clr ']);
 }
 
-/** Fill in the payload shape `src/text/text-render.js` documents. */
+/**
+ * Fill in the payload shape `src/text/text-render.js` documents.
+ *
+ * `warp` is deliberately *not* defaulted here: an inert warp and no warp render
+ * identically (`rasterizeTextLayer` skips `style: 'none'`, and both
+ * `resolveTextProps` and the two warp commands supply the same default), but the
+ * writer persists whatever it is handed. Defaulting it made reopening a plain
+ * type layer add 46 bytes of `{style:'none',bend:0,h:0,v:0}` to the file, so a
+ * document that was byte-identical on the second save was not on the first.
+ */
 function textPayload(over) {
   return {
     content: '',
@@ -1935,7 +2041,6 @@ function textPayload(over) {
     underline: false,
     strikethrough: false,
     antialias: 'smooth',
-    warp: { style: 'none', bend: 0, h: 0, v: 0 },
     ...over,
   };
 }
@@ -1977,6 +2082,10 @@ const FONT_ALIASES = [
 
 function mapFontName(raw) {
   if (!raw) return { font: 'system', weight: 400, style: 'normal' };
+  // A face we ourselves name maps back exactly — family, weight and slant —
+  // rather than through the substring heuristics below.
+  const exact = familyFromPostScriptName(raw);
+  if (exact) return exact;
   const weight = /black|heavy/i.test(raw) ? 900 : /bold|semibold|demi/i.test(raw) ? 700 : /light|thin/i.test(raw) ? 300 : 400;
   const style = /italic|oblique/i.test(raw) ? 'italic' : 'normal';
   const stem = raw.replace(/[^A-Za-z]/g, '');
@@ -2100,15 +2209,16 @@ function readTypeTool(r) {
   const antialias = ANTIALIAS_MODES[it.AntA && it.AntA.value] || 'smooth';
   const vertical = !!(it.Ornt && it.Ornt.value === 'Vrtc');
 
-  // --- the warp descriptor, which follows the text descriptor.
-  let warp = { style: 'none', bend: 0, h: 0, v: 0 };
+  // --- the warp descriptor, which follows the text descriptor. `warpNone` maps
+  // to 'none', which is left off the payload entirely: see `textPayload`.
+  let warp = null;
   if (r.remaining > 6) {
     try {
       r.readUint16(); // warp version (1)
       const wd = readDescriptorBlock(r);
       const wi = wd.items || {};
       const id = WARP_STYLE_IDS[wi.warpStyle && wi.warpStyle.value];
-      if (id) {
+      if (id && id !== 'none') {
         warp = {
           style: id,
           bend: numberOf(wi.warpValue, 0) / 100,
@@ -2139,7 +2249,7 @@ function readTypeTool(r) {
     paragraph,
     vertical,
     antialias,
-    warp,
+    ...(warp ? { warp } : null),
     underline: /\/Underline\s+true/.test(run),
     strikethrough: /\/Strikethrough\s+true/.test(run),
   });

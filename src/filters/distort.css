@@ -6,22 +6,45 @@
   gap: 10px;
 }
 
-.pk-liquify-view {
+/* The pixels and the chrome (freeze mask, mesh, brush ring) are separate
+   canvases so hovering can repaint the chrome without re-warping the preview. */
+.pk-liquify-stage {
+  position: relative;
+  display: block;
+  line-height: 0;
+}
+
+.pk-liquify-view,
+.pk-liquify-chrome {
   display: block;
   width: 100%;
   height: auto;
   border: none;
   border-radius: var(--r-md);
-  box-shadow: inset 0 0 0 1px var(--hair-2), var(--sh-1);
-  cursor: crosshair;
   touch-action: none;
   user-select: none;
+}
+
+.pk-liquify-view {
+  box-shadow: inset 0 0 0 1px var(--hair-2), var(--sh-1);
+  cursor: crosshair;
+}
+
+.pk-liquify-chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 .pk-liquify-tools {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pk-liquify-tools .pk-btn {
+  padding-inline: 8px;
 }
 
 .pk-liquify-tools .pk-hint {

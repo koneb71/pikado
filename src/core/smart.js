@@ -14,16 +14,35 @@ import { getFilter, runFilter } from '../filters/registry.js';
  *   source: PikaDocument,      // the embedded contents (layers, masks, groups)
  *   sourceWidth, sourceHeight, // the source document size
  *   sourceVersion: number,     // bumped whenever `source` is replaced
- *   transform: { matrix: [a,b,c,d,e,f] },
+ *   transform: {
+ *     matrix: [a,b,c,d,e,f],   // the affine part
+ *     perspective: [p,q],      // optional projective row — see below
+ *     warp: [[{x,y} x4] x4],   // optional 4x4 Bezier mesh in SOURCE pixels
+ *   },
  *   filters: [{ id, filterId, name, params, enabled }],
  * }
  * ```
  *
  * **Every render starts from `source`.** The stored smart filters are re-run
- * against the freshly composited source pixels and the transform is applied
- * last, so scaling a smart object down and back up resamples the originals once
- * instead of compounding a chain of lossy steps. `layer.canvas` is only a cache
- * of that render; the compositor draws it like any other raster layer.
+ * against the freshly composited source pixels and the shape (warp, then the
+ * projective transform) is applied last, so scaling a smart object down and back
+ * up resamples the originals once instead of compounding a chain of lossy steps.
+ * `layer.canvas` is only a cache of that render; the compositor draws it like any
+ * other raster layer.
+ *
+ * **The shape.** A source point travels
+ * `source -> warp patch -> affine x perspective -> document`, i.e.
+ * `H = A · P` with
+ * ```
+ *      | a c e |        | 1 0 0 |
+ *  A = | b d f |    P = | 0 1 0 |
+ *      | 0 0 1 |        | p q 1 |
+ * ```
+ * `P` is the identity when `perspective` is absent, so a plain affine smart
+ * object is bit-for-bit unaffected by any of this and keeps the fast
+ * single-`drawImage` path. Storing the projective row separately (rather than one
+ * 3x3) is only a reparameterisation of the same homography — `matrix` stays the
+ * thing the Properties panel and Free Transform compose with.
  *
  * **Mutation rule.** `Layer.snapshot()` shallow-copies `layer.smart`, so history
  * states share the payload object. Nothing here ever edits `layer.smart` (or its
@@ -34,6 +53,9 @@ import { getFilter, runFilter } from '../filters/registry.js';
 
 /** The neutral transform: source pixels land 1:1 at the document origin. */
 export const IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0];
+
+/** The neutral projective row: no perspective. */
+export const NO_PERSPECTIVE = [0, 0];
 
 /* ------------------------------------------------------------------ */
 /* Matrix helpers ([a,b,c,d,e,f], the canvas setTransform order)        */
@@ -52,16 +74,30 @@ export function matrixMultiply(A, B) {
 }
 
 /**
- * Split a matrix into the values the UI edits: where the centre of the source
- * box lands, its scale and its rotation. Skew is not represented (the panel
- * cannot author it) but is preserved by leaving the matrix alone.
- * @returns {{centerX:number, centerY:number, scaleX:number, scaleY:number, angle:number}}
+ * Split a matrix into the values the Properties panel edits: where the centre of
+ * the source box lands, its scale, its rotation and its skew.
+ *
+ * This is the QR-style decomposition `T · R(angle) · K(skew) · S(scale)`, so
+ * `composeMatrix(decomposeMatrix(M)) === M` for **any** invertible affine matrix
+ * — nothing is thrown away any more.
+ *
+ * An affine matrix has six degrees of freedom and centre + scale + rotation
+ * already spend five of them, so exactly *one* shear parameter fits. The
+ * canonical form returned here is therefore always `skewY: 0`, with the whole
+ * shear expressed as `skewX`. `composeMatrix` still accepts a `skewY` (the panel
+ * authors both axes); it simply comes back folded into angle/skewX/scaleY next
+ * time, describing the very same matrix.
+ *
+ * @returns {{centerX:number, centerY:number, scaleX:number, scaleY:number,
+ *            angle:number, skewX:number, skewY:number}} angles in radians
  */
 export function decomposeMatrix(matrix, sourceWidth, sourceHeight) {
   const [a, b, c, d, e, f] = matrix;
   const scaleX = Math.hypot(a, b);
   const det = a * d - b * c;
-  const scaleY = (Math.hypot(c, d) || 0) * (det < 0 ? -1 : 1);
+  // A degenerate matrix has no recoverable shear; fall back to the column length.
+  const scaleY = scaleX > 1e-12 ? det / scaleX : Math.hypot(c, d) * (det < 0 ? -1 : 1);
+  const shear = Math.abs(det) > 1e-12 ? (a * c + b * d) / det : 0;
   const angle = Math.atan2(b, a);
   const hx = sourceWidth / 2, hy = sourceHeight / 2;
   return {
@@ -70,20 +106,291 @@ export function decomposeMatrix(matrix, sourceWidth, sourceHeight) {
     scaleX,
     scaleY,
     angle,
+    skewX: Math.atan(shear),
+    skewY: 0,
   };
 }
 
-/** The inverse of {@link decomposeMatrix}. */
-export function composeMatrix({ centerX, centerY, scaleX, scaleY, angle }, sourceWidth, sourceHeight) {
+/** The inverse of {@link decomposeMatrix}. `skewX`/`skewY` are optional radians. */
+export function composeMatrix(
+  { centerX, centerY, scaleX, scaleY, angle, skewX = 0, skewY = 0 },
+  sourceWidth,
+  sourceHeight
+) {
   const cos = Math.cos(angle), sin = Math.sin(angle);
-  const a = scaleX * cos, b = scaleX * sin;
-  const c = -scaleY * sin, d = scaleY * cos;
+  const kx = Math.tan(skewX || 0), ky = Math.tan(skewY || 0);
+  // R(angle) · K(kx,ky) · S(scaleX,scaleY), written out column by column.
+  const a = scaleX * (cos - ky * sin);
+  const b = scaleX * (sin + ky * cos);
+  const c = scaleY * (kx * cos - sin);
+  const d = scaleY * (kx * sin + cos);
   const hx = sourceWidth / 2, hy = sourceHeight / 2;
   return [a, b, c, d, centerX - (a * hx + c * hy), centerY - (b * hx + d * hy)];
 }
 
 function validMatrix(m) {
   return Array.isArray(m) && m.length === 6 && m.every((n) => Number.isFinite(n));
+}
+
+function validPerspective(p) {
+  return Array.isArray(p) && p.length === 2 && p.every((n) => Number.isFinite(n));
+}
+
+/* ------------------------------------------------------------------ */
+/* Homography helpers (row-major 3x3, source -> document)              */
+/* ------------------------------------------------------------------ */
+
+/** The `A · P` homography for an affine matrix plus a projective row. */
+export function toMatrix3(matrix, perspective) {
+  const [a, b, c, d, e, f] = matrix;
+  const p = perspective ? perspective[0] : 0;
+  const q = perspective ? perspective[1] : 0;
+  return [
+    a + e * p, c + e * q, e,
+    b + f * p, d + f * q, f,
+    p, q, 1,
+  ];
+}
+
+/** `A ∘ B` for two row-major 3x3 matrices. */
+export function matrix3Multiply(A, B) {
+  const out = new Array(9);
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      out[r * 3 + c] = A[r * 3] * B[c] + A[r * 3 + 1] * B[3 + c] + A[r * 3 + 2] * B[6 + c];
+    }
+  }
+  return out;
+}
+
+/**
+ * Split a homography back into `{matrix, perspective}`. Exact, and the inverse
+ * of {@link toMatrix3}: `perspective` is the bottom row and the affine part is
+ * what is left once that row's contribution to the translation is removed.
+ * @returns {{matrix:number[], perspective:number[]}|null} null if degenerate
+ */
+export function fromMatrix3(H) {
+  if (!Array.isArray(H) || H.length !== 9 || !H.every((n) => Number.isFinite(n))) return null;
+  if (Math.abs(H[8]) < 1e-12) return null;
+  const k = 1 / H[8];
+  const e = H[2] * k, f = H[5] * k;
+  const p = H[6] * k, q = H[7] * k;
+  return {
+    matrix: [H[0] * k - e * p, H[3] * k - f * p, H[1] * k - e * q, H[4] * k - f * q, e, f],
+    perspective: [p, q],
+  };
+}
+
+/** Map one point through a row-major 3x3. */
+export function applyMatrix3(H, x, y) {
+  const w = H[6] * x + H[7] * y + H[8];
+  const iw = Math.abs(w) < 1e-12 ? 1e12 : 1 / w;
+  return { x: (H[0] * x + H[1] * y + H[2]) * iw, y: (H[3] * x + H[4] * y + H[5]) * iw };
+}
+
+/** Inverse of a row-major 3x3, or null when it is singular. */
+export function invertMatrix3(H) {
+  const [a, b, c, d, e, f, g, h, i] = H;
+  const A = e * i - f * h, B = f * g - d * i, C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-14) return null;
+  const k = 1 / det;
+  return [
+    A * k, (c * h - b * i) * k, (b * f - c * e) * k,
+    B * k, (a * i - c * g) * k, (c * d - a * f) * k,
+    C * k, (b * g - a * h) * k, (a * e - b * d) * k,
+  ];
+}
+
+/**
+ * The projective map from the unit square onto `quad` (TL, TR, BR, BL) —
+ * Heckbert's formulation, as a row-major 3x3.
+ */
+export function unitSquareToQuad(quad) {
+  const [p0, p1, p2, p3] = quad;
+  const sx = p0.x - p1.x + p2.x - p3.x;
+  const sy = p0.y - p1.y + p2.y - p3.y;
+  let a, b, c, d, e, f, g, h;
+  if (Math.abs(sx) < 1e-9 && Math.abs(sy) < 1e-9) {
+    a = p1.x - p0.x; b = p2.x - p1.x; c = p0.x;
+    d = p1.y - p0.y; e = p2.y - p1.y; f = p0.y;
+    g = 0; h = 0;
+  } else {
+    const dx1 = p1.x - p2.x, dx2 = p3.x - p2.x;
+    const dy1 = p1.y - p2.y, dy2 = p3.y - p2.y;
+    const den = dx1 * dy2 - dy1 * dx2;
+    if (Math.abs(den) < 1e-9) {
+      a = p1.x - p0.x; b = p3.x - p0.x; c = p0.x;
+      d = p1.y - p0.y; e = p3.y - p0.y; f = p0.y;
+      g = 0; h = 0;
+    } else {
+      g = (sx * dy2 - dx2 * sy) / den;
+      h = (dx1 * sy - sx * dy1) / den;
+      a = p1.x - p0.x + g * p1.x;
+      b = p3.x - p0.x + h * p3.x;
+      c = p0.x;
+      d = p1.y - p0.y + g * p1.y;
+      e = p3.y - p0.y + h * p3.y;
+      f = p0.y;
+    }
+  }
+  return [a, b, c, d, e, f, g, h, 1];
+}
+
+/**
+ * The projective map taking the axis-aligned rect `box` onto `quad`, i.e.
+ * `unitSquareToQuad(quad)` pre-composed with the normalisation of `box`.
+ */
+export function rectToQuad(box, quad) {
+  const kx = 1 / (box.width || 1), ky = 1 / (box.height || 1);
+  const norm = [kx, 0, -box.x * kx, 0, ky, -box.y * ky, 0, 0, 1];
+  return matrix3Multiply(unitSquareToQuad(quad), norm);
+}
+
+/* ------------------------------------------------------------------ */
+/* Warp mesh (4x4 bicubic Bézier patch, in source pixels)              */
+/* ------------------------------------------------------------------ */
+
+function bezierBasis(t) {
+  const it = 1 - t;
+  return [it * it * it, 3 * it * it * t, 3 * it * t * t, t * t * t];
+}
+
+/**
+ * The neutral 4x4 control grid over a `width × height` box: evenly spaced
+ * control points make the patch reproduce the identity map exactly.
+ * @returns {{x:number,y:number}[][]}
+ */
+export function identityWarp(width, height) {
+  const pts = [];
+  for (let j = 0; j < 4; j++) {
+    const row = [];
+    for (let i = 0; i < 4; i++) row.push({ x: (width * i) / 3, y: (height * j) / 3 });
+    pts.push(row);
+  }
+  return pts;
+}
+
+/** Point on a 4x4 bicubic Bézier patch at `(u,v)` in 0..1. */
+export function evalWarp(pts, u, v) {
+  const bu = bezierBasis(u), bv = bezierBasis(v);
+  let x = 0, y = 0;
+  for (let j = 0; j < 4; j++) {
+    for (let i = 0; i < 4; i++) {
+      const w = bu[i] * bv[j];
+      x += pts[j][i].x * w;
+      y += pts[j][i].y * w;
+    }
+  }
+  return { x, y };
+}
+
+function validWarp(pts) {
+  if (!Array.isArray(pts) || pts.length !== 4) return false;
+  return pts.every((row) => Array.isArray(row) && row.length === 4
+    && row.every((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y)));
+}
+
+function copyWarp(pts) {
+  return pts.map((row) => row.map((p) => ({ x: p.x, y: p.y })));
+}
+
+/** True when the grid is (within a hair of) the neutral grid for that box. */
+function warpIsIdentity(pts, width, height) {
+  const id = identityWarp(width, height);
+  for (let j = 0; j < 4; j++) {
+    for (let i = 0; i < 4; i++) {
+      if (Math.abs(pts[j][i].x - id[j][i].x) > 1e-6) return false;
+      if (Math.abs(pts[j][i].y - id[j][i].y) > 1e-6) return false;
+    }
+  }
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Mesh rasterisation                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Draw one source triangle onto `ctx` through the affine map that takes it to
+ * the destination triangle. Only the source cell rectangle is sampled, so the
+ * cost scales with the mesh cell rather than the whole image.
+ */
+function drawTriangle(ctx, img, s0, s1, s2, d0, d1, d2, rect) {
+  const u1x = s1.x - s0.x, u1y = s1.y - s0.y;
+  const u2x = s2.x - s0.x, u2y = s2.y - s0.y;
+  const det = u1x * u2y - u2x * u1y;
+  if (!det) return;
+  const v1x = d1.x - d0.x, v1y = d1.y - d0.y;
+  const v2x = d2.x - d0.x, v2y = d2.y - d0.y;
+  const a = (v1x * u2y - v2x * u1y) / det;
+  const c = (u1x * v2x - u2x * v1x) / det;
+  const b = (v1y * u2y - v2y * u1y) / det;
+  const d = (u1x * v2y - u2x * v1y) / det;
+  if (!isFinite(a) || !isFinite(b) || !isFinite(c) || !isFinite(d)) return;
+  const e = d0.x - a * s0.x - c * s0.y;
+  const f = d0.y - b * s0.x - d * s0.y;
+
+  const bleed = 1.25;
+  const sx = Math.max(0, Math.floor(rect.x - bleed));
+  const sy = Math.max(0, Math.floor(rect.y - bleed));
+  const sw = Math.min(img.width - sx, Math.ceil(rect.w + bleed * 2 + (rect.x - sx)));
+  const sh = Math.min(img.height - sy, Math.ceil(rect.h + bleed * 2 + (rect.y - sy)));
+  if (sw <= 0 || sh <= 0 || sx >= img.width || sy >= img.height) return;
+
+  // Grow the clip outward from the centroid so adjacent cells overlap slightly
+  // and no seam shows between triangles.
+  const cx = (d0.x + d1.x + d2.x) / 3, cy = (d0.y + d1.y + d2.y) / 3;
+  const grow = (p) => {
+    const gx = p.x - cx, gy = p.y - cy;
+    const L = Math.hypot(gx, gy) || 1;
+    return { x: p.x + (gx / L) * 0.7, y: p.y + (gy / L) * 0.7 };
+  };
+  const g0 = grow(d0), g1 = grow(d1), g2 = grow(d2);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(g0.x, g0.y);
+  ctx.lineTo(g1.x, g1.y);
+  ctx.lineTo(g2.x, g2.y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.transform(a, b, c, d, e, f);
+  ctx.drawImage(img, sx, sy, sw, sh, sx, sy, sw, sh);
+  ctx.restore();
+}
+
+/**
+ * Resample `img` through an arbitrary parametric map by splitting `box` (a rect
+ * in `img` coordinates) into `n × n` cells and drawing each as two affine
+ * triangles. This is the shared primitive behind smart-object perspective and
+ * warp rendering and the free-transform preview.
+ *
+ * @param {CanvasRenderingContext2D} ctx destination, already reset to identity
+ * @param {CanvasImageSource & {width:number,height:number}} img
+ * @param {{x:number,y:number,width:number,height:number}} box
+ * @param {number} n cells per axis
+ * @param {(u:number,v:number)=>{x:number,y:number}} mapFn destination point for
+ *   the normalised position `(u,v)` inside `box`
+ */
+export function drawMappedGrid(ctx, img, box, n, mapFn) {
+  const grid = [];
+  for (let j = 0; j <= n; j++) {
+    const row = [];
+    for (let i = 0; i <= n; i++) row.push(mapFn(i / n, j / n));
+    grid.push(row);
+  }
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const x0 = box.x + (box.width * i) / n, x1 = box.x + (box.width * (i + 1)) / n;
+      const y0 = box.y + (box.height * j) / n, y1 = box.y + (box.height * (j + 1)) / n;
+      const sq = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+      const dq = [grid[j][i], grid[j][i + 1], grid[j + 1][i + 1], grid[j + 1][i]];
+      const rect = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+      drawTriangle(ctx, img, sq[0], sq[1], sq[2], dq[0], dq[1], dq[2], rect);
+      drawTriangle(ctx, img, sq[0], sq[2], sq[3], dq[0], dq[2], dq[3], rect);
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -100,11 +407,36 @@ export function smartPayload(layer) {
   return isSmartLayer(layer) ? layer.smart : null;
 }
 
-/** A copy of the layer's transform matrix. */
+/** A copy of the layer's affine transform matrix. */
 export function getSmartTransform(layer) {
   const s = smartPayload(layer);
   const m = s && s.transform && s.transform.matrix;
   return validMatrix(m) ? m.slice() : IDENTITY_MATRIX.slice();
+}
+
+/** A copy of the layer's projective row `[p,q]` — `[0,0]` when there is none. */
+export function getSmartPerspective(layer) {
+  const s = smartPayload(layer);
+  const p = s && s.transform && s.transform.perspective;
+  return validPerspective(p) ? p.slice() : NO_PERSPECTIVE.slice();
+}
+
+/** A copy of the layer's 4x4 warp control grid (source pixels), or null. */
+export function getSmartWarp(layer) {
+  const s = smartPayload(layer);
+  const w = s && s.transform && s.transform.warp;
+  return validWarp(w) ? copyWarp(w) : null;
+}
+
+/** The full source → document homography of a smart layer, as a row-major 3x3. */
+export function getSmartMatrix3(layer) {
+  return toMatrix3(getSmartTransform(layer), getSmartPerspective(layer));
+}
+
+/** True when the layer carries perspective or a warp on top of its affine part. */
+export function hasSmartShape(layer) {
+  const p = getSmartPerspective(layer);
+  return !!(p[0] || p[1] || getSmartWarp(layer));
 }
 
 /** The stored smart filters, newest-applied last. Safe to iterate, not to edit. */
@@ -119,17 +451,30 @@ function copyFilters(list) {
 }
 
 /**
+ * A validated, freshly allocated transform record. Optional parts are omitted
+ * rather than stored as neutral values, so `JSON.stringify` of an untouched
+ * smart object stays exactly what it always was.
+ */
+function normalizeTransform(t) {
+  const m = validMatrix(t && t.matrix) ? t.matrix.slice() : IDENTITY_MATRIX.slice();
+  const out = { matrix: m };
+  const p = t && t.perspective;
+  if (validPerspective(p) && (p[0] !== 0 || p[1] !== 0)) out.perspective = [p[0], p[1]];
+  if (validWarp(t && t.warp)) out.warp = copyWarp(t.warp);
+  return out;
+}
+
+/**
  * Install a new smart payload on `layer`. Never mutates the old one, so the
  * shallow copy in `Layer.snapshot()` keeps older history states intact.
  */
 function setPayload(layer, patch) {
   const s = layer.smart || {};
-  const next = patch.transform ? patch.transform.matrix : (s.transform || {}).matrix;
   layer.smart = {
     ...s,
     ...patch,
     filters: copyFilters(patch.filters || s.filters),
-    transform: { matrix: (validMatrix(next) ? next : IDENTITY_MATRIX).slice() },
+    transform: normalizeTransform(patch.transform || s.transform),
   };
   return layer.smart;
 }
@@ -262,13 +607,44 @@ export function smartSourcePixels(s, layer, cacheHolder) {
 }
 
 /**
+ * How finely to subdivide the source box when rendering through a warp or a
+ * perspective. Driven by the *destination* size so a big object gets a smooth
+ * mesh and a thumbnail-sized one does not pay for cells nobody can see.
+ */
+function gridSteps(mapFn) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let j = 0; j <= 4; j++) {
+    for (let i = 0; i <= 4; i++) {
+      const p = mapFn(i / 4, j / 4);
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+      if (p.x < x0) x0 = p.x;
+      if (p.x > x1) x1 = p.x;
+      if (p.y < y0) y0 = p.y;
+      if (p.y > y1) y1 = p.y;
+    }
+  }
+  const span = Math.max(x1 - x0, y1 - y0);
+  if (!Number.isFinite(span)) return 8;
+  return Math.max(8, Math.min(28, Math.round(span / 20)));
+}
+
+/**
  * Render a smart payload into a `width × height` canvas without touching any
  * layer. Used for the live filter preview as well as the real render.
+ *
+ * A plain affine object takes the single-`drawImage` path it always did — that
+ * is what makes a scale round trip bit-exact. A warp or a perspective switches
+ * to the triangle-mesh resampler, still reading the *original* source pixels
+ * once, so those are non-destructive on exactly the same terms.
+ *
  * @returns {HTMLCanvasElement}
  */
 export function composeSmartCanvas(s, width, height, layer = null, cacheHolder = null) {
   const src = smartSourcePixels(s, layer, cacheHolder);
-  const matrix = validMatrix(s.transform && s.transform.matrix) ? s.transform.matrix : IDENTITY_MATRIX;
+  const t = s.transform || {};
+  const matrix = validMatrix(t.matrix) ? t.matrix : IDENTITY_MATRIX;
+  const persp = validPerspective(t.perspective) ? t.perspective : NO_PERSPECTIVE;
+  const warp = validWarp(t.warp) ? t.warp : null;
   const out = createCanvas(width, height);
   const ctx = ctx2d(out);
   const [a, b, c, d, e, f] = matrix;
@@ -278,9 +654,27 @@ export function composeSmartCanvas(s, width, height, layer = null, cacheHolder =
   const pre = prescale(src, sx, sy);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.setTransform(a, b, c, d, e, f);
-  if (pre.px !== 1 || pre.py !== 1) ctx.scale(1 / pre.px, 1 / pre.py);
-  ctx.drawImage(pre.canvas, 0, 0);
+
+  if (!warp && !persp[0] && !persp[1]) {
+    ctx.setTransform(a, b, c, d, e, f);
+    if (pre.px !== 1 || pre.py !== 1) ctx.scale(1 / pre.px, 1 / pre.py);
+    ctx.drawImage(pre.canvas, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return out;
+  }
+
+  // The warp grid is expressed in ORIGINAL source pixels, so prescaling the
+  // source is invisible here: the grid is walked in normalised (u,v).
+  const H = toMatrix3(matrix, persp);
+  const sw = src.width || 1, sh = src.height || 1;
+  const map = warp
+    ? (u, v) => {
+      const p = evalWarp(warp, u, v);
+      return applyMatrix3(H, p.x, p.y);
+    }
+    : (u, v) => applyMatrix3(H, u * sw, v * sh);
+  const box = { x: 0, y: 0, width: pre.canvas.width, height: pre.canvas.height };
+  drawMappedGrid(ctx, pre.canvas, box, gridSteps(map), map);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   return out;
 }
@@ -401,10 +795,16 @@ export function createSmartObject(doc, layers) {
 /**
  * Replace the smart layer's transform and re-render from the source pixels.
  *
+ * The affine `matrix` is always replaced. `perspective` and `warp` are left as
+ * they were unless the caller names them — pass `null` to clear one, so the
+ * Properties panel can edit scale/rotation without disturbing a perspective the
+ * transform tool put there (and vice versa).
+ *
  * @param {import('./document.js').PikaDocument} doc
  * @param {import('./layer.js').Layer} layer
  * @param {number[]} matrix `[a,b,c,d,e,f]`
- * @param {{commit?:boolean, label?:string}} [opts] `commit:false` for a live drag
+ * @param {{commit?:boolean, label?:string, perspective?:number[]|null,
+ *          warp?:object[][]|null}} [opts] `commit:false` for a live drag
  */
 export function setSmartTransform(doc, layer, matrix, opts = {}) {
   if (!isSmartLayer(layer)) {
@@ -416,17 +816,58 @@ export function setSmartTransform(doc, layer, matrix, opts = {}) {
     return null;
   }
   const { commit = true, label = 'Transform Smart Object' } = opts;
+  const cur = layer.smart.transform || {};
+  let perspective = cur.perspective;
+  let warp = cur.warp;
+  if (opts.perspective !== undefined) {
+    if (opts.perspective !== null && !validPerspective(opts.perspective)) {
+      app.toast('That perspective is not a valid projective row.', 'error');
+      return null;
+    }
+    perspective = opts.perspective;
+  }
+  if (opts.warp !== undefined) {
+    if (opts.warp !== null && !validWarp(opts.warp)) {
+      app.toast('That warp mesh is not a valid 4x4 control grid.', 'error');
+      return null;
+    }
+    // A mesh that is back at its neutral positions is dropped, not stored, so
+    // the object returns to the exact single-drawImage path.
+    warp = opts.warp && !warpIsIdentity(opts.warp, layer.smart.sourceWidth, layer.smart.sourceHeight)
+      ? opts.warp
+      : null;
+  }
   if (commit) doc.beginEdit(layer);
-  setPayload(layer, { transform: { matrix: matrix.slice() } });
+  setPayload(layer, { transform: { matrix: matrix.slice(), perspective, warp } });
   renderSmartObject(layer, doc);
   if (commit) doc.commit(label);
   else doc.touch('smart-transform');
   return layer.smart.transform.matrix;
 }
 
-/** Put the contents back at 1:1, unrotated, at the document origin. */
+/** Put the contents back at 1:1, unrotated, unwarped, at the document origin. */
 export function resetSmartTransform(doc, layer) {
-  return setSmartTransform(doc, layer, IDENTITY_MATRIX.slice(), { label: 'Reset Smart Transform' });
+  return setSmartTransform(doc, layer, IDENTITY_MATRIX.slice(), {
+    label: 'Reset Smart Transform',
+    perspective: null,
+    warp: null,
+  });
+}
+
+/**
+ * Drop the perspective and/or the warp while keeping the affine placement —
+ * the non-destructive counterpart of "undo my distortion".
+ * @param {{perspective?:boolean, warp?:boolean}} what
+ */
+export function clearSmartShape(doc, layer, what = { perspective: true, warp: true }) {
+  if (!isSmartLayer(layer)) {
+    app.toast('Select a Smart Object layer first.');
+    return null;
+  }
+  const opts = { label: 'Clear Smart Distortion' };
+  if (what.perspective) opts.perspective = null;
+  if (what.warp) opts.warp = null;
+  return setSmartTransform(doc, layer, getSmartTransform(layer), opts);
 }
 
 /* ------------------------------------------------------------------ */
@@ -555,8 +996,16 @@ export function replaceContents(doc, layer, imageOrDoc, label = 'Replace Content
 
   const oldW = s.sourceWidth || source.width;
   const oldH = s.sourceHeight || source.height;
-  const fit = [oldW / source.width, 0, 0, oldH / source.height, 0, 0];
+  const fx = oldW / source.width, fy = oldH / source.height;
+  const fit = [fx, 0, 0, fy, 0, 0];
   const matrix = matrixMultiply(getSmartTransform(layer), fit);
+  // The warp grid lives in source pixels, and the fit scale is folded into the
+  // matrix — rescale the grid by the same factor so the two cancel and the warp
+  // keeps the shape it had.
+  const oldWarp = getSmartWarp(layer);
+  const warp = oldWarp
+    ? oldWarp.map((row) => row.map((p) => ({ x: p.x / fx, y: p.y / fy })))
+    : null;
 
   endSession(sessionKey(doc, layer));
   doc.beginEdit(layer);
@@ -565,7 +1014,7 @@ export function replaceContents(doc, layer, imageOrDoc, label = 'Replace Content
     sourceWidth: source.width,
     sourceHeight: source.height,
     sourceVersion: (s.sourceVersion || 0) + 1,
-    transform: { matrix },
+    transform: { matrix, perspective: getSmartPerspective(layer), warp },
   });
   invalidateSmartCache(layer);
   renderSmartObject(layer, doc);

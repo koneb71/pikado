@@ -5,8 +5,9 @@ Photoshop. Everything runs client-side — no server, no upload, no account.
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # http://localhost:5173 (Vite takes the next free port if busy)
 npm run build    # production bundle in dist/
+npm test         # opens the regression suite at /tests/
 ```
 
 ## What it is
@@ -19,13 +20,102 @@ builds them:
   masks, clipping masks, blend modes, opacity/fill opacity and layer effects.
 - **Compositing** — all 27 Photoshop blend modes. Canvas2D handles the ones it
   natively supports; the rest (Linear Burn, Vivid Light, Divide, Darker Colour,
-  …) run through a per-pixel CPU path.
+  …) run in a fragment shader, with an exact CPU path kept for small documents.
 - **Selections** — stored as an 8-bit coverage mask, so feathering, antialiasing
   and partial selection are exact rather than approximated by paths.
 - **History** — snapshot-based undo with copy-on-write pixel buffers, so a
   history step costs a few hundred bytes unless pixels actually changed.
 - **Non-destructive editing** — adjustment layers re-process the composite
   beneath them on every render; layer effects are generated at composite time.
+  Smart Objects keep a real embedded document and re-render from it every time.
+
+## Opening it
+
+There is no blank `Untitled-1` waiting for you. With nothing open you land on a
+start screen: a handful of sizes people actually start from, a file picker, and
+your recent projects with thumbnails, dimensions, layer counts and when you last
+touched them. Drop a file anywhere on the window and it opens — hold Shift to
+place it into the current document as a layer instead. Close the last document
+and the start screen comes back.
+
+The footer states plainly how many projects are held in this browser and how many
+bytes that is, with the browser's own quota estimate in the tooltip — because an
+app that stores your work locally owes you a way to see it.
+
+## Your work stays in this browser
+
+Pikado autosaves. Open documents survive a refresh, a crash, and a laptop lid.
+Nothing is uploaded anywhere; there is no server and no account.
+
+- **Where.** IndexedDB, with the metadata and the payload in *separate* object
+  stores: a small record per project (name, size, layer count, timestamp,
+  thumbnail) on one side, the project bytes on the other. IndexedDB hands back
+  whole records, so keeping a 50 MB payload out of the metadata store is what
+  lets the start screen list twenty projects instantly.
+- **What.** The payload is a `.pkd` blob — byte for byte the same lossless format
+  `File > Save` writes. Persistence and export share one serialiser, so there is
+  no second "autosave schema" to drift out of step and no format you cannot open
+  again by hand. Undo history is deliberately not persisted: Photoshop does not
+  either, and it would multiply the payload by the number of history states.
+- **When.** This is the part that needed thought. Serialising a large document
+  takes one to two seconds — every layer is PNG-encoded — and `beforeunload`
+  cannot wait for asynchronous storage, so a save triggered *by* the refresh
+  would never finish. Saving on a timer instead: 1.2 s after you stop editing,
+  never more often than every four seconds per document, and immediately when the
+  tab is hidden, which is the last reliable moment before a reload or a close.
+  That bounds what a refresh can cost you to the few seconds since the last quiet
+  moment, without spending a drag-heavy session encoding PNGs.
+- **Limits, stated.** A single project over 320 MB is not autosaved, and says so
+  in a toast rather than failing quietly. The store is capped at 1.2 GB; past
+  that, the least recently touched projects are evicted, and anything currently
+  open is never evicted. Removing a project from the start screen deletes the
+  stored copy for good, behind a confirmation. Some private-browsing modes refuse
+  IndexedDB entirely — then autosave stays off, and the refresh confirmation
+  prompt comes back, because in that one case a refresh really would lose work.
+
+## Offline, and installable
+
+Pikado never needed the network to do its work — every pixel is processed in the
+tab. "Offline" only ever meant the shell could not be downloaded. A service
+worker fixes that: the first visit caches the app, every later visit runs from
+the cache, and a cold start with no network works.
+
+The worker is hand-written rather than generated, because Vite hashes asset
+filenames and a precache manifest would have to be built alongside them. It picks
+a strategy per URL: navigations are network-first (the newest `index.html` names
+the current hashed assets), `/assets/…` is cache-first (a content hash means the
+bytes behind that name can never change), everything else same-origin is
+stale-while-revalidate. Cross-origin requests are never intercepted. It is
+registered in production builds only — in front of the dev server it would answer
+module requests from its own cache and make your edits appear to do nothing.
+
+A web manifest makes it installable as a standalone app. Losing the network gets
+a quiet pill in the menu bar and one reassuring line, not a red banner, because
+in an app that keeps your work locally it is not an error. When a new version has
+been fetched you get an "Update ready" button; Pikado will not reload the page on
+your behalf, since you might be halfway through a brush stroke.
+
+## Right-click does the right thing
+
+Right-clicking the canvas asks the active tool what it can do *here*, at the
+point you clicked. Right-click an anchor with the Pen and you get Delete Anchor
+Point and Convert to Corner/Smooth; right-click a segment and you get Add Anchor
+Point; either way followed by Make Selection, Fill Path, Stroke Path. Move lists
+every layer under the cursor so you can pick the one you meant, then Duplicate,
+Delete, Group, Merge Down and Rasterize. A selection tool offers the selection
+workflow — Deselect, Select Inverse, Feather/Expand/Contract, Layer via Copy or
+Cut, Fill, Stroke, Content-Aware Fill — and with no selection yet it offers the
+ways to get one instead. Mid-polygon it is just Close Path and Cancel, because
+that is all that makes sense mid-gesture. The Ruler offers Clear Measurement.
+
+Every menu also carries a short shared tail (Free Transform, Fit on Screen,
+100%), so right-click is never a dead gesture even on a tool with nothing
+specific to say.
+
+Entries are mostly references to existing commands, so labels, keyboard shortcuts
+and enabled state come from one place and cannot disagree with the menu bar.
+Items that cannot apply right now are dropped rather than shown greyed, and the
+separators around them close up.
 
 ## Architecture
 
@@ -34,8 +124,9 @@ version:
 
 ```
 src/
-  core/        document, layer, selection, history, colour, blend modes, app singleton
-  render/      compositor, viewport
+  core/        document, layer, selection, history, colour, blend modes,
+               smart objects, app singleton
+  render/      compositor, viewport, GPU blend shader, GPU blur
   paint/       brush engine, patterns, gradients
   tools/       one module per toolbar group
   filters/     filter registry + implementations by menu
@@ -46,8 +137,12 @@ src/
   layers/      layer operations (merge, group, mask, rasterize…)
   edit/        clipboard, fill & stroke
   commands/    command registry + every menu command
-  io/          open/save, PSD read & write, SVG, native .pkd format
-  ui/          menubar, toolbar, options bar, panels, dialogs, canvas view
+  io/          open/save, PSD read & write, SVG, GIF, native .pkd format,
+               IndexedDB store, session autosave, offline registration
+  ui/          menubar, toolbar, options bar, panels, dialogs, canvas view,
+               start screen, canvas context menu, brand
+public/        service worker, web manifest, install icons
+tests/         the regression suite (see below)
 ```
 
 Three conventions matter throughout:
@@ -83,6 +178,25 @@ Adjustments (`registerAdjustment`), tools (`registerTool`), panels
 (`registerPanel`), commands (`registerCommand`) and layer effects
 (`registerEffectRenderer`) follow the same pattern.
 
+## Tests
+
+```bash
+npm test          # or just open /tests/ on the dev server
+```
+
+The suite runs in a real browser, not Node — essentially every subsystem here
+depends on working Canvas2D or WebGL, and a jsdom canvas would make the whole
+thing meaningless. The runner boots the genuine app off-screen first, so tool
+registration, panels and menus are exercised on the way in, then asserts against
+the live registries. It reports counts at the top of the page and leaves the full
+report on `window.__pikadoTests` for automation.
+
+The assertions are about measurements, not smoke: exact pixel values, mean
+absolute difference between before and after, pixel counts, and timings with
+upper bounds. See the *Test suite* section of
+[ARCHITECTURE.md](ARCHITECTURE.md#the-test-suite) for the harness API and the two
+traps the suite is built to avoid.
+
 ## File formats
 
 | Format | Open | Save |
@@ -97,11 +211,25 @@ Adjustments (`registerAdjustment`), tools (`registerTool`), panels
 export writes real layer records — including adjustment layers, masks, group
 nesting, blend modes and fill opacity — but see the limits below.
 
+<!-- ============================================================
+     OWNED BY THE LEAD — DO NOT EDIT THIS SECTION.
+
+     The "What is *not* implemented" section below is being closed out by
+     several agents in parallel. The lead rewrites it in one pass whenever a
+     wave lands, once every gap in that wave is either closed or confirmed
+     still open. Editing it mid-flight produces conflicting claims about what
+     ships.
+
+     If you close one of these items, say so in your report and leave the
+     section alone.
+     ============================================================ -->
+
 ## What is *not* implemented
 
 Stated plainly so you don't find out by clicking:
 
-- **Camera Raw, the 3D workspace, and the video timeline.** Not present.
+- **Camera Raw, the 3D workspace, and the video timeline.** Not present. Nor is
+  proprietary raw decoding (CR2/NEF/ARW) or video import/export.
 - **Select Subject / Select and Mask.** These are machine-learning features in
   Photoshop. Rather than ship a fake, they're omitted. Quick Selection, Magic
   Wand, Color Range and the Magnetic Lasso are all real and do the edge-finding
@@ -109,42 +237,42 @@ Stated plainly so you don't find out by clicking:
 - **ICC colour management.** Everything is 8-bit sRGB internally. 16-bit PSDs
   open by converting down to 8-bit. CMYK and Lab exist as colour maths (for the
   Info panel, Selective Color, and so on) but not as document modes.
-- **Per-channel view toggling** in the Channels panel. The compositor renders a
-  single RGBA composite, so hiding just the Red channel isn't supported. Loading
-  a channel as a selection, saving selections as alpha channels and Quick Mask
-  all work.
-- **PSD export interoperability has known edges.** A Pikado → PSD → Pikado round
-  trip is lossless and produces a bit-identical composite: layers, groups,
-  masks, blend modes, fill opacity, layer styles (`lfx2`), live text (`TySh`
-  with real EngineData), live vector shapes (`vmsk`/`vstk`/`vogk`), adjustment
-  layers, saved alpha channels, guides, vector paths and the active selection
-  all survive. What is *not* guaranteed is how Adobe reads it — that could not
-  be tested here, as no Photoshop install was available. Specific known gaps:
-  bold and italic travel as `FauxBold`/`FauxItalic` on the regular PostScript
-  face rather than switching to a real bold font file; `vogk` live parametric
-  shapes are written only for rectangles and rounded rectangles, so polygons and
-  stars open as editable paths but not live shapes; named dash presets reopen
-  solid; and a gradient's angle sign convention may render mirrored in
-  Photoshop. Six adjustment kinds (Invert, Posterize, Threshold,
+- **Frame animation.** GIF export writes a single frame (and reads all frames
+  where the browser has `ImageDecoder`), but there is no timeline for authoring
+  a multi-frame animation.
+- **Face-aware Liquify.** Everything else in Liquify is there — Forward Warp,
+  Reconstruct, Smooth, both Twirls, Pucker, Bloat, Push Left, and Freeze/Thaw
+  masking, all ten tools with a live mesh preview — but there is no face
+  detection driving the eye and mouth sliders.
+- **How Adobe reads our PSDs.** A Pikado → PSD → Pikado round trip is lossless
+  and byte-identical from the first save onward, and that is verified: layers,
+  groups, masks, blend modes, fill opacity, layer styles (`lfx2`), live text
+  (`TySh` with real EngineData, including warps), live vector shapes
+  (`vmsk`/`vstk`/`vogk` — rectangles, rounded rectangles, ellipses, polygons,
+  stars and lines, with their side counts, indents, weights, arrowheads and dash
+  presets), adjustment layers, saved alpha channels, guides, vector paths and the
+  active selection all survive. What could *not* be tested is Photoshop itself —
+  no install was available here. Two specifics worth knowing: the PostScript face
+  names are the documented constants of the shipping font files rather than names
+  read off a real install, and the `keyOriginPoly*` origination keys for live
+  polygons are not publicly documented, so a polygon may open in Photoshop as an
+  editable path rather than a live shape. Neither affects geometry — the path is
+  always authoritative. Six adjustment kinds (Invert, Posterize, Threshold,
   Brightness/Contrast, Levels, Curves) are written as native Photoshop
   adjustments; the other 18 open there as correctly named, correctly masked but
   inert layers, and round-trip exactly through Pikado via a private block
   Photoshop safely ignores.
-- **Smart Objects** are fully non-destructive. `layer.smart.source` is a real
-  embedded `PikaDocument`, and every render restarts from it: composite the
-  source, re-run the stored smart filters in order, then apply the transform.
-  Scaling to 10% and back is *pixel-exact* (measured mean absolute difference
-  0.0000, versus ~32 for the equivalent destructive resample), and repeated
-  cycles never compound. Smart filters can be toggled, reordered, edited and
-  removed, and Edit Contents opens the source as a real tab that syncs back.
-  Free Transform composes matrices on a smart layer instead of baking pixels.
-  What is *not* supported: skew and perspective are preserved if set
-  programmatically but the Properties panel cannot author them (it edits
-  centre/scale/rotation); Warp still falls back to the destructive path; and
-  duplicating a Smart Object produces an **independent** copy rather than
-  Photoshop's linked one.
-- **Liquify** is a real interactive mesh warp, not Photoshop's full toolset
-  (no face-aware liquify, freeze/thaw masking, or reconstruct modes).
+- **Linked Smart Objects.** Duplicating a Smart Object produces an
+  **independent** copy, not Photoshop's linked one where editing either updates
+  both. Everything else about them is non-destructive: `layer.smart.source` is a
+  real embedded `PikaDocument`, every render restarts from it, and scaling to 10%
+  and back is *pixel-exact* (measured mean absolute difference 0.0000, versus ~32
+  for the equivalent destructive resample) — including when a perspective or a
+  warp mesh is applied on top.
+- **Skew Y in the Properties panel** is authored faithfully but reads back as
+  Skew X. An affine matrix has one shear degree of freedom and centre, scale and
+  rotation use the other five, so the canonical decomposition puts the whole
+  shear in Skew X. The field is live while you are the one driving it.
 
 PSD writing was verified against Pikado's own parser and at the byte level, but
 not against a real Photoshop install — that wasn't available here.
@@ -189,9 +317,19 @@ use the exact CPU path regardless.
 ## Browser support
 
 Chromium, Firefox and Safari, current versions. Some conveniences are
-progressive: the File System Access API (used for Save when present),
-`ImageDecoder` (multi-frame GIF import) and `navigator.clipboard.write` (system
-clipboard copy) fall back gracefully where unavailable.
+progressive, and every one of them degrades to a working editor rather than an
+error:
+
+| Feature | Used for | Without it |
+|---|---|---|
+| File System Access API | Save straight back to the opened file | Save downloads a copy |
+| `ImageDecoder` | multi-frame GIF import | first frame only |
+| `navigator.clipboard.write` | copying pixels to the OS clipboard | internal clipboard still works |
+| IndexedDB | autosave, session restore, recent projects | autosave off, and the refresh warning comes back |
+| `navigator.storage.persist` | asking not to be evicted under disk pressure | best effort; Safari and private windows say no |
+| Service workers | offline start, installability | needs a network to load, then works as normal |
+| WebGL2 | the ten non-native blend modes at speed | exact CPU path, slower on large documents |
+| Canvas2D `filter` | GPU Gaussian blur | JS box-blur passes |
 
 ## Licence
 
