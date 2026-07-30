@@ -179,6 +179,34 @@ document-sized with no per-layer offset, so there is nowhere for a per-frame
 position to live. Move something by duplicating the layer, or cross-fade by
 animating opacity.
 
+## Colour management
+
+Six working spaces (sRGB, Adobe RGB 1998, Display P3, ProPhoto RGB, Rec. 2020,
+Gray Gamma 2.2), Assign Profile and Convert to Profile under the Image menu, and
+soft proofing with a gamut warning under View.
+
+The distinction the two commands exist to make: **Assign** relabels the pixels
+without moving them, so the picture looks different; **Convert** moves the pixels
+so it looks the same. Convert clips whatever the destination cannot hold, which is
+why converting into a smaller space is lossy and converting back does not bring it
+back — and why the dialog says so before you press the button.
+
+Soft proofing is a *view*: `Ctrl+Y` simulates another space on screen, `Shift+Ctrl+Y`
+paints grey over everything that space cannot reproduce. The document's pixels
+never change, so Save, Export and every filter keep reading the real numbers.
+
+The maths is checked against published values rather than against itself: the sRGB
+primaries have to reproduce the published sRGB→XYZ matrix, RGB (1,1,1) has to land
+exactly on each profile's white point, a profile-to-itself transform has to be the
+identity to floating-point precision, and a round trip through a wider gamut has
+to be lossless.
+
+Embedded profiles are read from JPEG (APP2) and PNG (iCCP) when you open a file.
+Matrix/TRC profiles only — LUT-based profiles are declined with a reason rather
+than misinterpreted, and since Perceptual and Saturation live entirely in those
+tables, those two intents behave as Relative Colorimetric and the dialog tells you
+so.
+
 ## Right-click does the right thing
 
 Right-clicking the canvas asks the active tool what it can do *here*, at the
@@ -217,6 +245,7 @@ src/
   adjustments/ adjustment registry + implementations
   effects/     layer style renderers + the Layer Style dialog
   select/      graph-cut segmentation, alpha matting, edge refinement
+  color/       ICC profiles, conversions, soft proofing
   vector/      path model, geometry, shape rasterizing
   text/        text layout, rasterizing, font handling
   layers/      layer operations (merge, group, mask, rasterize…)
@@ -326,9 +355,11 @@ Stated plainly so you don't find out by clicking:
   background and honestly not well on one that shares its palette. A few brush
   strokes in Select and Mask fix that, which is how GrabCut is designed to be
   used. It has no idea what a person or a cat is.
-- **ICC colour management.** Everything is 8-bit sRGB internally. 16-bit PSDs
-  open by converting down to 8-bit. CMYK and Lab exist as colour maths (for the
-  Info panel, Selective Color, and so on) but not as document modes.
+- **CMYK and Lab as document modes, and 16-bit.** Colour management is present
+  for RGB and grey (see below), but everything is 8-bit internally, CMYK and Lab
+  exist as colour maths rather than modes, and 16-bit PSDs open by converting
+  down. LUT-based ICC profiles — which is what CMYK printer profiles are — are
+  recognised and declined with a reason rather than misread.
 - **Face-aware Liquify.** Everything else in Liquify is there — Forward Warp,
   Reconstruct, Smooth, both Twirls, Pucker, Bloat, Push Left, and Freeze/Thaw
   masking, all ten tools with a live mesh preview — but there is no face

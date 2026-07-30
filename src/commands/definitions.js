@@ -70,6 +70,37 @@ function commitSelection(doc, label) {
   doc.commit(label);
 }
 
+/** Colour management dialogs, loaded on demand with the ICC machinery. */
+async function colorDialog(which) {
+  const doc = D();
+  if (!doc) return;
+  const mod = await import('../ui/dialogs/color-settings.js');
+  if (which === 'assign') return mod.showAssignProfileDialog(doc);
+  if (which === 'convert') return mod.showConvertProfileDialog(doc);
+  return mod.showProofSetupDialog(doc);
+}
+
+async function toggleProof() {
+  const doc = D();
+  if (!doc) return;
+  const { proofOf, setProof, proofLabel } = await import('../color/manage.js');
+  const proof = proofOf(doc);
+  setProof(doc, { enabled: !proof.enabled });
+  app.toast(proof.enabled ? proofLabel(doc) || 'Proofing on' : 'Proofing off', 'info');
+  app.emit('doc-change', doc);
+}
+
+async function toggleGamutWarning() {
+  const doc = D();
+  if (!doc) return;
+  const { proofOf, setProof } = await import('../color/manage.js');
+  const proof = proofOf(doc);
+  // A gamut warning with no proof to compare against would mark nothing, so turn
+  // proofing on with it rather than appearing to do nothing.
+  setProof(doc, { gamutWarning: !proof.gamutWarning, enabled: !proof.gamutWarning ? true : proof.enabled });
+  app.emit('doc-change', doc);
+}
+
 /**
  * Open the Select and Mask workspace.
  *
@@ -1297,6 +1328,33 @@ registerCommands([
     run: () => { const doc = D(); return app.busy('Grayscale', async () => img.convertToGrayscale(doc)); },
   },
   {
+    id: 'edit.assign-profile', label: 'Assign Profile…',
+    enabled: hasDoc,
+    run: () => colorDialog('assign'),
+  },
+  {
+    id: 'edit.convert-profile', label: 'Convert to Profile…',
+    enabled: hasDoc,
+    run: () => colorDialog('convert'),
+  },
+  {
+    id: 'view.proof-colors', label: 'Proof Colors', accel: 'Ctrl+Y',
+    enabled: hasDoc,
+    checked: () => !!(D() && D().proof && D().proof.enabled),
+    run: () => toggleProof(),
+  },
+  {
+    id: 'view.proof-setup', label: 'Proof Setup…',
+    enabled: hasDoc,
+    run: () => colorDialog('proof'),
+  },
+  {
+    id: 'view.gamut-warning', label: 'Gamut Warning', accel: 'Shift+Ctrl+Y',
+    enabled: hasDoc,
+    checked: () => !!(D() && D().proof && D().proof.gamutWarning),
+    run: () => toggleGamutWarning(),
+  },
+  {
     id: 'image.mode.bitmap', label: 'Bitmap…',
     enabled: hasDoc, checked: () => !!D() && D().colorMode === 'bitmap',
     run: async () => {
@@ -1850,6 +1908,9 @@ export const MENU_TREE = [
     items: [
       { label: 'Mode', items: ['image.mode.rgb', 'image.mode.grayscale', 'image.mode.bitmap'] },
       '---',
+      'edit.assign-profile',
+      'edit.convert-profile',
+      '---',
       { label: 'Adjustments', dynamic: 'adjustments' },
       '---',
       'image.auto-tone',
@@ -2009,6 +2070,10 @@ export const MENU_TREE = [
       'view.print-size',
       '---',
       { label: 'Screen Mode', items: ['view.screen.standard', 'view.screen.full-menu', 'view.screen.full'] },
+      '---',
+      'view.proof-setup',
+      'view.proof-colors',
+      'view.gamut-warning',
       '---',
       'view.extras',
       { label: 'Show', items: ['view.show.grid', 'view.show.guides'] },

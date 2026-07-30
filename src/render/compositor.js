@@ -162,12 +162,14 @@ export function applyChannelView(ctx, view) {
 export function getViewComposite(doc) {
   const full = getComposite(doc);
   const view = channelViewOf(doc);
-  if (isFullChannelView(view)) {
+  const proof = doc && doc.proof && doc.proof.enabled ? doc.proof : null;
+  if (isFullChannelView(view) && !proof) {
     doc._channelComposite = null;
     doc._channelCompositeSrc = null;
     return full;
   }
-  const key = `${view.r ? 1 : 0}${view.g ? 1 : 0}${view.b ? 1 : 0}`;
+  const key = `${view.r ? 1 : 0}${view.g ? 1 : 0}${view.b ? 1 : 0}|`
+    + (proof ? `${proof.profileId}:${proof.intent}:${proof.blackPoint ? 1 : 0}:${proof.gamutWarning ? 1 : 0}` : '-');
   const cached = doc._channelComposite;
   if (cached && doc._channelCompositeSrc === full && doc._channelCompositeKey === key
       && cached.width === full.width && cached.height === full.height) {
@@ -176,11 +178,29 @@ export function getViewComposite(doc) {
   const out = createCanvas(full.width, full.height);
   const c = ctx2dRead(out);
   c.drawImage(full, 0, 0);
+  // Soft proof before the channel view: proofing simulates another colour space,
+  // and the channel view is a way of *looking* at whatever is being shown. Doing
+  // it the other way round would proof a greyscale channel view, which is
+  // meaningless.
+  if (proof && proofHook) proofHook(c, doc);
   applyChannelView(c, view);
   doc._channelComposite = out;
   doc._channelCompositeSrc = full;
   doc._channelCompositeKey = key;
   return out;
+}
+
+/**
+ * Soft proofing lives in `src/color/manage.js`, which imports the compositor —
+ * so it registers itself here rather than being imported, which would be a cycle.
+ * Absent (the default), proofing simply does not happen.
+ * @type {((ctx:CanvasRenderingContext2D, doc:object) => boolean)|null}
+ */
+let proofHook = null;
+
+/** Called once by `src/color/manage.js` on import. */
+export function registerProofRenderer(fn) {
+  proofHook = typeof fn === 'function' ? fn : null;
 }
 
 /**

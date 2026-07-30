@@ -860,6 +860,69 @@ lazily; read patterns through `getPatterns()` rather than touching `app.patterns
 
 ---
 
+## Colour management — `src/color/`
+
+### `src/color/icc.js`
+
+```
+BUILTIN_PROFILES            sRGB, Adobe RGB (1998), Display P3, ProPhoto, Rec. 2020, Gray 2.2
+getProfile(id)  profileOf(doc)  matrixOf(profile)  primariesToMatrix(primaries, white)
+TRC.srgb  TRC.rec709  TRC.gamma(g)  TRC.table(samples)
+adaptationMatrix(fromWhite, toWhite)          // Bradford
+makeTransform(from, to, {intent, blackPoint}) // (rgb 0..1) -> rgb 0..1
+transformImageData(image, from, to, opts)     // in place, memoised per 24-bit colour
+isInGamut(rgb, from, to)  intentIsExact(intent)  INTENTS
+parseICC(buffer) -> {ok: true, profile} | {ok: false, reason, description?}
+extractEmbeddedProfile(bytes) -> Promise<Uint8Array|null>   // JPEG APP2, PNG iCCP
+```
+
+**Matrix/TRC profiles only.** That covers every common working space and almost
+every profile embedded in a web image. LUT profiles (`A2B0`/`B2A0`) are parsed far
+enough to be *rejected with a reason* rather than misread — which rules out CMYK
+and the Perceptual intent, since both live entirely in those tables. Perceptual
+and Saturation therefore behave as Relative Colorimetric, and `intentIsExact`
+exists so the UI can say so instead of implying four different results.
+
+A profile's matrix is derived from its primaries rather than stored, so the two
+cannot disagree; the columns are scaled so RGB (1,1,1) lands exactly on the white
+point, which is what makes white convert to white rather than to a tint.
+
+`transformImageData` memoises on the exact 24-bit colour. A per-channel LUT is not
+an option (a matrix mixes channels) and a full 3×256³ table is absurd, but real
+images have far fewer distinct colours than pixels.
+
+### `src/color/manage.js`
+
+```
+availableProfiles(doc)
+assignProfile(doc, profileOrId)          // relabels; pixels untouched
+convertToProfile(doc, profileOrId, opts) // moves pixels; appearance preserved
+proofOf(doc)  setProof(doc, patch)  proofActive(doc)  proofLabel(doc)
+applyProof(ctx, doc)                     // registered with the compositor
+adoptEmbeddedProfile(doc, fileBytes, {quiet})
+```
+
+Assign and Convert are separate commands because the difference between them is
+invisible until afterwards. Convert skips masks (coverage is not colour) and
+adjustment layers (parameters, not pixels).
+
+Soft proofing is a **view** setting on the document, applied by
+`getViewComposite()` — the same place the channel view is applied, and before it,
+because proofing a greyscale channel view would be meaningless. The document's
+pixels never change, so Save, Export and every filter read the real numbers. The
+simulation is a round trip (document space → proof space → back); converting only
+*into* the proof space would answer the wrong question, since the point is to see
+what the destination cannot reproduce, and the clipping in the middle is where
+that shows.
+
+`manage.js` imports the compositor, so the compositor cannot import it — the proof
+renderer registers itself via `registerProofRenderer()` and `src/main.js` imports
+the module for that side effect. Without it, proofing simply does not happen.
+
+Everything is 8-bit internally: a convert into ProPhoto and back costs a little
+precision (the suite pins it under 2.2 mean absolute difference), which a 16-bit
+pipeline would not.
+
 ## Frame animation — `src/core/animation.js`
 
 A frame is a **record of layer state**, not a copy of the picture: which layers
@@ -1102,6 +1165,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/ui/{welcome,canvas-menu,brand,curve-editor,gradient-editor}.js`
 - `src/core/smart.js`
 - `src/core/animation.js`, `src/ui/panels/timeline.js`
+- `src/color/{icc,manage}.js`
 - `src/select/{maxflow,grabcut,refine}.js`
 - `src/vector/path.js`, `src/text/text-render.js`
 

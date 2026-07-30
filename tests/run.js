@@ -25,6 +25,7 @@ import './suites/channels.test.js';
 import './suites/select.test.js';
 import './suites/camera-raw.test.js';
 import './suites/animation.test.js';
+import './suites/color-management.test.js';
 import './suites/perf.test.js';
 
 const out = document.getElementById('out');

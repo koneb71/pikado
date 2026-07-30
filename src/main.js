@@ -39,6 +39,9 @@ import './filters/stylize.js';
 import './filters/other.js';
 import './filters/camera-raw.js';
 
+// Colour management (registers the soft-proof renderer with the compositor)
+import './color/manage.js';
+
 // Adjustments
 import './adjustments/basic.js';
 import './adjustments/advanced.js';
