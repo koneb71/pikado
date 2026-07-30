@@ -331,6 +331,74 @@ suite('select / GrabCut recovers a known shape', async (t) => {
   t.lt(again.changed, w * h * 0.01, `re-running on a settled trimap moves ${again.changed} pixels`);
 });
 
+suite('select / a high-frequency image still cuts sanely', async (t) => {
+  /*
+   * The shape that reached the `_adopt` sister-arc bug through GrabCut rather than
+   * through MaxFlow directly: a high-frequency image, where the smoothness weights
+   * vary wildly between neighbours and nodes actually get freed during adoption. On
+   * the buggy solver this produced a mask differing from the correct one by 27 of
+   * 2000 pixels.
+   *
+   * There is no ground truth for a checkerboard, so the assertions are the
+   * properties a broken cut violates: the hard constraints hold, the result is
+   * deterministic, and re-running from the settled trimap converges instead of
+   * thrashing.
+   */
+  const w = 40, h = 50;
+  const img = new ImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      const on = ((x >> 1) + (y >> 1)) % 2 === 0;
+      img.data[o] = on ? 235 : 25;
+      img.data[o + 1] = on ? 40 : 210;
+      img.data[o + 2] = on ? 120 : 90;
+      img.data[o + 3] = 255;
+    }
+  }
+
+  const forcedFg = (x, y) => x < 6 && y < 6;
+  const forcedBg = (x, y) => x >= w - 6 && y >= h - 6;
+  const seed = () => {
+    const trimap = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        trimap[y * w + x] = forcedFg(x, y) ? TRIMAP.FG : forcedBg(x, y) ? TRIMAP.BG : TRIMAP.MAYBE_FG;
+      }
+    }
+    return trimap;
+  };
+
+  const first = grabcut(img, seed(), { iterations: 3, diagonals: true });
+  let violations = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (forcedFg(x, y) && first.mask[i] !== 255) violations++;
+      if (forcedBg(x, y) && first.mask[i] !== 0) violations++;
+    }
+  }
+  t.eq(violations, 0, 'the hard constraints survive a high-frequency image');
+
+  // Deterministic: no RNG anywhere in the pipeline, so the same input must give
+  // byte-identical output. A cut that depends on queue order would not.
+  const second = grabcut(img, seed(), { iterations: 3, diagonals: true });
+  t.eq(t.mad(first.mask, second.mask), 0, 'and the same input gives a byte-identical mask');
+
+  // Converges rather than thrashes.
+  const settled = seed();
+  grabcut(img, settled, { iterations: 3, diagonals: true });
+  const again = grabcut(img, settled, { iterations: 3, diagonals: true });
+  t.lt(again.changed, w * h * 0.05, `re-running on the settled trimap moves ${again.changed} of ${w * h} pixels`);
+
+  // 4-connectivity must not diverge wildly from 8-connectivity on the same input:
+  // a labelling bug tends to show as one of the two going badly wrong.
+  const four = grabcut(img, seed(), { iterations: 3, diagonals: false });
+  const share = (m) => [...m].filter((v) => v > 127).length / (w * h);
+  t.close(share(four.mask), share(first.mask), 0.25,
+    `4- and 8-connected cuts agree broadly (${share(four.mask).toFixed(2)} vs ${share(first.mask).toFixed(2)})`);
+});
+
 suite('select / a definite label is a hard constraint', async (t) => {
   const { img } = segmentationFixture();
   const w = img.width, h = img.height;
