@@ -1,4 +1,5 @@
 import { PikaDocument } from '../core/document.js';
+import { getProfile, TRC, WHITE_POINTS } from '../color/icc.js';
 import { Layer, LayerType } from '../core/layer.js';
 import { createCanvas, ctx2d, loadImage } from '../core/util.js';
 
@@ -123,6 +124,53 @@ function createDecoder(decoded) {
  * @param {PikaDocument} doc
  * @returns {Promise<Blob>}
  */
+/* ------------------------------------------------------------------ */
+/* Colour profile                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A colour profile, reduced to JSON.
+ *
+ * A built-in space travels as its id, so a later Pikado with a corrected matrix
+ * writes the corrected one rather than a stale copy. An *embedded* profile has to
+ * travel in full — the original ICC bytes are not kept once parsed, so there is
+ * nothing to re-parse. Its tone curve is stored as the sample table when it has
+ * one and as a gamma otherwise, since a curve object holds functions and functions
+ * do not survive JSON.
+ */
+function encodeProfile(profile) {
+  if (!profile) return null;
+  if (!profile.embedded) return { id: profile.id };
+  const trc = profile.trc || {};
+  return {
+    id: 'embedded',
+    name: profile.name || 'Embedded profile',
+    space: profile.space || 'rgb',
+    white: profile.white ? [...profile.white] : null,
+    matrix: profile.matrix ? [...profile.matrix] : null,
+    samples: trc.samples ? [...trc.samples] : null,
+    gammaName: trc.name || null,
+  };
+}
+
+/** The inverse of `encodeProfile`; null when the file predates profile support. */
+function decodeProfile(stored) {
+  if (!stored) return null;
+  if (stored.id && stored.id !== 'embedded') return getProfile(stored.id);
+  const gamma = /Gamma ([\d.]+)/.exec(stored.gammaName || '');
+  return {
+    id: 'embedded',
+    name: stored.name || 'Embedded profile',
+    space: stored.space || 'rgb',
+    white: stored.white || WHITE_POINTS.D50,
+    matrix: stored.matrix || null,
+    trc: stored.samples
+      ? TRC.table(Float32Array.from(stored.samples))
+      : gamma ? TRC.gamma(Number(gamma[1])) : TRC.srgb,
+    embedded: true,
+  };
+}
+
 export async function savePKD(doc) {
   const enc = createEncoder();
 
@@ -167,6 +215,16 @@ export async function savePKD(doc) {
       globalLight: doc.globalLight == null ? null : doc.globalLight,
       guides: doc.guides.map((g) => ({ ...g })),
       quickMask: !!doc.quickMask,
+      /*
+       * The colour profile. A built-in space travels as its id; an embedded
+       * profile travels as the parsed description, primaries and curve, because
+       * re-parsing needs the original ICC bytes and those are not kept.
+       *
+       * Without this, saving and reopening silently dropped the document's colour
+       * space back to sRGB — while the README claimed the format preserves
+       * everything.
+       */
+      profile: encodeProfile(doc.profile),
       // Frame animation. Plain data, so it travels as JSON with the rest of the
       // document header rather than as a blob.
       frames: Array.isArray(doc.frames) && doc.frames.length ? structuredClone(doc.frames) : null,
@@ -254,6 +312,7 @@ export async function loadPKD(arrayBuffer) {
   if (info.globalLight != null) doc.globalLight = info.globalLight;
   doc.guides = Array.isArray(info.guides) ? info.guides.map((g) => ({ ...g })) : [];
   doc.quickMask = !!info.quickMask;
+  doc.profile = decodeProfile(info.profile);
   doc.frames = Array.isArray(info.frames) ? structuredClone(info.frames) : [];
   doc.activeFrameId = info.activeFrameId || null;
   doc.loopCount = info.loopCount == null ? 0 : info.loopCount;

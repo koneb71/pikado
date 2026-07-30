@@ -205,6 +205,92 @@ const wShadows = (l) => (1 - l) ** 2.2;
 const wHighlights = (l) => l ** 2.2;
 const wWhites = (l) => l ** 6;
 
+/* ------------------------------------------------------------------ */
+/* Tone transfer curves                                                */
+/* ------------------------------------------------------------------ */
+
+const LUT_STEPS = 256;
+
+/**
+ * Sample a 257-entry transfer curve with linear interpolation.
+ * @param {Float32Array} lut
+ * @param {number} v 0..1
+ */
+function sampleLUT(lut, v) {
+  const x = (v < 0 ? 0 : v > 1 ? 1 : v) * LUT_STEPS;
+  const i = Math.min(LUT_STEPS - 1, x | 0);
+  const t = x - i;
+  return lut[i] + (lut[i + 1] - lut[i]) * t;
+}
+
+/**
+ * Force a transfer curve to be non-decreasing, in place.
+ *
+ * This is not a nicety. The four tone sliders are additive bumps whose weights
+ * have real slope — `wBlacks` is `(1 - l)^6`, so its derivative at black is -6,
+ * and at Blacks +100 the transfer function's own slope became `1 + 0.3 * (-6)`,
+ * which is **negative**. A negative slope means darker input produced lighter
+ * output: a tonal inversion, visible as a bright halo in the deepest shadows, and
+ * it got worse when two sliders stacked. Rather than hand-tuning coefficients until
+ * it happens not to occur — which would silently break again the moment a weight
+ * changed — the curve is built freely and then made monotonic by construction.
+ * Clamping the running maximum flattens exactly the stretch that would have
+ * inverted and leaves everything else untouched.
+ */
+function enforceMonotonic(lut) {
+  for (let i = 1; i <= LUT_STEPS; i++) if (lut[i] < lut[i - 1]) lut[i] = lut[i - 1];
+  return lut;
+}
+
+/**
+ * The tone-region transfer curve, in encoded lightness.
+ *
+ * Each slider moves its own region, and the result is applied back as a gain on
+ * all three channels so hue and saturation survive. Working in the encoded domain
+ * is what makes the sliders feel linear: a 1.3x gain on *linear* light is
+ * invisible in deep shadow, while the same slider position as a lightness delta is
+ * clearly visible, which is what a user expects from "Shadows +80".
+ *
+ * Every slider adds with its own sign, so Highlights negative darkens highlights.
+ * (An earlier version multiplied the highlight term by -1.4, which combined with a
+ * negative slider to *brighten* what it was meant to recover.)
+ */
+function toneRegionLUT(shadows, highlights, whites, blacks) {
+  const K = 0.3;
+  const lut = new Float32Array(LUT_STEPS + 1);
+  for (let i = 0; i <= LUT_STEPS; i++) {
+    const le = i / LUT_STEPS;
+    const delta = shadows * wShadows(le) + highlights * wHighlights(le)
+      + whites * wWhites(le) + blacks * wBlacks(le);
+    lut[i] = clamp01(le + delta * K);
+  }
+  return enforceMonotonic(lut);
+}
+
+/**
+ * The contrast transfer curve: a genuine sigmoid about middle grey.
+ *
+ * A straight linear stretch through the midpoint is what this used to be, and it
+ * clips: at +100 everything above about 0.7 became pure white and everything below
+ * about 0.3 pure black, so the slider destroyed the ends long before it finished
+ * its travel. A smoothstep-shaped S keeps the ends compressed instead of clipped,
+ * which is what "contrast" is supposed to mean, and it is monotonic by
+ * construction — but it is checked anyway, because the check is nearly free.
+ */
+function contrastLUT(amount) {
+  const a = Math.max(-1, Math.min(1, amount));
+  const lut = new Float32Array(LUT_STEPS + 1);
+  for (let i = 0; i <= LUT_STEPS; i++) {
+    const v = i / LUT_STEPS;
+    // smoothstep is the S; the identity is the straight line; `a` blends between
+    // them, and negative `a` blends toward the inverse S, which flattens contrast.
+    const s = v * v * (3 - 2 * v);
+    const flat = 0.5 + (v - 0.5) * 0.45;
+    lut[i] = clamp01(a >= 0 ? v + (s - v) * a : v + (flat - v) * -a);
+  }
+  return enforceMonotonic(lut);
+}
+
 /**
  * A midtone-weighted local contrast pass — Clarity, Texture and Sharpening all
  * reduce to this with different radii and weightings.
@@ -429,26 +515,11 @@ export function developImage(image, params = {}) {
   const wh = num(p.whites) / 100;
   const bl = num(p.blacks) / 100;
   if (hi || sh || wh || bl) {
-    /*
-     * Each slider moves the *perceptual* lightness of its region by an amount,
-     * and the result is applied back as a gain on all three channels so hue and
-     * saturation are untouched.
-     *
-     * Two decisions worth recording. Working in the encoded domain rather than in
-     * linear light is what makes the sliders feel linear: a 1.3x gain on linear
-     * light in deep shadow is invisible, while the same slider position as a
-     * lightness delta is clearly visible, which is what a user expects from
-     * "Shadows +80". And every slider adds with its own sign, so Highlights
-     * negative darkens highlights — the earlier version multiplied the highlight
-     * term by -1.4, which combined with a negative slider to *brighten* them.
-     */
-    const K = 0.3;
+    const lut = toneRegionLUT(sh, hi, wh, bl);
     for (let i = 0; i < n * 4; i += 4) {
       const l = luminance(lin[i], lin[i + 1], lin[i + 2]);
       const le = clamp01(l <= 0 ? 0 : l ** (1 / 2.2));
-      const target = clamp01(
-        le + (sh * wShadows(le) + hi * wHighlights(le) + wh * wWhites(le) + bl * wBlacks(le)) * K
-      );
+      const target = sampleLUT(lut, le);
       if (target === le) continue;
       const targetLin = target ** 2.2;
       if (l < 1e-5) {
@@ -464,15 +535,12 @@ export function developImage(image, params = {}) {
   /* --- 4. contrast ---------------------------------------------------- */
   const contrast = num(p.contrast) / 100;
   if (contrast) {
-    // A gamma-space sigmoid around middle grey. Doing this in linear light would
-    // crush shadows long before it did anything visible to the midtones.
-    const k = contrast > 0 ? 1 + contrast * 1.2 : 1 / (1 - contrast * 1.2);
+    const lut = contrastLUT(contrast);
     for (let i = 0; i < n * 4; i += 4) {
       for (let c = 0; c < 3; c++) {
         const v = lin[i + c];
         const e = v <= 0 ? 0 : v ** (1 / 2.2);
-        const s = clamp01(0.5 + (e - 0.5) * k);
-        lin[i + c] = s ** 2.2;
+        lin[i + c] = sampleLUT(lut, clamp01(e)) ** 2.2;
       }
     }
   }
@@ -549,18 +617,25 @@ export function developImage(image, params = {}) {
       if (saturation) sat = clamp01(sat * (1 + saturation));
 
       if (bw) {
-        // Black and white is a channel mix, not a desaturation: the per-band
-        // luminance sliders are the mixer, exactly as they are in Camera Raw.
-        let mixed = light;
+        /*
+         * Black and white is a channel mix, not a desaturation, and the base grey
+         * has to be a *luminance* — the weighted sum the eye actually responds to.
+         * Using HSL's lightness, (max + min) / 2, as this once did, ignores which
+         * channel is bright: pure red and pure cyan both come out at 0.5, so the
+         * two are indistinguishable in the conversion, which is precisely the
+         * distinction a black-and-white conversion exists to control.
+         */
+        let mixed = 0.2126 * r + 0.7152 * g + 0.0722 * b;
         if (anyHsl) {
           let dl = 0;
           for (const band of BANDS) {
             const wgt = bandWeight(hue, band.hue);
             if (wgt) dl += wgt * num(p[`${band.key}Lum`]) / 100;
           }
-          mixed = clamp01(light + dl * 0.5 * sat);
+          // Scaled by saturation, so the mixer moves colours and leaves neutrals.
+          mixed = clamp01(mixed + dl * 0.5 * sat);
         }
-        r = g = b = mixed;
+        r = g = b = clamp01(mixed);
       } else {
         [r, g, b] = hslToRgb(hue, sat, light);
       }
@@ -674,13 +749,23 @@ function applyDehaze(lin, w, h, amount) {
   A = Math.max(0.05, A / Math.max(1, sorted.length - from));
 
   const strength = Math.min(0.95, Math.abs(amount) * 0.95);
-  const sign = amount >= 0 ? 1 : -1;
+  const adding = amount < 0;
   for (let i = 0, p = 0; p < n; p++, i += 4) {
     const t = Math.max(0.1, 1 - strength * (minned[p] / A));
     for (let c = 0; c < 3; c++) {
       const I = lin[i + c];
-      const J = (I - A) / t + A;
-      lin[i + c] = sign > 0 ? J : I + (I - J);
+      /*
+       * Positive: invert the haze model, J = (I - A)/t + A.
+       * Negative: run the SAME model forward, I' = I*t + A*(1 - t), which is what
+       * adding atmospheric veil actually is.
+       *
+       * The earlier negative branch reflected the dehazed value about the input
+       * (`I + (I - J)`). That is not the forward model: because dehazing divides by
+       * t, reflecting it multiplies the deviation by 1/t rather than by t, so past
+       * about -40 the "added haze" overshot into crushed blacks and clipped
+       * highlights instead of the flat, lifted look haze has.
+       */
+      lin[i + c] = adding ? I * t + A * (1 - t) : (I - A) / t + A;
     }
   }
 }

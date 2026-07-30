@@ -158,6 +158,21 @@ registerPanel({
       renderBar();
     }
 
+    /**
+     * How long to hold a frame, in milliseconds.
+     *
+     * `delay || 100` would be wrong: 0 ms is one of the delay presets and a
+     * legitimate choice, and treating it as "missing" made a 0 ms timeline play at
+     * 100 ms in the panel while the GIF it exported ran at the 20 ms floor — the
+     * preview disagreeing with the file is worse than either speed.
+     *
+     * The 20 ms floor matches the GIF encoder's, so what you watch is what you get.
+     */
+    const delayOf = (frame) => {
+      const ms = frame && Number.isFinite(frame.delay) ? frame.delay : 100;
+      return Math.max(20, ms);
+    };
+
     function step(by = 1) {
       const d = doc();
       if (!d) return;
@@ -184,15 +199,26 @@ registerPanel({
           if (limit && plays >= limit) return stop();
         }
         step(1);
-        const delay = Math.max(20, frames[frameIndex(d)].delay || 100);
-        playTimer = setTimeout(() => soon(tick), delay);
+        playTimer = setTimeout(() => soon(tick), delayOf(frames[frameIndex(d)]));
       };
-      const first = Math.max(20, framesOf(d)[frameIndex(d)].delay || 100);
-      playTimer = setTimeout(() => soon(tick), first);
+      playTimer = setTimeout(() => soon(tick), delayOf(framesOf(d)[frameIndex(d)]));
     }
 
     // Playback in a hidden tab would be throttled into nonsense, so stop.
     document.addEventListener('visibilitychange', () => { if (document.hidden && playing) stop(); });
+
+    /*
+     * And stop when the panel itself goes away. Closing the Timeline detaches its
+     * DOM but nothing tears the timer chain down, so playback kept running —
+     * stepping frames, emitting events and repainting a strip nobody could see,
+     * for as long as the tab stayed open. A MutationObserver on the panel's own
+     * detachment is the only signal available: the panel host does not offer a
+     * teardown hook.
+     */
+    const detachWatch = new MutationObserver(() => {
+      if (!body.isConnected && playing) stop();
+    });
+    if (body.parentNode) detachWatch.observe(body.parentNode, { childList: true });
 
     /* --- selection ---------------------------------------------------- */
 
@@ -388,8 +414,14 @@ registerPanel({
             ondragover: (e) => e.preventDefault(),
             ondrop: (e) => {
               e.preventDefault();
-              const from = Number(e.dataTransfer.getData('text/plain'));
-              if (!Number.isFinite(from)) return;
+              // `Number('')` is 0, so an empty or foreign payload — a dragged file,
+              // a text selection, a layer from another panel — looked like a
+              // perfectly valid request to move frame 1. Require a real index.
+              const raw = e.dataTransfer.getData('text/plain');
+              if (!/^\d+$/.test(raw)) return;
+              const from = Number(raw);
+              const frames = framesOf(doc() || {});
+              if (from >= frames.length) return;
               withCommit('Reorder Frames', (dd) => moveFrame(dd, framesOf(dd)[from], i));
             },
           },

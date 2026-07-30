@@ -11,6 +11,7 @@ import { getComposite, getViewComposite, compositeDocument } from '/src/render/c
 import { exportDocument } from '/src/io/save.js';
 import { createCanvas, ctx2d, ctx2dRead, loadImage } from '/src/core/util.js';
 import { getCommand } from '/src/commands/registry.js';
+import { savePKD, loadPKD } from '/src/io/pkd.js';
 
 /**
  * Colour management.
@@ -328,6 +329,153 @@ suite('color / the gamut warning marks what cannot be reproduced', async (t) => 
     'while white, which every space can reproduce, is left alone');
 
   setProof(doc, { enabled: false, gamutWarning: false });
+});
+
+suite('color / the profile is part of the document, not just of the view', async (t) => {
+  /*
+   * Three defects lived here, all of them invisible to the tests above because
+   * they were about the profile's *lifecycle* rather than its maths:
+   *
+   *   - `doc.profile` was missing from captureState, so undoing a Convert restored
+   *     the pixels and left them labelled with the profile they had been converted
+   *     TO — a document describing itself wrongly.
+   *   - `.pkd` did not persist it, so Save and reopen silently dropped the space.
+   *   - `adoptEmbeddedProfile` existed and was never called from anywhere, while
+   *     the README said embedded profiles are read when you open a file.
+   */
+  const doc = t.doc(16, 16, '#cc3355', 'lifecycle');
+  const pixels = t.bytes(doc.layers[0].canvas);
+  t.eq(profileOf(doc).id, 'srgb', 'an untagged document reads as sRGB');
+
+  convertToProfile(doc, 'adobe-rgb');
+  t.eq(profileOf(doc).id, 'adobe-rgb', 'converting sets the profile');
+  doc.history.undo();
+  t.eq(profileOf(doc).id, 'srgb', 'and undo puts the profile back, not just the pixels');
+  t.eq(t.mad(t.bytes(doc.findLayer(doc.layers[0].id).canvas), pixels), 0, 'with the original pixels');
+  doc.history.redo();
+  t.eq(profileOf(doc).id, 'adobe-rgb', 'redo restores it too');
+
+  // captureState must carry it, or a future history step drops it again.
+  const state = doc.captureState();
+  t.ok(Object.prototype.hasOwnProperty.call(state, 'profile'), 'captureState carries the profile');
+  t.notOk(Object.prototype.hasOwnProperty.call(state, 'proof'),
+    'and deliberately does not carry the proof settings, which are a view');
+
+  // A .pkd round trip must preserve it — both a built-in and an embedded profile.
+  const blob = await savePKD(doc);
+  const back = await loadPKD(await blob.arrayBuffer());
+  t.eq(profileOf(back).id, 'adobe-rgb', 'saving and reopening preserves a built-in profile');
+
+  const parsed = parseICC(buildProfile({ desc: 'Embedded Test', gamma: 1.8 }));
+  t.ok(parsed.ok, 'the fixture profile parses');
+  if (parsed.ok) {
+    doc.profile = parsed.profile;
+    const blob2 = await savePKD(doc);
+    const back2 = await loadPKD(await blob2.arrayBuffer());
+    t.eq(back2.profile.name, 'Embedded Test', 'and an embedded profile survives by value');
+    t.ok(back2.profile.embedded, 'still marked embedded');
+    t.close(back2.profile.trc.toLinear(0.5), 0.5 ** 1.8, 0.02, 'with its tone curve intact');
+    t.eq(back2.profile.matrix.length, 9, 'and its matrix');
+  }
+
+  // The open path must actually reach adoptEmbeddedProfile.
+  const openSrc = await (await fetch('/src/io/open.js')).text();
+  t.ok(/adoptEmbeddedProfile/.test(openSrc),
+    'src/io/open.js calls adoptEmbeddedProfile, so the README claim about opening files is true');
+});
+
+suite('color / grey profiles adapt their white point too', async (t) => {
+  /*
+   * The adaptation was guarded by `!srcGray && !dstGray`, so any conversion
+   * involving a grey profile skipped it. Undetectable with the built-in grey space
+   * alone — Gray Gamma 2.2 is D65, the same white point as sRGB, so there was
+   * nothing to adapt. ICC grey profiles are D50, which is where it bites.
+   */
+  const d50Grey = {
+    id: 'embedded', name: 'D50 Grey', space: 'gray',
+    white: WHITE_POINTS.D50, trc: TRC.gamma(2.2), embedded: true,
+  };
+  const srgb = getProfile('srgb');
+
+  const toRGB = makeTransform(d50Grey, srgb);
+  const mid = toRGB([0.5, 0.5, 0.5]);
+  t.lt(Math.max(Math.abs(mid[0] - mid[1]), Math.abs(mid[1] - mid[2])), 0.02,
+    `a D50 grey converts to a neutral in sRGB (${mid.map((v) => v.toFixed(4)).join(',')})`);
+  const white = toRGB([1, 1, 1]);
+  t.ok(white.every((v) => v > 0.97), `and its white stays white (${white.map((v) => v.toFixed(3)).join(',')})`);
+
+  // The other direction as well.
+  const toGrey = makeTransform(srgb, d50Grey);
+  t.gt(toGrey([1, 1, 1])[0], 0.97, 'sRGB white converts to grey white');
+
+  // Absolute colorimetric still declines to adapt, which is its whole point.
+  const absolute = makeTransform(d50Grey, srgb, { intent: 'absolute' })([1, 1, 1]);
+  t.gt(Math.max(...absolute.map((v, i) => Math.abs(v - white[i]))), 0.005,
+    'while absolute colorimetric leaves the D50 cast in');
+});
+
+suite('color / the ICC parser survives hostile bytes', async (t) => {
+  /*
+   * parseICC reads a file. Every offset and length in an ICC profile comes from
+   * that file, and a tag claiming to start at 4 GB or hold 2 GB of samples is a
+   * two-line edit away in any hex editor. The contract is that it RETURNS a
+   * failure — a throw would escape into a file-open handler.
+   */
+  const base = buildProfile({ desc: 'Victim' });
+
+  const corrupt = (mutate) => {
+    const bytes = new Uint8Array(base);
+    mutate(bytes, new DataView(bytes.buffer));
+    let result;
+    try {
+      result = parseICC(bytes);
+    } catch (err) {
+      return { threw: String((err && err.message) || err) };
+    }
+    return { threw: null, ok: result.ok, reason: result.reason };
+  };
+
+  const cases = {
+    'a tag offset past the end of the file': (b, dv) => dv.setUint32(132 + 4, 0xfffff000),
+    'a tag size past the end of the file': (b, dv) => dv.setUint32(132 + 8, 0x7fffffff),
+    'an absurd tag count': (b, dv) => dv.setUint32(128, 0x0fffffff),
+    'a negative-looking profile size': (b, dv) => dv.setUint32(0, 0xffffffff),
+    'a truncated buffer': (b) => b.fill(0, b.length - 40),
+  };
+  for (const [name, mutate] of Object.entries(cases)) {
+    const r = corrupt(mutate);
+    t.eq(r.threw, null, `${name}: returns instead of throwing`);
+  }
+
+  // A curv tag declaring far more samples than its own size can hold must not
+  // allocate for the declared count nor read past the buffer.
+  const hugeCurve = (() => {
+    const bytes = new Uint8Array(base);
+    const dv = new DataView(bytes.buffer);
+    // Find the rTRC tag and rewrite its sample count.
+    for (let i = 0; i < dv.getUint32(128); i++) {
+      const at = 132 + i * 12;
+      const name = String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
+      if (name !== 'rTRC') continue;
+      dv.setUint32(dv.getUint32(at + 4) + 8, 0x00ffffff);
+    }
+    return bytes;
+  })();
+  let threw = null;
+  let out = null;
+  try { out = parseICC(hugeCurve); } catch (err) { threw = String((err && err.message) || err); }
+  t.eq(threw, null, 'a curve declaring 16 million samples in a 14-byte tag does not throw');
+  t.ok(out && typeof out.ok === 'boolean', 'and returns a verdict either way');
+
+  // Random bytes, as a fuzz sweep.
+  const rnd = (() => { let s = 99; return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; }; })();
+  const throws = [];
+  for (let trial = 0; trial < 60; trial++) {
+    const bytes = new Uint8Array(base);
+    for (let k = 0; k < 12; k++) bytes[Math.floor(rnd() * bytes.length)] = Math.floor(rnd() * 256);
+    try { parseICC(bytes); } catch (err) { throws.push(String((err && err.message) || err)); }
+  }
+  t.eq(throws.slice(0, 3), [], 'and 60 randomly corrupted profiles all return rather than throw');
 });
 
 /* ------------------------------------------------------------------ */

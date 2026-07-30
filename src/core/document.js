@@ -312,6 +312,17 @@ export class PikaDocument extends Emitter {
       paths: structuredClone(this.paths),
       guides: [...this.guides],
       quickMask: this.quickMask,
+      /*
+       * The colour profile belongs in history because Assign and Convert are both
+       * undoable commands: without it, undoing a convert restored the pixels and
+       * left them labelled with the profile they had been converted TO, which is
+       * a document that describes itself wrongly.
+       *
+       * `doc.proof` is deliberately absent — soft proofing is a view setting, in
+       * the same category as the channel view, and an undo should not change what
+       * you are looking through.
+       */
+      profile: this.profile || null,
       // Frame animation. `activeFrameId` belongs in history with the frames:
       // stepping to a frame changes what the canvas shows, so an undo that left
       // you looking at a different frame than the one it restored would be
@@ -346,6 +357,7 @@ export class PikaDocument extends Emitter {
     this.paths = structuredClone(s.paths);
     this.guides = [...s.guides];
     this.quickMask = s.quickMask;
+    if (s.profile !== undefined) this.profile = s.profile;
     if (s.frames !== undefined) this.frames = s.frames ? structuredClone(s.frames) : null;
     if (s.activeFrameId !== undefined) this.activeFrameId = s.activeFrameId;
     if (s.loopCount !== undefined) this.loopCount = s.loopCount;

@@ -172,7 +172,33 @@ export async function openImageBlob(blob, name = 'Image', opts = {}) {
 
   const canvas = await decodeToCanvas(blob);
   if (target) return placeAsLayer(target, canvas, name);
-  return adopt(documentFromCanvas(canvas, name));
+  const doc = documentFromCanvas(canvas, name);
+  await adoptProfileFrom(blob, doc);
+  return adopt(doc);
+}
+
+/**
+ * Adopt a JPEG's or PNG's embedded ICC profile, if it has one we can read.
+ *
+ * Loaded on demand: the ICC machinery is a few hundred lines nothing else in the
+ * open path needs. Failure is deliberately quiet — an unsupported profile (a
+ * LUT-based one, which is most CMYK profiles) is common and is not the user's
+ * problem at the moment they open a photograph. The document then behaves as
+ * untagged sRGB, which is what 8-bit RGB is anyway.
+ *
+ * The canvas has already decoded the pixels by this point, and the browser
+ * applied the profile itself while decoding — so what this does is *label* the
+ * document with the space it came from, which is what Assign, Convert and soft
+ * proofing then work from.
+ */
+async function adoptProfileFrom(blob, doc) {
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const { adoptEmbeddedProfile } = await import('../color/manage.js');
+    await adoptEmbeddedProfile(doc, bytes, { quiet: true });
+  } catch (err) {
+    console.info('[open] no usable embedded colour profile', err);
+  }
 }
 
 /**

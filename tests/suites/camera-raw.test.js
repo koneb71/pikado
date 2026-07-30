@@ -371,8 +371,39 @@ suite('camera raw / effects behave as named', async (t) => {
   t.gt(flatVariance(dev({ grain: 90 })), 1, 'grain adds variance to it');
   t.eq(t.mad(dev({ grain: 0, grainSize: 90 }).data, base.data), 0, 'and grain size alone does nothing');
 
-  // Dehaze removes a veil, so it must deepen the dark end rather than lift it.
-  t.lt(lum(shadow(dev({ dehaze: 70 }))), lum(shadow(base)) + 1, 'dehaze deepens the dark end');
+  /*
+   * Dehaze, on an image that actually has haze in it — a veil mixed over the
+   * fixture. Testing it on the plain fixture was worthless: the assertion was
+   * `lt(after, before + 1)`, which passes when Dehaze does nothing at all, and a
+   * haze-free image is close to the no-op case anyway. So build the veil, then
+   * require the contrast across it to come back.
+   */
+  const hazed = (() => {
+    const img = fixture();
+    const veil = 0.55, air = 210;
+    for (let i = 0; i < img.data.length; i += 4) {
+      for (let c = 0; c < 3; c++) img.data[i + c] = Math.round(img.data[i + c] * (1 - veil) + air * veil);
+    }
+    return img;
+  })();
+  const spread = (img) => lum(white(img)) - lum(shadow(img));
+  const hazedSpread = spread(hazed);
+  const cleared = developImage((() => {
+    const c2 = new ImageData(W, H);
+    c2.data.set(hazed.data);
+    return c2;
+  })(), { dehaze: 80 });
+  t.lt(hazedSpread, spread(base) - 40, `the hazed fixture really has lost its contrast (${hazedSpread.toFixed(0)} vs ${spread(base).toFixed(0)})`);
+  t.gt(spread(cleared), hazedSpread + 15,
+    `dehaze restores contrast across the veil (${hazedSpread.toFixed(0)} -> ${spread(cleared).toFixed(0)})`);
+  t.lt(lum(shadow(cleared)), lum(shadow(hazed)) - 5, 'by pulling the lifted blacks back down');
+
+  // And negative dehaze must ADD veil — the forward model, not a reflection of the
+  // inverse, which overshot into crushed blacks past about -40.
+  const veiled = dev({ dehaze: -80 });
+  t.lt(spread(veiled), spread(base), 'negative dehaze reduces contrast, as adding haze does');
+  t.gt(lum(shadow(veiled)), lum(shadow(base)), 'lifting the blacks rather than crushing them');
+  t.ok([...veiled.data].every((v) => v >= 0 && v <= 255), 'and stays in range');
 });
 
 /* ------------------------------------------------------------------ */

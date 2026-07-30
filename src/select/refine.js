@@ -225,6 +225,15 @@ export function refineRadius(image, mask, radius, opts = {}) {
 /**
  * Smooth the contour: a majority filter, which straightens a staircase and
  * removes isolated speckle without softening the edge the way a blur would.
+ *
+ * The majority vote decides where the contour *is*; the original coverage decides
+ * how soft it is. Emitting a hard 0/255 from the vote alone — as this first did —
+ * threw away every partial pixel, and because `refineSelection` runs Smooth
+ * immediately after the matting pass, a Radius of 40 and a Smooth of 1 silently
+ * destroyed the matte the Radius had just recovered. So the vote is only allowed
+ * to move a pixel it disagrees with, and agreement keeps whatever coverage was
+ * there.
+ *
  * @param {number} radius 0..100
  */
 export function smoothMask(mask, w, h, radius) {
@@ -249,7 +258,12 @@ export function smoothMask(mask, w, h, radius) {
       const area = (x1 - x0 + 1) * (y1 - y0 + 1);
       const on = sum[(y1 + 1) * (w + 1) + x1 + 1] - sum[y0 * (w + 1) + x1 + 1]
         - sum[(y1 + 1) * (w + 1) + x0] + sum[y0 * (w + 1) + x0];
-      out[y * w + x] = on * 2 >= area ? 255 : 0;
+      const i = y * w + x;
+      const inside = on * 2 >= area;
+      const was = mask[i];
+      // Agreement: keep the coverage, partial included. Disagreement: the vote
+      // wins, because that is the speckle or staircase being removed.
+      out[i] = (inside === (was > 127)) ? was : (inside ? 255 : 0);
     }
   }
   return out;
@@ -304,9 +318,30 @@ export function shiftEdge(mask, w, h, percent) {
   // Threshold below the midpoint to grow, above it to shrink.
   const cut = 127.5 - p * 110;
   const out = new Uint8ClampedArray(mask.length);
+
+  /*
+   * The shifted contour comes from the blurred copy; the *softness* has to come
+   * from the input. Mapping everything through a fixed 24-level ramp — which is
+   * what this did first — gave every result the same hardness, so a matted edge
+   * with a 20-pixel falloff came back as a 24-level ramp: Shift Edge silently
+   * hardened whatever Radius and Feather had produced.
+   *
+   * The ramp width is therefore taken from the input's own transition width,
+   * estimated from how much partial coverage it has. A hard mask keeps a narrow
+   * ramp; a soft one keeps its softness.
+   */
+  let partialCount = 0, edgeCount = 0;
   for (let i = 0; i < mask.length; i++) {
-    // Keep the transition soft: map through a narrow ramp rather than a step.
-    const v = (blurred[i] - cut) / 24 + 0.5;
+    const v = mask[i];
+    if (v > 8 && v < 247) partialCount++;
+    if (v > 127 !== (mask[i > 0 ? i - 1 : 0] > 127)) edgeCount++;
+  }
+  // Partial pixels per unit of contour length approximates the falloff width.
+  const softness = edgeCount > 0 ? partialCount / edgeCount : 0;
+  const ramp = Math.max(12, Math.min(200, softness * 26));
+
+  for (let i = 0; i < mask.length; i++) {
+    const v = (blurred[i] - cut) / ramp + 0.5;
     out[i] = clamp255(Math.round(255 * (v < 0 ? 0 : v > 1 ? 1 : v)));
   }
   return out;

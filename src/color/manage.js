@@ -1,9 +1,10 @@
 import { app } from '../core/app.js';
 import { ctx2dRead, ctx2d } from '../core/util.js';
 import { registerProofRenderer } from '../render/compositor.js';
+import { parseColor, toHex } from '../core/color.js';
 import {
   BUILTIN_PROFILES, DEFAULT_PROFILE_ID, getProfile, profileOf, transformImageData,
-  isInGamut, intentIsExact, parseICC, extractEmbeddedProfile,
+  makeTransform, isInGamut, intentIsExact, parseICC, extractEmbeddedProfile,
 } from './icc.js';
 
 /**
@@ -57,11 +58,20 @@ export function assignProfile(doc, profile) {
  * Convert the document to another profile: move every pixel so the appearance is
  * preserved.
  *
- * Every raster surface is converted — layers, their masks are *not* (a mask is
- * coverage, not colour, and running it through a tone curve would change what it
- * masks). Adjustment and shape layers hold parameters rather than pixels, and
- * their rendered output is produced from the converted layers beneath them, so
- * they are left alone too.
+ * What gets converted, and why it is not simply "every canvas":
+ *
+ *   - **raster pixels** — converted, obviously.
+ *   - **masks** — NOT converted. A mask is coverage, not colour; running it
+ *     through a tone curve would change what it masks.
+ *   - **adjustment layers** — nothing to convert. They hold parameters and
+ *     re-process whatever is beneath them, which is already converted.
+ *   - **text and shape layers** — their *colours* are converted, not their
+ *     canvases. That canvas is a cache regenerated from the layer's parameters,
+ *     so converting the pixels would look right until the next re-rasterise
+ *     silently reverted it to the unconverted colour.
+ *   - **Smart Objects** — the embedded source document is converted, recursively,
+ *     and the layer re-rendered. Converting only the cached render has the same
+ *     problem: any later edit re-renders from an unconverted source.
  *
  * @param {{intent?:string, blackPoint?:boolean}} [opts]
  */
@@ -74,9 +84,66 @@ export function convertToProfile(doc, profile, opts = {}) {
     app.toast(`This document is already ${to.name}.`, 'info');
     return null;
   }
+  convertSurfaces(doc, from, to, opts);
+  doc.profile = to;
+  doc.invalidate();
+  doc.commit(`Convert to Profile: ${to.name}`);
+  return to;
+}
 
-  const layers = doc.flatLayers().filter((l) => l.canvas && l.type !== 'adjustment');
-  for (const layer of layers) {
+/** One colour string through the transform, back as a hex string. */
+function convertColorString(value, from, to, opts) {
+  if (typeof value !== 'string' || !value) return value;
+  const c = parseColor(value);
+  if (!c) return value;
+  const fn = makeTransform(from, to, opts);
+  const out = fn([c.r / 255, c.g / 255, c.b / 255]);
+  const clamp = (v) => Math.max(0, Math.min(255, Math.round(v * 255)));
+  return toHex({ r: clamp(out[0]), g: clamp(out[1]), b: clamp(out[2]), a: c.a }, c.a < 1);
+}
+
+/** Convert every colour-bearing surface and parameter in a document. */
+function convertSurfaces(doc, from, to, opts, depth = 0) {
+  // A Smart Object can contain a Smart Object. Real files do not nest deeply, and
+  // a cycle would be a corrupt document, so cap it rather than trusting the data.
+  if (depth > 8) return;
+
+  for (const layer of doc.flatLayers()) {
+    if (layer.type === 'adjustment') continue;
+
+    if (layer.smart && layer.smart.source) {
+      convertSurfaces(layer.smart.source, from, to, opts, depth + 1);
+      layer.smart.sourceVersion = (layer.smart.sourceVersion || 0) + 1;
+      layer._smartCache = null;
+      continue;
+    }
+
+    if (layer.text) {
+      doc.beginEdit(layer);
+      layer.text = { ...layer.text, color: convertColorString(layer.text.color, from, to, opts) };
+      layer.thumbDirty = true;
+      continue;
+    }
+
+    if (layer.shape) {
+      doc.beginEdit(layer);
+      const shape = { ...layer.shape };
+      if (shape.fill) {
+        shape.fill = { ...shape.fill };
+        if (shape.fill.color) shape.fill.color = convertColorString(shape.fill.color, from, to, opts);
+        if (Array.isArray(shape.fill.stops)) {
+          shape.fill.stops = shape.fill.stops.map((s) => ({ ...s, color: convertColorString(s.color, from, to, opts) }));
+        }
+      }
+      if (shape.stroke && shape.stroke.color) {
+        shape.stroke = { ...shape.stroke, color: convertColorString(shape.stroke.color, from, to, opts) };
+      }
+      layer.shape = shape;
+      layer.thumbDirty = true;
+      continue;
+    }
+
+    if (!layer.canvas) continue;
     doc.beginEdit(layer);
     const cv = layer.canvas;
     const img = ctx2dRead(cv).getImageData(0, 0, cv.width, cv.height);
@@ -84,10 +151,6 @@ export function convertToProfile(doc, profile, opts = {}) {
     ctx2d(cv).putImageData(img, 0, 0);
     layer.thumbDirty = true;
   }
-  doc.profile = to;
-  doc.invalidate();
-  doc.commit(`Convert to Profile: ${to.name}`);
-  return to;
 }
 
 /* ------------------------------------------------------------------ */

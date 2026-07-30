@@ -79,14 +79,23 @@ suite('select / max flow agrees with Edmonds-Karp', async (t) => {
   const problems = [];
   let trials = 0;
 
-  for (let trial = 0; trial < 150; trial++) {
-    const n = 3 + Math.floor(rnd() * 14);
+  /*
+   * Three densities, not one. The sparse graphs a single density produces rarely
+   * orphan a node with surviving tree neighbours, which is the branch of `_adopt`
+   * where a wrong-arc bug lived undetected through 190 sparse graphs — it took
+   * reading the algorithm against its published form to find. Denser graphs
+   * exercise it, so the sweep varies density and runs more trials.
+   */
+  for (const density of [0.25, 0.5, 0.8]) {
+  for (let trial = 0; trial < 120; trial++) {
+    const n = 4 + Math.floor(rnd() * 22);
     const edges = [];
     const terminals = [];
-    for (let i = 0; i < n; i++) terminals.push([Math.floor(rnd() * 6), Math.floor(rnd() * 6)]);
+    // Nodes carrying BOTH terminal capacities are what produce orphans.
+    for (let i = 0; i < n; i++) terminals.push([Math.floor(rnd() * 8), Math.floor(rnd() * 8)]);
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
-        if (rnd() < 0.45) edges.push([i, j, Math.floor(rnd() * 9), Math.floor(rnd() * 9)]);
+        if (rnd() < density) edges.push([i, j, Math.floor(rnd() * 12), Math.floor(rnd() * 12)]);
       }
     }
 
@@ -107,7 +116,9 @@ suite('select / max flow agrees with Edmonds-Karp', async (t) => {
     }
     if (Math.abs(cut - want) > 1e-9) problems.push(`n=${n}: cut ${cut} != flow ${want}`);
   }
-  t.eq(problems.slice(0, 4), [], `the same maximum flow on ${trials} random integer graphs, and the min cut equals it`);
+  }
+  t.eq(problems.slice(0, 4), [], `the same maximum flow on ${trials} random integer graphs across three densities, and the min cut equals it`);
+  t.gt(trials, 300, `the sweep is broad enough to reach the orphan-adoption paths (${trials} graphs)`);
 
   // Real-valued capacities, which is what GrabCut actually produces.
   const floatProblems = [];
@@ -456,13 +467,43 @@ suite('select / the refinement pipeline is neutral at its defaults', async (t) =
   }
   t.eq([...refineSelection(img, m, W, H, {})], [...m], 'every control at zero is exactly the identity');
 
-  // And the order is the documented one: matting, smooth, feather, contrast,
-  // shift. Running them by hand in that order must match the pipeline exactly.
+  /*
+   * And the order is the documented one: matting, smooth, feather, contrast, shift.
+   * Running them by hand must match the pipeline exactly — but the image has to be
+   * one where matting DOES something, or the comparison is blind to the first
+   * stage. On the flat single-colour image above, `refineRadius` is the identity
+   * (correctly: there is no edge to find), so the assertion would have passed even
+   * if the pipeline skipped matting altogether. Use an image with a real edge.
+   */
+  const edged = new ImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const o = (y * W + x) * 4;
+      const a = Math.max(0, Math.min(1, (33 - Math.hypot(x - 60, y - 50)) / 6));
+      edged.data[o] = Math.round(a * 230 + (1 - a) * 30);
+      edged.data[o + 1] = Math.round(a * 60 + (1 - a) * 70);
+      edged.data[o + 2] = Math.round(a * 40 + (1 - a) * 200);
+      edged.data[o + 3] = 255;
+    }
+  }
   const p = { radius: 6, smooth: 2, feather: 3, contrast: 40, shift: 20 };
-  let byHand = refineRadius(img, m, p.radius);
+  const matted = refineRadius(edged, m, p.radius);
+  t.gt(t.mad(matted, m), 0.5, 'the fixture is one where matting genuinely changes the mask');
+
+  let byHand = matted;
   byHand = smoothMask(byHand, W, H, p.smooth);
   byHand = featherMask(byHand, W, H, p.feather);
   byHand = contrastMask(byHand, p.contrast);
   byHand = shiftEdge(byHand, W, H, p.shift);
-  t.eq([...refineSelection(img, m, W, H, p)], [...byHand], 'and the pipeline applies them in that order');
+  t.eq([...refineSelection(edged, m, W, H, p)], [...byHand], 'and the pipeline applies them in that order');
+
+  // Smooth and Shift Edge must not silently destroy the matte they are handed:
+  // both used to re-binarise, so Radius 40 plus Smooth 1 threw the matte away.
+  const soft = refineRadius(edged, m, 10);
+  const softPartial = partial(soft);
+  t.gt(softPartial, 200, 'matting produced a soft edge to protect');
+  t.gt(partial(smoothMask(soft, W, H, 2)), softPartial * 0.5,
+    'Smooth keeps most of the partial coverage it was given');
+  t.gt(partial(shiftEdge(soft, W, H, 30)), softPartial * 0.5,
+    'and so does Shift Edge');
 });

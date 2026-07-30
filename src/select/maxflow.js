@@ -360,7 +360,22 @@ export class MaxFlow {
       if (tree[q] !== want) continue;
       const a2 = parent[q];
       if (a2 === NONE) continue;
-      if (cap[isSource ? a : a ^ 1] > 0) this._setActive(q);
+      /*
+       * Re-queue a neighbour that can now grow INTO the node being freed.
+       * `a` runs i -> q, so growth from q into i travels the sister arc, and the
+       * residual to test is the sister's: for the source tree `cap[a ^ 1]`
+       * (q -> i), for the sink tree `cap[a]` (i -> q).
+       *
+       * This had the pair the wrong way round. The reference algorithm tests
+       * `a0->sister->r_cap` here, and getting it backwards means a node that
+       * could still grow is never made active again: the search tree stops early
+       * and the "maximum" flow can be short, with `inSource()` returning a
+       * partition that is not a minimum cut. It survived 190 random graphs and
+       * two grid tests against Edmonds-Karp, which is exactly why an audit that
+       * reads the algorithm against its source is worth more than another
+       * hundred random graphs.
+       */
+      if (cap[isSource ? a ^ 1 : a] > 0) this._setActive(q);
       if (a2 !== TERMINAL && a2 !== ORPHAN && head[a2] === i) {
         parent[q] = ORPHAN;
         this.orphans.push(q);

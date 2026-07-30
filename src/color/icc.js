@@ -296,8 +296,20 @@ export function makeTransform(from, to, opts = {}) {
   const srcGray = from.space === 'gray' || !srcMatrix;
   const dstGray = to.space === 'gray' || !dstMatrix;
 
+  /*
+   * The white-point adaptation applies to ANY conversion that passes through XYZ,
+   * which includes grey-to-RGB and RGB-to-grey. An earlier version guarded it with
+   * `!srcGray && !dstGray`, so a D50 grey profile converted to sRGB skipped the
+   * adaptation entirely and came back with a warm cast. It went unnoticed because
+   * the only grey profile that ships is D65, the same white point as sRGB, so
+   * every test of it compared two spaces that had nothing to adapt — the bug was
+   * only reachable through an *embedded* grey profile, which ICC puts in D50.
+   *
+   * Grey-to-grey is the one case that genuinely skips it: nothing but luminance
+   * survives the trip, and luminance is what the adaptation preserves.
+   */
   let adapt = null;
-  if (!srcGray && !dstGray && intent !== 'absolute') {
+  if (!(srcGray && dstGray) && intent !== 'absolute') {
     const sw = from.white || WHITE_POINTS.D65;
     const dw = to.white || WHITE_POINTS.D65;
     const same = Math.abs(sw[0] - dw[0]) < 1e-6 && Math.abs(sw[2] - dw[2]) < 1e-6;
@@ -424,6 +436,17 @@ const sig = (bytes, offset) => String.fromCharCode(bytes[offset], bytes[offset +
  * @returns {{ok:true, profile:object} | {ok:false, reason:string, description?:string}}
  */
 export function parseICC(buffer) {
+  // Every bound below is checked, but this is a parser for untrusted bytes and the
+  // caller is a file-open handler: the contract is that it RETURNS a failure, so a
+  // profile that finds a gap in the checks must not become an exception either.
+  try {
+    return parseICCInner(buffer);
+  } catch (err) {
+    return { ok: false, reason: `the profile could not be read (${(err && err.message) || err})` };
+  }
+}
+
+function parseICCInner(buffer) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   if (bytes.length < 132) return { ok: false, reason: 'the file is too short to be an ICC profile' };
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -438,11 +461,25 @@ export function parseICC(buffer) {
 
   const tagCount = dv.getUint32(128);
   if (132 + tagCount * 12 > bytes.length) return { ok: false, reason: 'the tag table runs past the end of the file' };
+  /*
+   * Every tag's extent is checked against the buffer HERE, once, so nothing
+   * downstream has to. The offsets and sizes come from the file, which is
+   * untrusted: a tag claiming to start at 4 GB or to be 2 GB long is a
+   * two-line edit away in any hex editor, and the readers below index straight
+   * off `tag.offset`. A tag that does not fit is dropped rather than trusted,
+   * which degrades to "profile has no rXYZ" — a clean rejection — instead of a
+   * RangeError thrown out of a file-open handler.
+   */
   const tags = new Map();
+  let droppedTags = 0;
   for (let i = 0; i < tagCount; i++) {
     const at = 132 + i * 12;
-    tags.set(sig(bytes, at), { offset: dv.getUint32(at + 4), size: dv.getUint32(at + 8) });
+    const offset = dv.getUint32(at + 4);
+    const size = dv.getUint32(at + 8);
+    if (offset < 128 || size < 8 || offset + size > bytes.length) { droppedTags++; continue; }
+    tags.set(sig(bytes, at), { offset, size });
   }
+  if (droppedTags) console.info(`[icc] ${droppedTags} tag(s) pointed outside the file and were ignored`);
 
   const description = readTextTag(bytes, dv, tags.get('desc')) || 'Embedded profile';
 
@@ -533,9 +570,20 @@ function readCurveTag(bytes, dv, tag) {
   if (type === 'curv') {
     const count = dv.getUint32(tag.offset + 8);
     if (count === 0) return TRC.gamma(1);
-    if (count === 1) return TRC.gamma(dv.getUint16(tag.offset + 12) / 256);
-    const samples = new Float32Array(count);
-    for (let i = 0; i < count; i++) samples[i] = dv.getUint16(tag.offset + 12 + i * 2) / 65535;
+    if (count === 1) {
+      if (tag.size < 14) return null;
+      return TRC.gamma(dv.getUint16(tag.offset + 12) / 256);
+    }
+    // The count comes from the file and is not otherwise bounded: a declared
+    // count of 0xffffffff would allocate 16 GB and then read past the buffer.
+    // A curve is 12 bytes of header plus two per sample, so the tag's own size
+    // is the bound.
+    const available = Math.floor((tag.size - 12) / 2);
+    if (available < 2) return null;
+    const n = Math.min(count, available);
+    const samples = new Float32Array(n);
+    for (let i = 0; i < n; i++) samples[i] = dv.getUint16(tag.offset + 12 + i * 2) / 65535;
+    if (n !== count) console.info(`[icc] a curve declared ${count} samples but only ${n} fit its tag`);
     return TRC.table(samples);
   }
   if (type === 'para') {
@@ -543,6 +591,7 @@ function readCurveTag(bytes, dv, tag) {
     const p = [];
     const counts = [1, 3, 4, 5, 7];
     const n = counts[fnType] ?? 0;
+    if (!n || tag.size < 12 + n * 4) return null;
     for (let i = 0; i < n; i++) p.push(s15Fixed(dv, tag.offset + 12 + i * 4));
     return parametricCurve(fnType, p);
   }
@@ -578,7 +627,7 @@ function readTextTag(bytes, dv, tag) {
   if (!tag || tag.size < 12) return null;
   const type = sig(bytes, tag.offset);
   if (type === 'desc') {
-    const len = dv.getUint32(tag.offset + 8);
+    const len = Math.min(dv.getUint32(tag.offset + 8), tag.size - 12);
     let out = '';
     for (let i = 0; i < len - 1 && i < tag.size; i++) {
       const ch = bytes[tag.offset + 12 + i];
@@ -588,10 +637,14 @@ function readTextTag(bytes, dv, tag) {
     return out.trim() || null;
   }
   if (type === 'mluc') {
+    if (tag.size < 28) return null;
     const count = dv.getUint32(tag.offset + 8);
     if (!count) return null;
     const len = dv.getUint32(tag.offset + 20);
     const off = dv.getUint32(tag.offset + 24);
+    // `off` and `len` are relative to the tag and come from the file: both have
+    // to land inside it before a single character is read.
+    if (off + len > tag.size) return null;
     let out = '';
     for (let i = 0; i + 1 < len; i += 2) out += String.fromCharCode(dv.getUint16(tag.offset + off + i));
     return out.replace(/\0+$/, '').trim() || null;
@@ -664,12 +717,20 @@ async function extractFromPNG(b) {
   let i = 8;
   while (i + 8 <= b.length) {
     const len = dv.getUint32(i);
+    // A chunk length of 0xffffffff would overflow `i` into a negative number and
+    // loop forever; one longer than the file is malformed either way.
+    if (len > b.length) return null;
     const type = String.fromCharCode(b[i + 4], b[i + 5], b[i + 6], b[i + 7]);
     if (type === 'iCCP') {
+      // `len` is the chunk length the FILE declares. Bound the scan by the real
+      // buffer as well, or a chunk claiming to be longer than the file walks off
+      // the end of it.
+      const end = Math.min(i + 8 + len, b.length);
       let at = i + 8;
-      while (at < i + 8 + len && b[at] !== 0) at++;   // profile name
+      while (at < end && b[at] !== 0) at++;            // profile name
+      if (at + 2 >= end) return null;
       const method = b[at + 1];
-      const payload = b.subarray(at + 2, i + 8 + len);
+      const payload = b.subarray(at + 2, end);
       if (method !== 0) return null;
       if (typeof DecompressionStream !== 'function') return null;
       try {
