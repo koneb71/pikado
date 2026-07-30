@@ -3,7 +3,6 @@ import './styles.css';
 import { app } from './core/app.js';
 import { CanvasView } from './ui/canvas-view.js';
 import { el } from './core/util.js';
-import { brandMark } from './ui/brand.js';
 
 /* --- registration side effects ------------------------------------- */
 /* Each module registers itself with the relevant registry on import.   */
@@ -71,6 +70,10 @@ import { buildPanelDock } from './ui/panel-host.js';
 import { installShortcuts } from './ui/shortcuts.js';
 import { installFileDrop, openFiles } from './io/open.js';
 import { installCanvasMenu } from './ui/canvas-menu.js';
+import { installWelcome } from './ui/welcome.js';
+import { installSession, restoreSession } from './io/session.js';
+import { storageAvailable } from './io/store.js';
+import { installOffline } from './io/offline.js';
 import { tools } from './tools/base.js';
 
 /* ------------------------------------------------------------------ */
@@ -119,18 +122,25 @@ function boot() {
   installToasts();
   installBusy();
   installWelcome(areaEl);
+  installFileInput();
 
   app.setTool('move');
   app.ready = true;
   app.emit('ready');
 
-  // Start with a document so the app is immediately usable.
-  if (!app.activeDoc) {
-    app.newDocument({ width: 1280, height: 800, name: 'Untitled-1', fill: '#ffffff' });
-  }
+  // Autosave first, then bring back whatever was open. Nothing is created
+  // automatically any more: with no session to restore the welcome screen is
+  // what you should land on, not a blank Untitled-1 you did not ask for.
+  installSession();
+  installOffline();
+  restoreSession().catch((err) => console.warn('[boot] session restore failed', err));
+  prefetchLazyChunks();
 
+  // Work is continuously autosaved locally, so a refresh is not destructive and
+  // does not warrant a browser confirmation prompt. Only warn when persistence
+  // is unavailable and a document really would be lost.
   window.addEventListener('beforeunload', (e) => {
-    if (app.docs.some((d) => d.dirty)) {
+    if (!storageAvailable() && app.docs.some((d) => d.dirty)) {
       e.preventDefault();
       e.returnValue = '';
     }
@@ -164,34 +174,37 @@ function installBusy() {
   });
 }
 
-/** Placeholder shown when every document is closed. */
-function installWelcome(areaEl) {
-  const welcome = el('div.pk-empty.pk-welcome', {},
-    el('div.pk-welcome-mark', { html: brandMark({ size: 60, title: 'Pikado' }) }),
-    el('h1', { text: 'Pikado' }),
-    el('p', { text: 'An image studio that runs entirely in your browser. Open a photo, drop a file anywhere, or start from a blank canvas.' }),
-    el('div.pk-empty-actions', {},
-      el('button.pk-btn.primary', { text: 'New document', onclick: () => import('./ui/dialogs/new-document.js').then((m) => m.showNewDocumentDialog()) }),
-      el('button.pk-btn', { text: 'Open…', onclick: () => document.getElementById('file-input').click() })
-    ),
-    el('p', {}, el('kbd', { text: 'Ctrl' }), ' + ', el('kbd', { text: 'O' }), ' to open · ', el('kbd', { text: 'Ctrl' }), ' + ', el('kbd', { text: 'N' }), ' for a new document')
-  );
-  welcome.style.position = 'absolute';
-  welcome.style.inset = '0';
-  areaEl.appendChild(welcome);
-
-  const sync = () => {
-    welcome.style.display = app.activeDoc ? 'none' : 'flex';
-  };
-  app.on('docs-change', sync);
-  app.on('active-doc', sync);
-  sync();
-
+/**
+ * The hidden file picker, shared by the welcome screen, the File menu and
+ * Ctrl+O. It lived inside the old placeholder welcome screen, so it needs its
+ * own home now that the real one has taken over.
+ */
+function installFileInput() {
   const input = document.getElementById('file-input');
   input.addEventListener('change', () => {
     if (input.files && input.files.length) openFiles([...input.files]);
     input.value = '';
   });
+}
+
+/**
+ * Pull the lazily-imported chunks into the module graph once the app is idle.
+ *
+ * Layer Styles and Smart Objects are dynamic imports, so they are never fetched
+ * during boot — which meant the service worker had nothing to cache for them and
+ * a user who went offline without having opened them would hit a 503. Warming
+ * them while nothing is happening also makes their first open instant.
+ */
+function prefetchLazyChunks() {
+  const warm = () => {
+    Promise.allSettled([
+      import('./effects/styles-dialog.js'),
+      import('./core/smart.js'),
+      import('./ui/dialogs/smart-object.js'),
+    ]).catch(() => { /* offline on a cold start: nothing to warm */ });
+  };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(warm, { timeout: 4000 });
+  else setTimeout(warm, 2500);
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

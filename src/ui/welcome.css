@@ -1,0 +1,274 @@
+/* The start screen. A left-aligned column of shelves on the canvas surround:
+   brand, primary actions, templates, recent work, and one honest line about
+   where that work is stored. Cards are contrast steps with hairline seams, and
+   the accent appears only on focus and on press. */
+
+.pk-welcome {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: auto;
+  color: var(--text);
+  /* A single soft violet wash behind the brand, so the screen is not a flat
+     rectangle — faint enough that it never reads as a coloured panel. */
+  background:
+    radial-gradient(780px 380px at 50% -12%, rgba(124, 106, 246, .10), transparent 70%),
+    var(--void);
+}
+.pk-welcome[hidden] { display: none; }
+
+/* margin:auto centres the column vertically and, unlike justify-content,
+   never clips the top of the content when the window is shorter than it. */
+.pk-wc-inner {
+  margin: auto;
+  width: 100%;
+  max-width: 960px;
+  padding: clamp(22px, 3.4vw, 44px) clamp(18px, 3vw, 40px);
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+/* ---------------------------------------------------------------- brand */
+
+.pk-wc-lock { display: flex; align-items: center; gap: 15px; }
+.pk-wc-mark { line-height: 0; filter: drop-shadow(0 7px 20px rgba(124, 106, 246, .32)); }
+
+.pk-wc-word {
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -.032em;
+  line-height: 1.05;
+  color: var(--text-hi);
+}
+.pk-wc-tag { margin-top: 5px; font-size: var(--fs-md); color: var(--text-dim); }
+
+.pk-wc-lede {
+  margin: 17px 0 0;
+  max-width: 56ch;
+  font-size: var(--fs-md);
+  line-height: 1.65;
+  color: var(--text-dim);
+}
+
+.pk-wc-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 17px;
+}
+.pk-wc-actions .pk-btn { height: 30px; padding: 0 15px; font-size: var(--fs-md); }
+.pk-wc-drop { margin-left: 3px; font-size: var(--fs-sm); color: var(--text-faint); }
+
+/* ---------------------------------------------------------------- sections */
+
+.pk-wc-sec { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+
+/* The label plus a hairline that runs out to the edge: a seam, not a header bar. */
+.pk-wc-sec-head { display: flex; align-items: center; gap: 11px; }
+.pk-wc-sec-head::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--hair);
+}
+
+/* ---------------------------------------------------------------- templates */
+
+.pk-wc-tpls {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 9px;
+}
+
+.pk-wc-tpl {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 12px 11px;
+  background: var(--s1);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-1), var(--lift);
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, transform .12s ease;
+}
+.pk-wc-tpl:hover { background: var(--s3); border-color: var(--hair-2); transform: translateY(-1px); }
+.pk-wc-tpl:active { background: var(--s4); border-color: var(--accent); transform: none; }
+.pk-wc-tpl:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; border-radius: var(--r-lg); }
+
+.pk-wc-tpl-stage {
+  width: 100%;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 9px;
+}
+/* The proportions are the information here, so the rectangle is exactly the
+   template's aspect ratio and nothing else. */
+.pk-wc-tpl-rect {
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .09);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10);
+  transition: background .12s ease;
+}
+.pk-wc-tpl:hover .pk-wc-tpl-rect { background: rgba(255, 255, 255, .18); }
+
+.pk-wc-tpl-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs);
+  font-weight: 500;
+  color: var(--text-hi);
+}
+.pk-wc-tpl-dim {
+  margin-top: 3px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+
+/* ---------------------------------------------------------------- recents */
+
+.pk-wc-recents {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  gap: 10px;
+}
+
+.pk-wc-recent { position: relative; min-width: 0; }
+
+.pk-wc-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: var(--s1);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-1);
+  overflow: hidden;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, transform .12s ease;
+}
+.pk-wc-open:hover { background: var(--s3); border-color: var(--hair-2); transform: translateY(-1px); }
+.pk-wc-open:active { background: var(--s4); border-color: var(--accent); transform: none; }
+.pk-wc-open:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; border-radius: var(--r-lg); }
+
+/* 16:10 exactly — welcome.js picks which side of the thumbnail to constrain
+   from this ratio, so the two must stay in step. */
+.pk-wc-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 10;
+  background: var(--s0);
+  border-bottom: 1px solid var(--hair);
+  overflow: hidden;
+}
+.pk-wc-shot { display: block; max-width: 100%; max-height: 100%; }
+.pk-wc-shot.wide { width: 100%; height: auto; }
+.pk-wc-shot.tall { height: 100%; width: auto; }
+.pk-wc-shot img { display: block; width: 100%; height: 100%; }
+
+.pk-wc-noshot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--text-faint);
+}
+.pk-wc-noshot svg { stroke: currentColor; fill: none; stroke-width: 1.2; }
+
+.pk-wc-body { display: block; padding: 9px 11px 11px; min-width: 0; }
+.pk-wc-name {
+  display: block;
+  font-size: var(--fs);
+  font-weight: 500;
+  color: var(--text-hi);
+}
+.pk-wc-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Destructive, so it stays out of the way until the card is under the pointer. */
+.pk-wc-forget {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-full);
+  background: rgba(12, 12, 16, .74);
+  backdrop-filter: blur(4px);
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease, background .12s ease, color .12s ease;
+}
+.pk-wc-recent:hover .pk-wc-forget,
+.pk-wc-forget:focus-visible { opacity: 1; }
+.pk-wc-forget:hover { background: var(--danger); border-color: transparent; color: #fff; }
+.pk-wc-forget:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; border-radius: var(--r-full); }
+.pk-wc-forget svg { stroke: currentColor; fill: none; stroke-width: 1.7; }
+
+.pk-wc-empty { display: block; }
+.pk-wc-none {
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+/* ---------------------------------------------------------------- footer */
+
+.pk-wc-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 2px;
+  padding-top: 15px;
+  border-top: 1px solid var(--hair);
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+}
+.pk-wc-keys { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.pk-wc-key { display: inline-flex; align-items: center; gap: 5px; }
+.pk-wc-key > span { color: var(--text-dim); }
+
+.pk-welcome kbd {
+  font-family: var(--font);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+  background: var(--s3);
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-xs);
+  box-shadow: var(--lift);
+  padding: 2px 6px;
+}
+
+.pk-wc-storage { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pk-wc-tpl:hover,
+  .pk-wc-open:hover { transform: none; }
+}

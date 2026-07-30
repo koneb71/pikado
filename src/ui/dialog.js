@@ -47,7 +47,9 @@ export class Dialog {
     this._keyHandler = (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); this.close(null); }
       else if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) {
-        const ok = this.footer.querySelector('.pk-btn.primary');
+        // A destructive confirm has .danger instead of .primary; Enter should
+        // still activate the default button, as it does in a native dialog.
+        const ok = this.footer.querySelector('.pk-btn.primary, .pk-btn.danger');
         if (ok) { e.stopPropagation(); e.preventDefault(); ok.click(); }
       }
     };
@@ -84,7 +86,7 @@ export class Dialog {
   setButtons(buttons) {
     this.footer.replaceChildren(
       ...buttons.map((b) =>
-        el('button.pk-btn' + (b.primary ? '.primary' : '') + (b.subtle ? '.subtle' : ''), {
+        el('button.pk-btn' + (b.primary ? '.primary' : '') + (b.subtle ? '.subtle' : '') + (b.danger ? '.danger' : ''), {
           text: b.label,
           onclick: () => {
             if (b.onClick && b.onClick(this) === false) return;
@@ -147,12 +149,24 @@ export function alertDialog(message, title = 'Pikado') {
   return d.open();
 }
 
-export function confirmDialog(message, title = 'Pikado', okLabel = 'OK') {
+/**
+ * Yes/no confirmation.
+ *
+ * Pass `danger: true` for anything destructive so the confirm button reads red
+ * rather than as the accent — deleting work should not look like the happy path.
+ *
+ * @param {string} message
+ * @param {string} [title]
+ * @param {string} [okLabel]
+ * @param {{danger?:boolean}} [opts]
+ * @returns {Promise<boolean>}
+ */
+export function confirmDialog(message, title = 'Pikado', okLabel = 'OK', opts = {}) {
   const d = new Dialog({ title, width: 360 });
   d.setBody(el('p.pk-msg', { text: message }));
   d.setButtons([
     { label: 'Cancel', value: false, subtle: true },
-    { label: okLabel, value: true, primary: true },
+    { label: okLabel, value: true, primary: !opts.danger, danger: !!opts.danger },
   ]);
   return d.open();
 }
