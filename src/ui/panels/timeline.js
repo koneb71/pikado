@@ -72,6 +72,44 @@ function frameThumb(doc, frame) {
   return cv;
 }
 
+/**
+ * Cached thumbnails, keyed by frame object.
+ *
+ * A thumbnail costs one full-document composite, and a strip render draws one per
+ * frame: measured at 11.7 ms for eight frames of a 1.9 MP document, which is the
+ * whole cost of a frame step (the selection itself is 0.16 ms). Redrawing them all
+ * every time the selection moves puts a ceiling on playback that falls linearly
+ * with the frame count — fine at eight frames, about 17 fps at forty.
+ *
+ * A thumbnail only goes stale when the *pixels* change, and the panel can tell:
+ * selecting a frame reaches the change listener with `applying` set, a real edit
+ * does not. So the cache is dropped wholesale on a real edit and reused for
+ * everything else. A WeakMap keyed on the frame object means deleted frames take
+ * their thumbnails with them, and a frame whose *state* is rewritten gets a new
+ * entry because `updateFrame` replaces `frame.state` — which the key includes.
+ */
+const thumbCache = new WeakMap();
+
+/** Bumped on any real pixel edit, which retires every cached thumbnail. */
+let thumbGeneration = 0;
+
+function cachedThumb(doc, frame) {
+  const hit = thumbCache.get(frame);
+  if (hit
+    && hit.generation === thumbGeneration
+    && hit.state === frame.state
+    && hit.width === doc.width
+    && hit.height === doc.height
+    && hit.doc === doc) {
+    return hit.canvas;
+  }
+  const canvas = frameThumb(doc, frame);
+  thumbCache.set(frame, {
+    canvas, state: frame.state, width: doc.width, height: doc.height, doc, generation: thumbGeneration,
+  });
+  return canvas;
+}
+
 const fmtDelay = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(ms % 1000 ? 1 : 0)} s` : `${ms} ms`);
 
 registerPanel({
@@ -167,13 +205,21 @@ registerPanel({
       } else {
         selected = new Set([frame.id]);
       }
+      // The emit has to happen INSIDE the guard. `applyFrame` is not the only
+      // thing that reaches the write-back listener — the explicit `structure`
+      // event does too, and with `applying` already false it was read as a real
+      // edit: the frame's state was rewritten with what had just been applied to
+      // it, and every cached thumbnail was retired. Harmless in result, because
+      // writing back what you just applied is idempotent, which is exactly why
+      // the tests never caught it; it showed up as a thumbnail cache that never
+      // hit.
       applying = true;
       try {
         applyFrame(d, frame);
+        d.emit('structure');
       } finally {
         applying = false;
       }
-      d.emit('structure');
       schedule();
     }
 
@@ -195,11 +241,15 @@ registerPanel({
       applying = true;
       try {
         fn(d);
+        d.commit(label);
+        d.emit('structure');
       } finally {
         applying = false;
       }
-      d.commit(label);
-      d.emit('structure');
+      // A timeline edit changed the frames themselves, so the thumbnails that
+      // belong to them have to go — the guard above suppressed the write-back,
+      // and it would otherwise suppress this too.
+      thumbGeneration++;
       schedule();
     }
 
@@ -328,7 +378,7 @@ registerPanel({
 
       const activeId = (activeFrame(d) || {}).id;
       const cells = frames.map((frame, i) => {
-        const thumb = frameThumb(d, frame);
+        const thumb = cachedThumb(d, frame);
         const cell = el(
           'div.pktl-cell' + (frame.id === activeId ? '.active' : '') + (selected.has(frame.id) ? '.picked' : ''),
           {
@@ -375,16 +425,20 @@ registerPanel({
       // are the ones who just changed it.
       const d = doc();
       if (!d || applying || rendering) { schedule(); return; }
+      // Reaching here means a real edit rather than a frame selection, so every
+      // cached thumbnail is now stale. `applying` is what distinguishes the two.
+      thumbGeneration++;
       const frame = activeFrame(d);
       if (frame) updateFrame(d, frame);
       schedule();
     };
 
     app.on('docs-change', schedule);
-    app.on('active-doc', () => { stop(); selected = new Set(); schedule(); });
+    app.on('active-doc', () => { stop(); selected = new Set(); thumbGeneration++; schedule(); });
     app.on('doc-change', onLayers);
     app.on('doc-structure', onLayers);
-    app.on('history-change', () => { stop(); schedule(); });
+    // Undo and redo move pixels without going through onLayers.
+    app.on('history-change', () => { stop(); thumbGeneration++; schedule(); });
 
     render();
     return { refresh: schedule };

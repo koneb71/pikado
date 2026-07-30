@@ -108,6 +108,41 @@ suite('animation / frames record layer state, not pixels', async (t) => {
   t.close(top.opacity, 0.4, 1e-9, 'and restored');
 });
 
+suite('animation / the identity rules a thumbnail cache depends on', async (t) => {
+  /*
+   * The Timeline panel caches one thumbnail per frame, because each costs a full
+   * document composite — measured at 11.7 ms for eight frames of a 1.9 MP document,
+   * against 0.16 ms for the selection itself. The cache key is the frame object
+   * plus its `state` object identity, so two identity rules have to hold or the
+   * strip shows a picture that is no longer true:
+   *
+   *   applyFrame  must NOT replace frame.state  (selecting must reuse the cache)
+   *   updateFrame MUST replace frame.state      (an edit must retire it)
+   *
+   * Both are asserted here rather than through the DOM: a panel test would depend
+   * on the coalescing scheduler, which is throttled in a background tab.
+   */
+  const doc = threeColourDoc(t);
+  ensureTimeline(doc);
+  const frame = activeFrame(doc);
+  const stateBefore = frame.state;
+
+  applyFrame(doc, frame);
+  t.is(frame.state, stateBefore, 'applyFrame does not replace frame.state, so selecting reuses the cache');
+
+  doc.layers[0].visible = false;
+  updateFrame(doc, frame);
+  t.isNot(frame.state, stateBefore, 'updateFrame replaces it, so an edit retires the cached thumbnail');
+  t.eq(frame.state[doc.layers[0].id].visible, false, 'and the replacement holds the new state');
+
+  // Two frames must never share a state object, or editing one would silently
+  // edit the other — and invalidate the wrong thumbnail.
+  const second = addFrame(doc);
+  t.isNot(second.state, frame.state, 'a duplicated frame gets its own state object');
+  second.state[doc.layers[0].id].visible = true;
+  t.eq(frame.state[doc.layers[0].id].visible, false, 'so writing to one does not reach the other');
+});
+
 suite('animation / frames render differently', async (t) => {
   const doc = threeColourDoc(t);
   framesFromLayers(doc);
