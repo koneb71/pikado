@@ -1,7 +1,7 @@
 import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { PaintStroke, EffectStroke, brushOptionDescriptors, brushFromOptions } from '../paint/brush-engine.js';
-import { BLEND_MODES, isNativeBlend, gcoFor, blendCPU } from '../core/blend.js';
+import { BLEND_MODES } from '../core/blend.js';
 import { getComposite } from '../render/compositor.js';
 import { createCanvas, ctx2dRead, clamp, clamp255 } from '../core/util.js';
 import { rgb, rgb2hsl, hsl2rgb, toCss, luminance, colorDistance } from '../core/color.js';
@@ -211,55 +211,16 @@ function paintColorFor(layer, color) {
 /* ================================================================== */
 
 /**
- * A PaintStroke that composites its buffer with a blend mode instead of plain
- * source-over. Native Canvas2D modes go through `globalCompositeOperation`;
- * the rest fall back to `blendCPU` over the stroke's dirty rectangle.
+ * Retained as a name only.
+ *
+ * This used to be the sole way to get a blend mode out of a stroke, because
+ * `PaintStroke` accepted a `blendMode` option and then ignored it in `flush()`.
+ * That is fixed at the source, so the subclass has nothing left to override —
+ * it stays as an alias so existing callers keep working.
+ *
+ * @deprecated Use `PaintStroke` with a `blendMode` option.
  */
-export class BlendPaintStroke extends PaintStroke {
-  flush() {
-    const id = this.blendMode;
-    if (!id || id === 'normal' || this.mode === 'erase') return super.flush();
-
-    const w = this.target.width, h = this.target.height;
-    let paint = this.buffer;
-    if (this.selectionClip || this.lockTransparency) {
-      paint = createCanvas(w, h);
-      const pc = paint.getContext('2d');
-      pc.drawImage(this.buffer, 0, 0);
-      pc.globalCompositeOperation = 'destination-in';
-      if (this.selectionClip) pc.drawImage(this.selectionClip, 0, 0);
-      if (this.lockTransparency) pc.drawImage(this.base, 0, 0);
-      pc.globalCompositeOperation = 'source-over';
-    }
-
-    const ctx = this.target.getContext('2d');
-    ctx.save();
-    ctx.globalCompositeOperation = 'copy';
-    ctx.globalAlpha = 1;
-    ctx.drawImage(this.base, 0, 0);
-    ctx.restore();
-
-    if (isNativeBlend(id)) {
-      ctx.save();
-      ctx.globalAlpha = this.brush.opacity;
-      ctx.globalCompositeOperation = gcoFor(id);
-      ctx.drawImage(paint, 0, 0);
-      ctx.restore();
-      return;
-    }
-
-    // CPU modes: only the touched rectangle needs recomputing.
-    const dr = this.dirty || { x0: 0, y0: 0, x1: w, y1: h };
-    const x0 = clamp(Math.floor(dr.x0), 0, w), y0 = clamp(Math.floor(dr.y0), 0, h);
-    const x1 = clamp(Math.ceil(dr.x1), 0, w), y1 = clamp(Math.ceil(dr.y1), 0, h);
-    if (x1 <= x0 || y1 <= y0) return;
-    const rw = x1 - x0, rh = y1 - y0;
-    const baseData = ctx2dRead(this.base).getImageData(x0, y0, rw, rh);
-    const topData = ctx2dRead(paint).getImageData(x0, y0, rw, rh);
-    blendCPU(baseData, topData, id, this.brush.opacity);
-    ctx.putImageData(baseData, x0, y0);
-  }
-}
+export { PaintStroke as BlendPaintStroke };
 
 /* ================================================================== */
 /* BrushToolBase                                                       */

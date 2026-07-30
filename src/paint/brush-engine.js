@@ -1,4 +1,5 @@
-import { createCanvas, cloneCanvas, clamp, deg2rad } from '../core/util.js';
+import { createCanvas, cloneCanvas, clamp, deg2rad, ctx2dRead } from '../core/util.js';
+import { isNativeBlend, gcoFor, blendCPU } from '../core/blend.js';
 import { toCss } from '../core/color.js';
 
 /**
@@ -346,6 +347,7 @@ export class PaintStroke extends StrokeBase {
    * @param {string|object} [o.color]          fill colour for 'paint'
    * @param {HTMLCanvasElement} [o.sourceImage] clone/pattern source, drawn through the tip
    * @param {(x:number,y:number)=>{x:number,y:number}} [o.sourceMap] maps dab centre to source coords
+   * @param {string} [o.blendMode] blend mode for compositing the stroke buffer
    */
   constructor(o) {
     super(o);
@@ -420,22 +422,33 @@ export class PaintStroke extends StrokeBase {
     this._markDirty(px, py, size);
   }
 
-  /** Rebuild the layer surface from base + buffer. */
+  /** The stroke buffer, clipped to the selection and to locked transparency. */
+  _clippedBuffer() {
+    if (!this.selectionClip && !this.lockTransparency) return this.buffer;
+    const paint = createCanvas(this.target.width, this.target.height);
+    const pc = paint.getContext('2d');
+    pc.drawImage(this.buffer, 0, 0);
+    pc.globalCompositeOperation = 'destination-in';
+    if (this.selectionClip) pc.drawImage(this.selectionClip, 0, 0);
+    if (this.lockTransparency) pc.drawImage(this.base, 0, 0);
+    pc.globalCompositeOperation = 'source-over';
+    return paint;
+  }
+
+  /**
+   * Rebuild the layer surface as `base + buffer * opacity`, honouring the
+   * stroke's blend mode.
+   *
+   * Native Canvas2D modes go through `globalCompositeOperation`; the ten it
+   * lacks fall back to `blendCPU` over the stroke's dirty rectangle only, so a
+   * CPU-mode brush stays interactive on a large document.
+   */
   flush() {
     const ctx = this.target.getContext('2d');
     const w = this.target.width, h = this.target.height;
-
-    // Clip the buffer to the selection (and to existing alpha when locked).
-    let paint = this.buffer;
-    if (this.selectionClip || this.lockTransparency) {
-      paint = createCanvas(w, h);
-      const pc = paint.getContext('2d');
-      pc.drawImage(this.buffer, 0, 0);
-      pc.globalCompositeOperation = 'destination-in';
-      if (this.selectionClip) pc.drawImage(this.selectionClip, 0, 0);
-      if (this.lockTransparency) pc.drawImage(this.base, 0, 0);
-      pc.globalCompositeOperation = 'source-over';
-    }
+    const paint = this._clippedBuffer();
+    const id = this.blendMode;
+    const blended = id && id !== 'normal' && this.mode !== 'erase';
 
     ctx.save();
     ctx.globalCompositeOperation = 'copy';
@@ -443,11 +456,25 @@ export class PaintStroke extends StrokeBase {
     ctx.drawImage(this.base, 0, 0);
     ctx.restore();
 
-    ctx.save();
-    ctx.globalAlpha = this.brush.opacity;
-    ctx.globalCompositeOperation = this.mode === 'erase' ? 'destination-out' : 'source-over';
-    ctx.drawImage(paint, 0, 0);
-    ctx.restore();
+    if (!blended || isNativeBlend(id)) {
+      ctx.save();
+      ctx.globalAlpha = this.brush.opacity;
+      ctx.globalCompositeOperation = this.mode === 'erase'
+        ? 'destination-out'
+        : blended ? gcoFor(id) : 'source-over';
+      ctx.drawImage(paint, 0, 0);
+      ctx.restore();
+      return;
+    }
+
+    const dr = this.dirty || { x0: 0, y0: 0, x1: w, y1: h };
+    const x0 = clamp(Math.floor(dr.x0), 0, w), y0 = clamp(Math.floor(dr.y0), 0, h);
+    const x1 = clamp(Math.ceil(dr.x1), 0, w), y1 = clamp(Math.ceil(dr.y1), 0, h);
+    if (x1 <= x0 || y1 <= y0) return;
+    const baseData = ctx2dRead(this.base).getImageData(x0, y0, x1 - x0, y1 - y0);
+    const topData = ctx2dRead(paint).getImageData(x0, y0, x1 - x0, y1 - y0);
+    blendCPU(baseData, topData, id, this.brush.opacity);
+    ctx.putImageData(baseData, x0, y0);
   }
 }
 
@@ -476,6 +503,8 @@ export class EffectStroke extends StrokeBase {
   stamp(x, y, pressure) {
     const { size, alpha, angle } = this._dabParams(pressure);
     if (alpha <= 0) return;
+    const opacityCeil = this.brush.opacity == null ? 1 : this.brush.opacity;
+    if (opacityCeil <= 0) return;
     const { ox, oy } = this._scatterOffset(size);
     const px = x + ox, py = y + oy;
 
@@ -517,7 +546,10 @@ export class EffectStroke extends StrokeBase {
     for (let yy = 0; yy < rh; yy++) {
       for (let xx = 0; xx < rw; xx++) {
         const i = (yy * rw + xx) * 4;
-        let cov = (tipData[i + 3] / 255) * alpha;
+        // Coverage is tip alpha x per-dab flow x the stroke's opacity ceiling.
+        // Opacity used to be ignored here, so any EffectStroke tool exposing an
+        // Opacity slider had to re-apply it inside its own `op`.
+        let cov = (tipData[i + 3] / 255) * alpha * opacityCeil;
         if (sel) cov *= sel[(y0 + yy) * W + (x0 + xx)] / 255;
         if (cov <= 0) {
           nd[i] = od[i]; nd[i + 1] = od[i + 1]; nd[i + 2] = od[i + 2]; nd[i + 3] = od[i + 3];

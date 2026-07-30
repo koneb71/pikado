@@ -121,13 +121,18 @@ export class Selection {
   static rasterizePath(path, width, height, { antialias = true, fillRule = 'nonzero' } = {}) {
     const cv = createCanvas(width, height);
     const c = cv.getContext('2d', { willReadFrequently: true });
-    c.imageSmoothingEnabled = antialias;
-    if (!antialias) c.filter = 'none';
     c.fillStyle = '#fff';
     c.fill(path, fillRule);
     const d = c.getImageData(0, 0, width, height).data;
     const out = new Uint8ClampedArray(width * height);
-    for (let i = 0, p = 0; i < d.length; i += 4, p++) out[p] = d[i + 3];
+    if (antialias) {
+      for (let i = 0, p = 0; i < d.length; i += 4, p++) out[p] = d[i + 3];
+    } else {
+      // `imageSmoothingEnabled` does NOT affect the path rasteriser — setting it
+      // (as this used to) left the option doing nothing at all. Hard edges have
+      // to come from thresholding the coverage the rasteriser produced.
+      for (let i = 0, p = 0; i < d.length; i += 4, p++) out[p] = d[i + 3] > 127 ? 255 : 0;
+    }
     return out;
   }
 

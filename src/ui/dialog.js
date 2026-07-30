@@ -12,9 +12,16 @@ import { OVERLAY } from './brand.js';
  * ParamDescriptor:
  *   {key, label, type, min, max, step, default, options, unit, hint, when}
  *   type: slider | number | select | checkbox | color | angle | text | textarea
- *       | radio | range2 | label | separator | button | curve | gradient | custom
+ *       | radio | label | separator | button | custom
  *   `when(state)` -> boolean controls conditional visibility.
  *   `render(container, state, onChange, descriptor)` for type 'custom'.
+ *   `onClick(state, onChange)` for type 'button'.
+ *
+ * There is no `curve`, `gradient` or `range2` type: curve and gradient editors
+ * are `custom` descriptors built by src/ui/curve-editor.js and
+ * src/ui/gradient-editor.js, and nothing needed a dual-handle range. They were
+ * listed here for a while without being implemented, which meant a descriptor
+ * using one silently rendered nothing.
  */
 
 let zTop = 1000;
