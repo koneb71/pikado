@@ -518,3 +518,105 @@ suite('vector / rasterizeShapeLayer', async (t) => {
   });
   t.eq(t.mad(read(noStroke), read(solid)), 0, 'a zero-width stroke is the same as no stroke at all');
 });
+
+/* ------------------------------------------------------------------ */
+/* authored geometry follows the pixels                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Text and shape layers keep two descriptions of where they are: the rendered
+ * canvas, and the parameters that produced it. Every operation that moves the
+ * canvas has to move the parameters with it, or the layer silently jumps back to
+ * where it was authored the next time anything re-renders — which is a colour
+ * conversion, a font change, or just typing one more character.
+ *
+ * Each case below renders, transforms, then re-renders from the parameters and
+ * requires the two to agree. Verified to fail without the fix: with
+ * `mapLayerGeometry` removed from `offsetLayer`, the moved shape re-renders at
+ * its authored origin and the first assertion reports 8,8 instead of 68,48.
+ */
+const GEO_RECT = [{
+  closed: true,
+  points: [{ x: 8, y: 8 }, { x: 50, y: 8 }, { x: 50, y: 32 }, { x: 8, y: 32 }],
+}];
+
+suite('vector / authored geometry survives document transforms', async (t) => {
+  const { PikaDocument } = await import('/src/core/document.js');
+  const { createShapeLayer } = await import('/src/vector/path.js');
+  const { translateLayerGeometry, mapLayerGeometry } = await import('/src/core/layer.js');
+
+  const withShape = () => {
+    const doc = new PikaDocument({ width: 200, height: 150, name: 'geo' });
+    const layer = createShapeLayer(doc, GEO_RECT, { fill: { type: 'solid', color: '#ff0000' } }, 'R');
+    doc.layers.unshift(layer);
+    return { doc, layer };
+  };
+  const box = (b) => (b ? `${b.minX},${b.minY},${b.width},${b.height}` : 'none');
+
+  {
+    const { doc, layer } = withShape();
+    const drawn = inkBounds(layer.canvas);
+    t.eq(`${drawn.minX},${drawn.minY}`, '8,8', 'the shape renders at its authored origin');
+    translateLayerGeometry(layer, 60, 40);
+    layer.canvas = rasterizeShapeLayer(layer, doc);
+    const moved = inkBounds(layer.canvas);
+    t.eq(`${moved.minX},${moved.minY}`, '68,48', 'translating the parameters moves the re-render with them');
+    t.eq(`${moved.width},${moved.height}`, `${drawn.width},${drawn.height}`, 'and does not change its size');
+  }
+
+  for (const [name, op] of [
+    ['canvas size', (doc) => doc.resizeCanvasTo(300, 250, 'center')],
+    ['crop', (doc) => doc.crop({ x: 4, y: 4, width: 120, height: 100 })],
+    ['rotate cw', (doc) => doc.transformImage('cw')],
+    ['rotate ccw', (doc) => doc.transformImage('ccw')],
+    ['rotate 180', (doc) => doc.transformImage('180')],
+    ['flip horizontal', (doc) => doc.transformImage('flip-h')],
+    ['flip vertical', (doc) => doc.transformImage('flip-v')],
+  ]) {
+    const { doc, layer } = withShape();
+    op(doc);
+    const live = doc.findLayer(layer.id);
+    const drawn = inkBounds(live.canvas);
+    live.canvas = rasterizeShapeLayer(live, doc);
+    t.eq(box(inkBounds(live.canvas)), box(drawn),
+      `${name}: re-rendering from the parameters reproduces the transformed pixels`);
+  }
+
+  // Resample scales the geometry. The bitmap is bilinear so its edge spreads by a
+  // pixel either side; the parameters have to land on the exact doubling.
+  {
+    const { doc, layer } = withShape();
+    doc.resample(400, 300);
+    const live = doc.findLayer(layer.id);
+    live.canvas = rasterizeShapeLayer(live, doc);
+    t.eq(box(inkBounds(live.canvas)), '16,16,84,48', 'resampling doubles the authored geometry exactly');
+  }
+
+  // Text carries its anchor.
+  {
+    const doc = new PikaDocument({ width: 200, height: 150, name: 'txt' });
+    const layer = new Layer({ type: LayerType.TEXT, name: 'T' });
+    layer.text = { text: 'Hi', x: 10, y: 40, size: 28, color: '#ffffff', font: 'sans-serif' };
+    layer.canvas = rasterizeTextLayer(layer, doc);
+    const before = inkBounds(layer.canvas);
+    translateLayerGeometry(layer, 60, 40);
+    t.eq(`${layer.text.x},${layer.text.y}`, '70,80', 'the text anchor moves with the layer');
+    layer.canvas = rasterizeTextLayer(layer, doc);
+    const after = inkBounds(layer.canvas);
+    t.eq(`${after.minX - before.minX},${after.minY - before.minY}`, '60,40',
+      're-rendering the text keeps it where it was put');
+
+    mapLayerGeometry(layer, (x, y) => ({ x: 200 - x, y }));
+    t.eq(`${layer.text.x},${layer.text.y}`, '130,80', 'a flip maps the text anchor and leaves the other axis alone');
+  }
+
+  // A scale takes the glyph size and the wrap box with it.
+  {
+    const layer = new Layer({ type: LayerType.TEXT, name: 'T2' });
+    layer.text = { text: 'Hi', x: 10, y: 40, size: 28, boxWidth: 100, boxHeight: 50, paragraph: true };
+    mapLayerGeometry(layer, (x, y) => ({ x: x * 2, y: y * 2 }), 2);
+    t.eq(`${layer.text.x},${layer.text.y}`, '20,80', 'the anchor scales');
+    t.eq(layer.text.scale, 2, 'the glyph scale doubles');
+    t.eq(`${layer.text.boxWidth},${layer.text.boxHeight}`, '200,100', 'and the wrap box scales with it');
+  }
+});

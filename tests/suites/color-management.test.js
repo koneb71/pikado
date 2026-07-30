@@ -803,3 +803,46 @@ suite('color / the commands are registered', async (t) => {
     t.eq(availableProfiles(doc)[0].name, 'From File', 'and an embedded profile comes first');
   }
 });
+
+/**
+ * `shape.fill` is a union: an object for a solid or gradient, the bare string
+ * `'none'` for a stroke-only shape (what the PSD reader emits), or a bare colour
+ * string. Spreading a string into an object turns `'none'` into
+ * `{0:'n',1:'o',2:'n',3:'e'}`, which `normalizeFill` reads as a fill with no type
+ * and paints solid black — a stroke-only shape acquires a fill from a colour
+ * conversion. Fill layers are the other shape: their paint is read from
+ * `shape.color` / `shape.stops`, not from `shape.fill`.
+ */
+suite('colour / Convert to Profile handles every shape fill shape', async (t) => {
+  const { PikaDocument } = await import('/src/core/document.js');
+  const { createShapeLayer } = await import('/src/vector/path.js');
+  const { primeColorHelpers, convertToProfile, availableProfiles } = await import('/src/color/manage.js');
+  await primeColorHelpers();
+
+  const geom = [{ closed: true, points: [{ x: 4, y: 4 }, { x: 30, y: 4 }, { x: 30, y: 24 }, { x: 4, y: 24 }] }];
+  const doc = new PikaDocument({ width: 64, height: 48, name: 'fills' });
+  const add = (overrides, name) => {
+    const l = createShapeLayer(doc, geom, { fill: { type: 'solid', color: '#ff0000' } }, name);
+    Object.assign(l.shape, overrides);
+    doc.layers.unshift(l);
+    return l;
+  };
+  add({ fill: 'none', stroke: { enabled: true, color: '#ff0000', width: 2 } }, 'strokeOnly');
+  add({ fill: '#ff0000' }, 'stringFill');
+  add({ kind: 'fill', fill: undefined, color: '#ff0000' }, 'fillLayer');
+  add({ kind: 'fill', fill: undefined, fillKind: 'gradient', stops: [{ pos: 0, color: '#ff0000' }] }, 'gradientFill');
+
+  const dest = availableProfiles(doc).find((p) => p.id === 'adobe-rgb');
+  await convertToProfile(doc, dest, { intent: 'relative', blackPoint: false });
+  const shapeOf = (name) => doc.layers.find((l) => l.name === name).shape;
+
+  // sRGB red is outside nothing, but Adobe RGB is wider, so it lands lower.
+  const moved = (hex) => typeof hex === 'string' && hex !== '#ff0000' && /^#[0-9a-f]{6}$/i.test(hex);
+
+  t.eq(shapeOf('strokeOnly').fill, 'none', "a stroke-only shape keeps fill 'none' as a string");
+  t.ok(moved(shapeOf('strokeOnly').stroke.color), 'and its stroke colour is converted');
+  t.eq(typeof shapeOf('stringFill').fill, 'string', 'a bare string fill stays a string');
+  t.ok(moved(shapeOf('stringFill').fill), 'and is converted');
+  t.ok(moved(shapeOf('fillLayer').color), "a fill layer's colour is converted");
+  t.ok(moved(shapeOf('gradientFill').stops[0].color), "a fill layer's gradient stops are converted");
+});

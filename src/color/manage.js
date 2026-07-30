@@ -136,15 +136,6 @@ const renderSmart = (layer, doc) => {
   if (h.ready) h.renderSmartObject(layer, doc);
   else console.warn('[color] smart layer not re-rendered: helpers not primed');
 };
-const rasterizeText = (layer, doc) => {
-  const h = loadHelpers();
-  if (h.ready) h.rasterizeTextLayer(layer, doc);
-};
-const rasterizeShape = (layer, doc) => {
-  const h = loadHelpers();
-  if (h.ready) layer.canvas = h.rasterizeShapeLayer(layer, doc);
-};
-
 /** One colour string through the transform, back as a hex string. */
 function convertColorString(value, from, to, opts) {
   if (typeof value !== 'string' || !value) return value;
@@ -204,18 +195,26 @@ function convertSurfaces(doc, from, to, opts, depth = 0) {
       continue;
     }
 
+    /*
+     * Text and shape layers get their parameters converted and then fall through
+     * to the pixel conversion below, rather than being re-rendered.
+     *
+     * Re-rendering is the obvious move and it was the wrong one. It rebuilds the
+     * canvas from `text.x/y` and `shape.subpaths`, which is only correct if those
+     * still agree with the pixels — and a layer that has been moved, cropped or
+     * resized used to leave them behind, so a colour-only command would pick the
+     * layer up and drop it back at its authored coordinates. That desync is fixed
+     * at the source now (see mapLayerGeometry), but converting the pixels we
+     * already have does not depend on the fix holding, and it is what every other
+     * layer type does. The two agree to within rounding on antialiased edges,
+     * where a blended pixel converts slightly differently from a blend of
+     * converted colours.
+     */
     if (layer.text) {
       layer.text = { ...layer.text, color: convertColorString(layer.text.color, from, to, opts) };
-      rasterizeText(layer, doc);
-      layer.thumbDirty = true;
-      continue;
     }
-
     if (layer.shape) {
       layer.shape = convertShape(layer.shape, from, to, opts);
-      rasterizeShape(layer, doc);
-      layer.thumbDirty = true;
-      continue;
     }
 
     if (!layer.canvas) continue;
@@ -227,18 +226,43 @@ function convertSurfaces(doc, from, to, opts, depth = 0) {
   }
 }
 
-/** A shape's fill and stroke colours, converted. */
+/**
+ * A shape's fill and stroke colours, converted.
+ *
+ * `fill` is a union, which is what makes this fiddly: an object for a solid or a
+ * gradient, but also the bare string `'none'` for a stroke-only shape (what the
+ * PSD reader emits), or a bare colour string. Spreading a string into an object
+ * turns it into `{0:'n', 1:'o', …}` — which `normalizeFill` then reads as a fill
+ * object with no type, and renders as solid black. So the string cases are
+ * handled before anything is spread.
+ *
+ * Fill layers are the other shape: `normalizeFill` builds their paint from
+ * `shape.color` / `shape.stops` directly, so those need converting too.
+ */
 function convertShape(shape, from, to, opts) {
   const out = { ...shape };
-  if (out.fill) {
+  const conv = (v) => convertColorString(v, from, to, opts);
+
+  if (typeof out.fill === 'string') {
+    // 'none' is a keyword, not a colour; anything else is a colour.
+    if (out.fill !== 'none') out.fill = conv(out.fill);
+  } else if (out.fill && typeof out.fill === 'object') {
     out.fill = { ...out.fill };
-    if (out.fill.color) out.fill.color = convertColorString(out.fill.color, from, to, opts);
+    if (out.fill.color) out.fill.color = conv(out.fill.color);
     if (Array.isArray(out.fill.stops)) {
-      out.fill.stops = out.fill.stops.map((st) => ({ ...st, color: convertColorString(st.color, from, to, opts) }));
+      out.fill.stops = out.fill.stops.map((st) => ({ ...st, color: conv(st.color) }));
     }
   }
-  if (out.stroke && out.stroke.color) {
-    out.stroke = { ...out.stroke, color: convertColorString(out.stroke.color, from, to, opts) };
+
+  if (typeof out.stroke === 'string') {
+    if (out.stroke !== 'none') out.stroke = conv(out.stroke);
+  } else if (out.stroke && out.stroke.color) {
+    out.stroke = { ...out.stroke, color: conv(out.stroke.color) };
+  }
+
+  if (out.kind === 'fill') {
+    if (out.color) out.color = conv(out.color);
+    if (Array.isArray(out.stops)) out.stops = out.stops.map((st) => ({ ...st, color: conv(st.color) }));
   }
   return out;
 }

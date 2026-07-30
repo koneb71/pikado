@@ -305,6 +305,81 @@ export class Layer {
 }
 
 /* ---------------------------------------------------------------- */
+/* Authored geometry                                                 */
+/* ---------------------------------------------------------------- */
+
+/**
+ * Move a layer's *authored* geometry to follow its pixels.
+ *
+ * Text and shape layers hold two descriptions of the same thing: the rendered
+ * canvas, and the parameters that produced it — `text.x/y`, `shape.subpaths`.
+ * Anything that moves the pixels without moving the parameters leaves the two
+ * disagreeing, and the disagreement is invisible until something re-renders
+ * from the parameters. Then the layer silently jumps back to where it was
+ * authored: move a caption and type one more character, and it hops across the
+ * canvas.
+ *
+ * So every operation that transforms the canvas has to bring the parameters
+ * with it. `mapPoint` maps document space to document space; `sizeScale` is the
+ * matching scale factor for glyph size, which has no coordinate to map.
+ *
+ * One limit worth stating plainly: a text layer stores a position but not an
+ * orientation, so under a rotation or a flip the anchor lands correctly and the
+ * glyphs stay upright. Subpaths carry the full transform exactly.
+ *
+ * @param {Layer} layer
+ * @param {(x: number, y: number) => {x: number, y: number}} mapPoint
+ * @param {number} [sizeScale]
+ */
+export function mapLayerGeometry(layer, mapPoint, sizeScale = 1) {
+  if (!layer) return;
+
+  if (layer.text) {
+    const p = mapPoint(num(layer.text.x), num(layer.text.y));
+    const next = { ...layer.text, x: p.x, y: p.y };
+    if (sizeScale !== 1) {
+      next.scale = (num(layer.text.scale, 1) || 1) * sizeScale;
+      // Box text wraps to a width in document space, so the box has to scale too
+      // or the wrap points move relative to the glyphs.
+      if (num(next.boxWidth)) next.boxWidth = num(next.boxWidth) * sizeScale;
+      if (num(next.boxHeight)) next.boxHeight = num(next.boxHeight) * sizeScale;
+    }
+    layer.text = next;
+  }
+
+  if (layer.shape && Array.isArray(layer.shape.subpaths)) {
+    layer.shape = {
+      ...layer.shape,
+      subpaths: layer.shape.subpaths.map((sp) => ({
+        ...sp,
+        points: (sp.points || []).map((pt) => {
+          const a = mapPoint(num(pt.x), num(pt.y));
+          const out = { ...pt, x: a.x, y: a.y };
+          if (pt.in) { const q = mapPoint(num(pt.in.x), num(pt.in.y)); out.in = { x: q.x, y: q.y }; }
+          if (pt.out) { const q = mapPoint(num(pt.out.x), num(pt.out.y)); out.out = { x: q.x, y: q.y }; }
+          return out;
+        }),
+      })),
+    };
+    // A corner radius is a length, so it only survives a uniform scale.
+    if (sizeScale !== 1 && num(layer.shape.radius)) {
+      layer.shape.radius = num(layer.shape.radius) * sizeScale;
+    }
+  }
+}
+
+/** Translate authored geometry — the common case. */
+export function translateLayerGeometry(layer, dx, dy) {
+  if (!dx && !dy) return;
+  mapLayerGeometry(layer, (x, y) => ({ x: x + dx, y: y + dy }));
+}
+
+function num(v, fallback = 0) {
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/* ---------------------------------------------------------------- */
 /* Factory helpers                                                   */
 /* ---------------------------------------------------------------- */
 

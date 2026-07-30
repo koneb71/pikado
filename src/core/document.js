@@ -1,5 +1,7 @@
 import { Emitter } from './emitter.js';
-import { Layer, LayerType, createRasterLayer } from './layer.js';
+import {
+  Layer, LayerType, createRasterLayer, mapLayerGeometry, translateLayerGeometry,
+} from './layer.js';
 import { Selection } from './selection.js';
 import { History } from './history.js';
 import { uid, createCanvas, cloneCanvas, ctx2d } from './util.js';
@@ -387,13 +389,13 @@ export class PikaDocument extends Emitter {
       c.drawImage(src, 0, 0, w, h);
       return out;
     };
+    const sx = w / this.width, sy = h / this.height;
     for (const l of this.flatLayers()) {
       l.beginEdit();
       if (l.canvas) l.canvas = scaleCanvas(l.canvas);
       if (l.mask) { l.mask = scaleCanvas(l.mask); l.touchMask(); }
-      if (l.text) l.text.scale = (l.text.scale || 1) * (w / this.width);
+      mapLayerGeometry(l, (x, y) => ({ x: x * sx, y: y * sy }), sx);
     }
-    const sx = w / this.width, sy = h / this.height;
     for (const p of this.paths) for (const sp of p.subpaths || []) for (const pt of sp.points || []) {
       pt.x *= sx; pt.y *= sy;
       if (pt.in) { pt.in.x *= sx; pt.in.y *= sy; }
@@ -426,6 +428,7 @@ export class PikaDocument extends Emitter {
       l.beginEdit();
       if (l.canvas) l.canvas = shift(l.canvas, false);
       if (l.mask) { l.mask = shift(l.mask, true); l.touchMask(); }
+      translateLayerGeometry(l, dx, dy);
     }
     for (const p of this.paths) for (const sp of p.subpaths || []) for (const pt of sp.points || []) {
       pt.x += dx; pt.y += dy;
@@ -453,6 +456,7 @@ export class PikaDocument extends Emitter {
       l.beginEdit();
       if (l.canvas) l.canvas = cut(l.canvas);
       if (l.mask) { l.mask = cut(l.mask); l.touchMask(); }
+      translateLayerGeometry(l, -Math.round(x), -Math.round(y));
     }
     for (const p of this.paths) for (const sp of p.subpaths || []) for (const pt of sp.points || []) {
       pt.x -= x; pt.y -= y;
@@ -485,10 +489,22 @@ export class PikaDocument extends Emitter {
       c.restore();
       return out;
     };
+    // The same transform the canvas gets, in point form. Subpaths follow it
+    // exactly; a text layer has no orientation to rotate, so its anchor lands in
+    // the right place and the glyphs stay upright.
+    const mapPoint = (x, y) => {
+      if (kind === 'cw') return { x: w - y, y: x };
+      if (kind === 'ccw') return { x: y, y: h - x };
+      if (kind === '180') return { x: w - x, y: h - y };
+      if (kind === 'flip-h') return { x: w - x, y };
+      if (kind === 'flip-v') return { x, y: h - y };
+      return { x, y };
+    };
     for (const l of this.flatLayers()) {
       l.beginEdit();
       if (l.canvas) l.canvas = apply(l.canvas);
       if (l.mask) { l.mask = apply(l.mask); l.touchMask(); }
+      mapLayerGeometry(l, mapPoint);
     }
     this.width = w;
     this.height = h;

@@ -1,6 +1,6 @@
 import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
-import { LayerType } from '../core/layer.js';
+import { LayerType, translateLayerGeometry } from '../core/layer.js';
 import { createCanvas, cloneCanvas, uid, el } from '../core/util.js';
 import { iconEl } from '../ui/icons.js';
 import {
@@ -78,6 +78,10 @@ function cacheShiftedBounds(layer, b, dx, dy) {
 function offsetLayer(layer, dx, dy) {
   if (!dx && !dy) return;
   if (layer.canvas) shiftCanvas(layer.canvas, dx, dy);
+  // Text and shape layers can be re-rendered from their parameters at any time,
+  // so those parameters have to move with the pixels or the next re-render puts
+  // the layer back where it was authored.
+  translateLayerGeometry(layer, dx, dy);
   if (layer.mask && layer.maskLinked) {
     shiftCanvas(layer.mask, dx, dy);
     layer.touchMask();
