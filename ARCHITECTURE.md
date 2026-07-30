@@ -1236,7 +1236,8 @@ tests/index.html      the runner page — also hosts a real, off-screen app shel
 tests/run.js          imports /src/main.js to boot the app, then every suite
 tests/harness.js      suite() + the assertion context
 tests/suites/*.test.js  core, compositor, paint, filters, adjustments, layers,
-                        effects, text-vector, io, smart, perf
+                        effects, text-vector, io, smart, liquify, channels,
+                        select, camera-raw, animation, color-management, perf
 ```
 
 **Running it:** open `http://localhost:5174/tests/` on the dev server. Automation
