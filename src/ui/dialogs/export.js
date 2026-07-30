@@ -207,10 +207,18 @@ export async function showExportDialog(doc = app.activeDoc) {
     } catch {
       size = 0;
     }
+    // A GIF from a document with a timeline is written as an animation, and the
+    // size estimate above is for a single frame — say so rather than let the
+    // number mislead.
+    const frameCount = Array.isArray(doc.frames) ? doc.frames.length : 0;
+    const animated = fmt.value === 'gif' && frameCount > 1 && !state.allLayers;
     info.replaceChildren(
       el('div', {}, el('b', { text: `${w} × ${h} px` }), ` · ${fmt.label}`),
-      el('div', { text: size ? `Estimated size ≈ ${formatBytes(Math.round(size))}${ratio > 1 ? ' (extrapolated)' : ''}` : 'Estimated size unavailable' }),
-      el('div', { text: state.allLayers ? `Exports ${doc.flatLayers().filter((l) => l.visible && l.type !== 'adjustment').length} layers as separate files` : `Single file: ${state.filename || baseName(doc)}.${fmt.ext}` })
+      el('div', { text: size ? `Estimated size ≈ ${formatBytes(Math.round(size))}${ratio > 1 ? ' (extrapolated)' : ''}${animated ? ' per frame' : ''}` : 'Estimated size unavailable' }),
+      el('div', { text: state.allLayers ? `Exports ${doc.flatLayers().filter((l) => l.visible && l.type !== 'adjustment').length} layers as separate files` : `Single file: ${state.filename || baseName(doc)}.${fmt.ext}` }),
+      animated
+        ? el('div', { text: `Animated: ${frameCount} frames, ${doc.loopCount ? `${doc.loopCount} play${doc.loopCount > 1 ? 's' : ''}` : 'looping forever'}` })
+        : null
     );
   }, 220);
 

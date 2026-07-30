@@ -119,6 +119,13 @@ const P = {
   path: '<path d="M2 12c0-6 12 0 12-8"/><rect x="1" y="11" width="2" height="2"/><rect x="13" y="3" width="2" height="2"/>',
   navigator: '<rect x="2" y="3" width="12" height="10" rx="1"/><rect x="4.5" y="5" width="6" height="5" stroke-dasharray="2 1.4"/>',
   properties: '<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/><circle cx="6" cy="4" r="1.4" fill="currentColor"/><circle cx="10" cy="8" r="1.4" fill="currentColor"/><circle cx="5" cy="12" r="1.4" fill="currentColor"/>',
+
+  /* --- timeline --- */
+  timeline: '<rect x="1.5" y="4.5" width="5" height="7" rx="1"/><rect x="9.5" y="4.5" width="5" height="7" rx="1"/><path d="M8 3v10"/>',
+  play: '<path d="M5 3.2 12.5 8 5 12.8z"/>',
+  pause: '<path d="M5.5 3.5v9M10.5 3.5v9"/>',
+  tween: '<circle cx="3.5" cy="8" r="1.8"/><circle cx="12.5" cy="8" r="1.8"/><path d="M6 8h4" stroke-dasharray="1.4 1.4"/>',
+  duplicate: '<rect x="2.5" y="2.5" width="8" height="8" rx="1"/><rect x="5.5" y="5.5" width="8" height="8" rx="1"/>',
 };
 
 /**

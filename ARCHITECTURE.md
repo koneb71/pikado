@@ -860,6 +860,70 @@ lazily; read patterns through `getPatterns()` rather than touching `app.patterns
 
 ---
 
+## Frame animation — `src/core/animation.js`
+
+A frame is a **record of layer state**, not a copy of the picture: which layers
+are visible and at what opacity. One set of layers, many frames.
+
+```
+doc.frames         array of {id, delay, state: {layerId: {visible, opacity}}}
+doc.activeFrameId  the frame the canvas is showing
+doc.loopCount      0 = forever
+
+captureFrame(doc, delay?)        updateFrame(doc, frame)     applyFrame(doc, frame)
+framesOf(doc)  hasAnimation(doc)  activeFrame(doc)  frameIndex(doc)
+ensureTimeline(doc)              addFrame(doc, {after, copyState})
+removeFrame(doc, frame)          moveFrame(doc, frame, toIndex)
+setFrameDelay(doc, ms, frames?)  framesFromLayers(doc, {delay})
+tweenFrames(doc, from, to, count)  reverseFrames(doc)  clearTimeline(doc)
+```
+
+All three document fields are in `captureState()`, `activeFrameId` included:
+stepping to a frame changes what the canvas shows, so an undo that restored the
+frames but left you looking at a different one would be disorienting. (The
+channel view is the opposite case and is deliberately *not* in history.) The
+fields also travel in `.pkd`.
+
+**Position is not animated**, and that is a real limitation rather than an
+oversight: layer buffers are always document-sized with no per-layer offset, so
+there is nowhere for a per-frame position to live and nothing in the compositor
+that would honour one. A `frameOffset` field would have stored a number and
+changed nothing on screen.
+
+`applyFrame` leaves a layer the frame has never seen alone rather than hiding it
+— otherwise adding a layer would make it vanish from every existing frame.
+
+### `src/ui/panels/timeline.js`
+
+Two traps, both of which produced a working-but-unusable panel:
+
+- **Do not use `applyFrame` to draw a thumbnail.** It ends in `doc.invalidate()`,
+  which emits `change`, which the app re-emits as `doc-change`, which the panel
+  listens to — so every thumbnail queued another full render, which drew every
+  thumbnail again. The thumbnail path sets the layer properties directly and puts
+  them back, emitting nothing.
+- **Coalesce renders and guard re-entrancy.** Selecting a frame emits `structure`
+  so the Layers panel follows, and that comes straight back as a render request.
+  `schedule()` collapses a burst into one render (rAF raced against a timer,
+  because a hidden tab never fires rAF), and `render()` refuses to re-enter.
+
+Playback advances on a `setTimeout` chain and stops on `visibilitychange`: a
+hidden tab throttles timers to roughly one a minute, so playing on would drift
+rather than play.
+
+### Animated GIF — `src/io/gif.js`
+
+`encodeAnimatedGIF(frames, {loop, transparent})` where `frames` is
+`[{canvas, delay}]`. Each frame gets its **own local colour table** rather than
+sharing one global palette: a global table is smaller, and it bands every frame
+of an animation whose colours change. Delays are written in hundredths of a
+second with a floor of 2 — most decoders reinterpret 0 or 1 as "as fast as
+possible" and clamp it to about 100 ms, so asking for no delay plays *slower*
+than asking for 20 ms.
+
+`exportDocument(doc, {format: 'gif'})` animates automatically when the document
+has more than one frame; pass `animate: false` for a still.
+
 ## Persistence, session and offline
 
 Three layers, bottom up: `io/store.js` is the database, `io/session.js` is the
@@ -1037,6 +1101,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/render/{fast-blur,gpu-blend}.js`
 - `src/ui/{welcome,canvas-menu,brand,curve-editor,gradient-editor}.js`
 - `src/core/smart.js`
+- `src/core/animation.js`, `src/ui/panels/timeline.js`
 - `src/select/{maxflow,grabcut,refine}.js`
 - `src/vector/path.js`, `src/text/text-render.js`
 

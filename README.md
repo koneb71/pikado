@@ -161,6 +161,24 @@ rather than a Kelvin reading, because a rendered sRGB image has no sensor white
 balance to set — the same choice Photoshop makes for this filter on a non-raw
 layer.
 
+## Frame animation
+
+Window > Timeline gives you a filmstrip. A frame is a *record of layer state* —
+which layers are visible and at what opacity — not a copy of the picture, so a
+twenty-frame animation costs twenty small objects rather than twenty canvases,
+and painting on a layer updates every frame that shows it.
+
+Select a frame and work normally: what you change is written back into the frame
+you are on. Make Frames From Layers turns a stack of drawings into an animation
+in one click, Tween fills in the frames between two, and each frame carries its
+own delay. Export as GIF and it animates automatically, with each frame given its
+own colour table so a changing palette does not band.
+
+What it does not animate is *position*: layer buffers here are always
+document-sized with no per-layer offset, so there is nowhere for a per-frame
+position to live. Move something by duplicating the layer, or cross-fade by
+animating opacity.
+
 ## Right-click does the right thing
 
 Right-clicking the canvas asks the active tool what it can do *here*, at the
@@ -269,7 +287,7 @@ traps the suite is built to avoid.
 | Format | Open | Save |
 |---|---|---|
 | PNG / JPEG / WebP | yes | yes |
-| GIF | first frame (all frames where `ImageDecoder` exists) | yes — median-cut palette + LZW |
+| GIF | first frame (all frames where `ImageDecoder` exists) | yes — animated, per-frame palettes + LZW |
 | PSD / PSB | yes — layers, groups, masks, blend modes, text, adjustments | yes — layered, see caveats below |
 | SVG | yes — rasterized, with simple shapes kept as editable paths | yes |
 | `.pkd` (Pikado native) | yes | yes — lossless, preserves everything |
@@ -311,9 +329,6 @@ Stated plainly so you don't find out by clicking:
 - **ICC colour management.** Everything is 8-bit sRGB internally. 16-bit PSDs
   open by converting down to 8-bit. CMYK and Lab exist as colour maths (for the
   Info panel, Selective Color, and so on) but not as document modes.
-- **Frame animation.** GIF export writes a single frame (and reads all frames
-  where the browser has `ImageDecoder`), but there is no timeline for authoring
-  a multi-frame animation.
 - **Face-aware Liquify.** Everything else in Liquify is there — Forward Warp,
   Reconstruct, Smooth, both Twirls, Pucker, Bloat, Push Left, and Freeze/Thaw
   masking, all ten tools with a live mesh preview — but there is no face

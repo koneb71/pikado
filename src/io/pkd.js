@@ -167,6 +167,11 @@ export async function savePKD(doc) {
       globalLight: doc.globalLight == null ? null : doc.globalLight,
       guides: doc.guides.map((g) => ({ ...g })),
       quickMask: !!doc.quickMask,
+      // Frame animation. Plain data, so it travels as JSON with the rest of the
+      // document header rather than as a blob.
+      frames: Array.isArray(doc.frames) && doc.frames.length ? structuredClone(doc.frames) : null,
+      activeFrameId: doc.activeFrameId || null,
+      loopCount: doc.loopCount == null ? 0 : doc.loopCount,
       activeLayerId: doc.activeLayerId,
       selectedLayerIds: [...doc.selectedLayerIds],
       activePathId: doc.activePathId,
@@ -249,6 +254,9 @@ export async function loadPKD(arrayBuffer) {
   if (info.globalLight != null) doc.globalLight = info.globalLight;
   doc.guides = Array.isArray(info.guides) ? info.guides.map((g) => ({ ...g })) : [];
   doc.quickMask = !!info.quickMask;
+  doc.frames = Array.isArray(info.frames) ? structuredClone(info.frames) : [];
+  doc.activeFrameId = info.activeFrameId || null;
+  doc.loopCount = info.loopCount == null ? 0 : info.loopCount;
   doc.paths = decode(info.paths) || [];
   doc.activePathId = info.activePathId || null;
   doc.alphaChannels = decode(info.alphaChannels) || [];

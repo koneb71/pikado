@@ -37,6 +37,17 @@ export class PikaDocument extends Emitter {
 
     this.guides = [];
     this.quickMask = false;
+
+    /**
+     * Frame animation, empty until a timeline is created. A frame records which
+     * layers are visible and at what opacity — see src/core/animation.js.
+     * @type {Array<{id:string, delay:number, state:Object}>}
+     */
+    this.frames = [];
+    this.activeFrameId = null;
+    /** GIF-style loop count; 0 plays forever. */
+    this.loopCount = 0;
+
     this.dirty = false;
     this.filePath = null;
     this.fileHandle = null;
@@ -301,6 +312,14 @@ export class PikaDocument extends Emitter {
       paths: structuredClone(this.paths),
       guides: [...this.guides],
       quickMask: this.quickMask,
+      // Frame animation. `activeFrameId` belongs in history with the frames:
+      // stepping to a frame changes what the canvas shows, so an undo that left
+      // you looking at a different frame than the one it restored would be
+      // disorienting. (The *channel view* is the opposite case and is
+      // deliberately absent — see src/render/compositor.js.)
+      frames: this.frames ? structuredClone(this.frames) : null,
+      activeFrameId: this.activeFrameId || null,
+      loopCount: this.loopCount == null ? 0 : this.loopCount,
       // Tool-owned document data. These are plain values, so a structural
       // clone is enough — without them a history step silently drops them.
       slices: this.slices ? structuredClone(this.slices) : null,
@@ -327,6 +346,9 @@ export class PikaDocument extends Emitter {
     this.paths = structuredClone(s.paths);
     this.guides = [...s.guides];
     this.quickMask = s.quickMask;
+    if (s.frames !== undefined) this.frames = s.frames ? structuredClone(s.frames) : null;
+    if (s.activeFrameId !== undefined) this.activeFrameId = s.activeFrameId;
+    if (s.loopCount !== undefined) this.loopCount = s.loopCount;
     if (s.slices !== undefined) this.slices = s.slices ? structuredClone(s.slices) : null;
     if (s.colorSamplers !== undefined) this.colorSamplers = s.colorSamplers ? structuredClone(s.colorSamplers) : null;
     if (s.notes !== undefined) this.notes = s.notes ? structuredClone(s.notes) : null;

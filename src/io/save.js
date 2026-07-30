@@ -4,7 +4,8 @@ import { createCanvas, ctx2d, ctx2dRead, download } from '../core/util.js';
 import { savePKD } from './pkd.js';
 import { writePSD } from './psd-write.js';
 import { exportSVG } from './svg.js';
-import { encodeGIF } from './gif.js';
+import { encodeGIF, encodeAnimatedGIF } from './gif.js';
+import { framesOf, applyFrame } from '../core/animation.js';
 
 /**
  * Saving and exporting.
@@ -130,6 +131,38 @@ function renderComposite(doc, scale, transparent) {
 }
 
 /**
+ * Render every animation frame, at `scale`.
+ *
+ * Each frame is applied to the live document, composited, and the layer state is
+ * put back afterwards — the same approach the Timeline panel's thumbnails use, and
+ * for the same reason: a frame *is* layer state, so there is no way to render one
+ * without applying it, and cloning the whole document per frame would cost a copy
+ * of every layer buffer.
+ *
+ * The restore runs in a `finally`, because leaving the document showing the last
+ * frame after an export would be a visible side effect of saving a file.
+ *
+ * @returns {Array<{canvas:HTMLCanvasElement, delay:number}>}
+ */
+function renderFrames(doc, scale, transparent) {
+  const frames = framesOf(doc);
+  const wasFrameId = doc.activeFrameId;
+  const before = doc.flatLayers().map((l) => ({ l, visible: l.visible, opacity: l.opacity }));
+  const out = [];
+  try {
+    for (const frame of frames) {
+      applyFrame(doc, frame);
+      out.push({ canvas: renderComposite(doc, scale, transparent), delay: frame.delay });
+    }
+  } finally {
+    for (const { l, visible, opacity } of before) { l.visible = visible; l.opacity = opacity; }
+    doc.activeFrameId = wasFrameId;
+    doc.invalidate();
+  }
+  return out;
+}
+
+/**
  * Render and download the document in the requested format.
  * @param {import('../core/document.js').PikaDocument} doc
  * @param {{format?:string, quality?:number, scale?:number, transparent?:boolean,
@@ -156,7 +189,17 @@ export async function exportDocument(doc, opts = {}) {
       extension = 'svg';
     } else if (format === 'gif') {
       // Canvas cannot encode GIF; we quantise and LZW-compress it ourselves.
-      blob = encodeGIF(renderComposite(doc, scale, wantsTransparency), wantsTransparency);
+      // A document with a timeline exports as an animation unless the caller
+      // explicitly asks for a still — exporting only the current frame from a
+      // finished animation is almost never what was meant.
+      const frames = framesOf(doc);
+      const animate = opts.animate !== false && frames.length > 1;
+      blob = animate
+        ? encodeAnimatedGIF(renderFrames(doc, scale, wantsTransparency), {
+          loop: doc.loopCount == null ? 0 : doc.loopCount,
+          transparent: wantsTransparency,
+        })
+        : encodeGIF(renderComposite(doc, scale, wantsTransparency), wantsTransparency);
       extension = 'gif';
     } else {
       const mime = MIME[format];

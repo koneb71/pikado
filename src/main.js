@@ -57,6 +57,7 @@ import './ui/panels/history.js';
 import './ui/panels/navigator.js';
 import './ui/panels/info.js';
 import './ui/panels/character.js';
+import './ui/panels/timeline.js';
 
 // Commands (must come after tools/filters so menus can enumerate them)
 import './commands/definitions.js';
