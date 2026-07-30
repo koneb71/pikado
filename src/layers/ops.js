@@ -123,6 +123,27 @@ function flattenAsBase(doc, layers, bottom) {
   }
 }
 
+/**
+ * Flatten a single layer to *raw* pixels, without its own opacity or blend mode.
+ *
+ * `flattenLayers` composites a layer exactly as the document would, which means
+ * the opacity and blend mode are already baked into the result. Anything that
+ * keeps those properties on the resulting layer must flatten through here, or
+ * they get applied a second time — a 50 % group rasterised to 25 %.
+ */
+function flattenRaw(doc, layer) {
+  const savedOpacity = layer.opacity;
+  const savedMode = layer.blendMode;
+  layer.opacity = 1;
+  layer.blendMode = 'normal';
+  try {
+    return flattenLayers(doc, [layer]);
+  } finally {
+    layer.opacity = savedOpacity;
+    layer.blendMode = savedMode;
+  }
+}
+
 export function mergeDown(doc, layer) {
   const l = layer || doc.activeLayer();
   if (!l) return;
@@ -272,7 +293,8 @@ export function rasterizeLayer(doc, layer) {
     l.smart = null;
     l.type = LayerType.RASTER;
   } else if (l.type === LayerType.GROUP) {
-    const merged = flattenLayers(doc, [l]);
+    // Raw, because the new layer carries the group's opacity and blend mode.
+    const merged = flattenRaw(doc, l);
     const loc = doc.locate(l);
     loc.list.splice(loc.index, 1);
     const nl = new Layer({ type: LayerType.RASTER, name: l.name, canvas: merged, opacity: l.opacity, blendMode: l.blendMode === 'pass-through' ? 'normal' : l.blendMode });
@@ -293,7 +315,8 @@ export function rasterizeLayer(doc, layer) {
 export function rasterizeLayerStyle(doc, layer) {
   const l = layer || doc.activeLayer();
   if (!l || !l.styles) return;
-  const only = flattenLayers(doc, [l]);
+  // Raw, because the layer keeps its own opacity and blend mode afterwards.
+  const only = flattenRaw(doc, l);
   doc.beginEdit(l);
   l.canvas = only;
   l.styles = null;

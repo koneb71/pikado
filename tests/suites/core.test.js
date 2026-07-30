@@ -60,13 +60,16 @@ suite('core / selection mask', async (t) => {
   t.eq(s.bounds(), { x: 20, y: 10, width: 10, height: 20 }, 'intersect keeps the overlap');
 
   // Feathering must produce genuinely partial coverage, not a hard edge.
-  const f = new Selection(60, 60);
-  f.combine(Selection.rectMask(20, 20, 20, 20, 60, 60), 'replace');
+  // The rect is generously larger than the feather reach: three box passes at
+  // radius 4 spread further than 4 px, so a tight rect would leave even its
+  // centre slightly under 1.
+  const f = new Selection(120, 120);
+  f.combine(Selection.rectMask(30, 30, 60, 60, 120, 120), 'replace');
   f.feather(4);
-  const edge = f.at(20, 30);
+  const edge = f.at(30, 60);
   t.gt(edge, 0, 'feathered edge coverage is above 0');
   t.lt(edge, 1, 'feathered edge coverage is below 1 (genuinely antialiased)');
-  t.eq(f.at(30, 30), 1, 'the feathered core stays fully selected');
+  t.eq(f.at(60, 60), 1, 'the feathered core, well inside the feather reach, stays fully selected');
 
   // Invert, and the empty-selection collapse.
   const inv = new Selection(20, 20);
@@ -132,9 +135,12 @@ suite('core / history copy-on-write', async (t) => {
   t.notOk(doc.history.canRedo, 'a new edit drops the redo tail');
 
   // Layer identity is rebuilt by restoreState — holding a reference is unsafe.
+  // This needs an identity check: the rebuilt layer is structurally identical,
+  // so a deep comparison would call them equal and prove nothing.
   const stale = doc.activeLayer();
   doc.history.undo();
-  t.ne(doc.activeLayer(), stale, 'restoreState rebuilds layer objects (stale refs must be re-resolved)');
+  t.isNot(doc.activeLayer(), stale, 'restoreState rebuilds layer objects (stale refs must be re-resolved)');
+  t.eq(doc.activeLayer().id, stale.id, 'the rebuilt layer keeps the same id, which is why refs must be re-resolved by id');
 
   // Tool-owned document data must survive a history step.
   doc.slices = [{ x: 1, y: 2, width: 3, height: 4, name: 's' }];

@@ -177,7 +177,11 @@ registerAdjustment({
     const d = imageData.data;
     for (let i = 0; i < d.length; i += 4) {
       if (d[i + 3] === 0) continue;
-      const v = luma8(d[i], d[i + 1], d[i + 2]) >= level ? 255 : 0;
+      // Round to 8-bit before comparing: the weighted sum is a double, so a
+      // neutral 128 grey evaluates to 127.99999999999999 and would fall on the
+      // wrong side of level 128. Most other luma8 callers interpolate with it,
+      // so the rounding belongs here rather than in luma8 itself.
+      const v = Math.round(luma8(d[i], d[i + 1], d[i + 2])) >= level ? 255 : 0;
       d[i] = v; d[i + 1] = v; d[i + 2] = v;
     }
   },

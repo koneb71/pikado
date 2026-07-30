@@ -76,6 +76,22 @@ class TestContext {
     return this._record(!deepEqual(actual, expected), message, `expected something other than ${fmt(expected)}`);
   }
 
+  /**
+   * Reference identity (`===`), not structural equality.
+   *
+   * `eq`/`ne` compare deeply, so two distinct objects with identical contents
+   * count as equal — which silently defeats any test about object identity
+   * (e.g. "undo rebuilt the layer objects", "the cache returned the same
+   * canvas"). Use `is`/`isNot` for those.
+   */
+  is(actual, expected, message) {
+    return this._record(actual === expected, message, 'expected the same object reference');
+  }
+
+  isNot(actual, expected, message) {
+    return this._record(actual !== expected, message, 'expected a different object reference');
+  }
+
   /** Numeric comparison with a tolerance. */
   close(actual, expected, tol, message) {
     const pass = Number.isFinite(actual) && Math.abs(actual - expected) <= tol;
@@ -220,6 +236,29 @@ function deepEqual(a, b) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Hand control back to the browser so the page can paint between suites.
+ *
+ * NOT `setTimeout`: a backgrounded tab throttles timers to once per second, and
+ * after a few minutes hidden, to roughly once per *minute*. With one yield per
+ * suite that stalls a 70-suite run for over an hour, which is exactly what
+ * happened. A MessageChannel task is not throttled.
+ */
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    if (typeof MessageChannel === 'function') {
+      const ch = new MessageChannel();
+      ch.port1.onmessage = () => {
+        ch.port1.close();
+        resolve();
+      };
+      ch.port2.postMessage(0);
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
+/**
  * Bind to the LIVE app instance.
  *
  * On the Vite dev server modules are served with an HMR query string, so a bare
@@ -264,8 +303,7 @@ export async function runAll({ onProgress } = {}) {
     for (const r of t.results) r.pass ? report.passed++ : report.failed++;
     report.suites.push(entry);
     if (onProgress) onProgress(entry, report);
-    // Yield so the page can paint between suites.
-    await new Promise((r) => setTimeout(r, 0));
+    await yieldToBrowser();
   }
 
   report.ms = Date.now() - report.startedAt;

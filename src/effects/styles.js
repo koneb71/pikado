@@ -208,25 +208,15 @@ export function offsetAlpha(alpha, w, h, angleDeg, distance) {
 /* Main entry point used by the compositor                             */
 /* ------------------------------------------------------------------ */
 
-/**
- * Alpha bounding box, measured on a downscaled copy.
- *
- * A full-resolution scan costs ~140 ms at 12 MP, which defeats the purpose;
- * downscaling by `step` first is a GPU blit and the read is 64x smaller. Any
- * non-empty source block averages to a non-zero alpha, and the result is padded
- * by a whole block, so this never reports a box smaller than the truth.
- */
-function alphaBoundsFast(canvas, step = 8) {
+/** Exact alpha bounding box. ~12 ms per megapixel. */
+function alphaBoundsExact(canvas) {
   const w = canvas.width, h = canvas.height;
-  const sw = Math.max(1, Math.ceil(w / step));
-  const sh = Math.max(1, Math.ceil(h / step));
-  const small = createCanvas(sw, sh);
-  small.getContext('2d').drawImage(canvas, 0, 0, sw, sh);
-  const d = ctx2dRead(small).getImageData(0, 0, sw, sh).data;
-  let minX = sw, minY = sh, maxX = -1, maxY = -1;
-  for (let y = 0; y < sh; y++) {
-    for (let x = 0; x < sw; x++) {
-      if (d[(y * sw + x) * 4 + 3] !== 0) {
+  const d = ctx2dRead(canvas).getImageData(0, 0, w, h).data;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    for (let x = 0; x < w; x++) {
+      if (d[row + x * 4 + 3] !== 0) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -235,12 +225,56 @@ function alphaBoundsFast(canvas, step = 8) {
     }
   }
   if (maxX < 0) return null;
-  return {
-    x: Math.max(0, minX * step - step),
-    y: Math.max(0, minY * step - step),
-    width: Math.min(w, (maxX + 2) * step) - Math.max(0, minX * step - step),
-    height: Math.min(h, (maxY + 2) * step) - Math.max(0, minY * step - step),
-  };
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+/** Anything above this gets the approximate path; below it, scan exactly. */
+const EXACT_BOUNDS_MAX_PIXELS = 1400 * 1000;
+
+/**
+ * Alpha bounding box used to crop the effect pipeline.
+ *
+ * This MUST never report a box smaller than the truth, or effects on the
+ * omitted content silently vanish. An earlier version downscaled 8x in one
+ * `drawImage` and trusted that any non-empty block would average to a non-zero
+ * alpha — that is false. Chrome's downscaler filtered marks of 4 px and under
+ * to alpha 0 at unlucky offsets, so a hairline stroke or 1 px outline lost every
+ * one of its effects, and nudging the layer a pixel made them flicker back.
+ *
+ * So: scan exactly up to ~1.4 MP (about 15 ms, and it covers most documents),
+ * and above that halve repeatedly, re-compositing each step over itself to
+ * double small alphas. Saturating as we go means a single opaque pixel survives
+ * the reduction instead of being averaged into nothing.
+ */
+function alphaBoundsFast(canvas) {
+  const w = canvas.width, h = canvas.height;
+  if (w * h <= EXACT_BOUNDS_MAX_PIXELS) return alphaBoundsExact(canvas);
+
+  let cur = canvas, cw = w, ch = h;
+  while (cw * ch > EXACT_BOUNDS_MAX_PIXELS / 4) {
+    const nw = Math.max(1, Math.ceil(cw / 2));
+    const nh = Math.max(1, Math.ceil(ch / 2));
+    const next = createCanvas(nw, nh);
+    const c = next.getContext('2d');
+    c.imageSmoothingEnabled = true;
+    c.drawImage(cur, 0, 0, cw, ch, 0, 0, nw, nh);
+    // a' = a + a(1-a): two self-composites take a 1/255 alpha to roughly 4/255,
+    // which comfortably survives the next halving's 4-pixel average.
+    c.drawImage(next, 0, 0);
+    c.drawImage(next, 0, 0);
+    cur = next; cw = nw; ch = nh;
+  }
+
+  const b = alphaBoundsExact(cur);
+  if (!b) return null;
+  // Map back to full resolution, padding by a whole reduced pixel on each side.
+  const sx = w / cw, sy = h / ch;
+  const padX = Math.ceil(sx), padY = Math.ceil(sy);
+  const x0 = Math.max(0, Math.floor(b.x * sx) - padX);
+  const y0 = Math.max(0, Math.floor(b.y * sy) - padY);
+  const x1 = Math.min(w, Math.ceil((b.x + b.width) * sx) + padX);
+  const y1 = Math.min(h, Math.ceil((b.y + b.height) * sy) + padY);
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
 /** How far outside the layer content the enabled effects can reach, in px. */
