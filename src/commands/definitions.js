@@ -70,6 +70,19 @@ function commitSelection(doc, label) {
   doc.commit(label);
 }
 
+/**
+ * Open the Select and Mask workspace.
+ *
+ * Loaded on demand: the workspace pulls in the graph-cut solver and the matting
+ * pass, which are a few hundred lines of numerical code nothing else needs, and
+ * keeping them out of the initial bundle is worth one dynamic import.
+ */
+async function openSelectAndMask(doc, opts = {}) {
+  if (!doc) return;
+  const { showSelectAndMask } = await import('../ui/dialogs/select-and-mask.js');
+  await showSelectAndMask(doc, opts);
+}
+
 /* ------------------------------------------------------------------ */
 /* File > Open Recent                                                  */
 /* ------------------------------------------------------------------ */
@@ -1610,6 +1623,19 @@ registerCommands([
   { id: 'select.all-layers', label: 'All Layers', accel: 'Alt+Ctrl+A', enabled: hasDoc, run: () => selectAllLayers(D()) },
   { id: 'select.deselect-layers', label: 'Deselect Layers', enabled: () => !!(D() && D().selectedLayerIds.length), run: () => deselectLayers(D()) },
   { id: 'select.color-range', label: 'Color Range…', enabled: hasDoc, run: () => img.showColorRangeDialog(D()) },
+  {
+    id: 'select.subject', label: 'Subject',
+    // A saliency guess plus a graph cut, not a trained model — see
+    // `src/select/grabcut.js`. It opens the workspace rather than committing a
+    // guess silently, because the guess is a starting point.
+    enabled: hasDoc,
+    run: () => openSelectAndMask(D(), { subject: true }),
+  },
+  {
+    id: 'select.select-and-mask', label: 'Select and Mask…', accel: 'Alt+Ctrl+R',
+    enabled: hasDoc,
+    run: () => openSelectAndMask(D()),
+  },
   { id: 'select.modify.border', label: 'Border…', enabled: hasSelection, run: () => modifySelection(D(), 'border') },
   { id: 'select.modify.smooth', label: 'Smooth…', enabled: hasSelection, run: () => modifySelection(D(), 'smooth') },
   { id: 'select.modify.expand', label: 'Expand…', enabled: hasSelection, run: () => modifySelection(D(), 'expand') },
@@ -1940,6 +1966,8 @@ export const MENU_TREE = [
       'select.all-layers',
       'select.deselect-layers',
       '---',
+      'select.subject',
+      'select.select-and-mask',
       'select.color-range',
       {
         label: 'Modify',

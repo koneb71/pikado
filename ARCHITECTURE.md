@@ -215,6 +215,88 @@ thresholded at 127, so every output byte is 0 or 255. (It used to set
 option silently did nothing. Marquee/lasso "Anti-alias" off is now real.)
 `rectMask` and `ellipseMask` do not forward opts; they are always antialiased.
 
+## Segmentation and edge refinement — `src/select/`
+
+Three modules, used only by the Select and Mask workspace
+(`src/ui/dialogs/select-and-mask.js`), which is loaded on demand.
+
+### `src/select/maxflow.js` — `MaxFlow`
+
+Boykov–Kolmogorov max flow / min cut on a sparse graph.
+
+```
+new MaxFlow(nodeCount, arcHint?)
+mf.addEdge(i, j, cap, revCap)      // arcs are added in sister pairs; a^1 is the reverse
+mf.addTerminal(i, sourceCap, sinkCap)
+mf.compute() -> flow
+mf.inSource(i) -> boolean           // true = source side of the cut
+mf.sourceMask(out?) -> Uint8Array
+```
+
+Two invariants worth stating, both of them things that produce a *plausible*
+wrong answer rather than a crash:
+
+- a node's `parent` is the arc **from the node to its parent**, so the capacity
+  flowing into a node from its parent is the sister arc's (`cap[parent ^ 1]`).
+- `addTerminal` collapses source and sink capacity into one signed residual, which
+  loses `min(source, sink)` — flow that runs straight through the node no matter
+  what. That is a constant, banked in `constantFlow` and added back by `compute`.
+  Forgetting it leaves the cut correct and the flow value silently too small.
+
+Verified in `tests/suites/select.test.js` against an independent Edmonds–Karp
+implementation over ~190 random graphs, integer and real-valued, plus the
+max-flow-min-cut identity on every one.
+
+### `src/select/grabcut.js` — iterated graph cuts
+
+```
+TRIMAP = {BG: 0, FG: 1, MAYBE_BG: 2, MAYBE_FG: 3}
+grabcut(imageData, trimap, {iterations = 3, diagonals = true, onProgress})
+  -> {mask: Uint8ClampedArray, iterations, changed}    // trimap is modified in place
+saliencyMap(imageData) -> Float32Array   // 0..1, histogram contrast + centre prior
+autoTrimap(imageData, {borderFraction = 0.03}) -> {trimap, confident}
+```
+
+`FG` and `BG` are **hard constraints** — a definite label survives every iteration
+exactly, which the suite asserts rather than assumes. The two "maybe" states are
+what the cut is free to change.
+
+`autoTrimap`'s `confident` flag is not decoration. A featureless image gives every
+pixel the same saliency, `sd` is zero, and a naive `>= mean` threshold would mark
+the *whole frame* as definite foreground — maximum confidence from no information.
+So confidence requires a real spread, a seed above noise, and a seed covering less
+than 60% of the frame. When it fails, the definite-foreground seeds are demoted to
+"maybe" and the caller is told.
+
+Runs on a downscaled copy (the workspace uses ~0.26 MP); a min-cut is superlinear
+in node count.
+
+### `src/select/refine.js` — the Select and Mask controls
+
+```
+edgeBand(mask, w, h, radius) -> {band: Uint8Array, dist: Float32Array}
+refineRadius(image, mask, radius, {smart}) -> mask    // alpha matting
+smoothMask(mask, w, h, radius)      // majority filter, via an integral image
+featherMask(mask, w, h, radius)     // boxBlurMask — which RETURNS a mask
+contrastMask(mask, amount)          // smoothstep around the midpoint
+shiftEdge(mask, w, h, percent)      // threshold shift on a blurred copy
+decontaminateColors(image, mask, amount)   // mutates and returns `image`
+refineSelection(image, mask, w, h, params) -> mask
+```
+
+`refineSelection` applies them in one fixed order — matting, smooth, feather,
+contrast, shift — and the suite pins that order by running the steps by hand and
+comparing byte for byte. `dist` is signed: positive inside the selection.
+
+Two behaviours are deliberate and read as bugs if you do not know them:
+
+- **feather conserves total coverage.** It is a symmetric blur, so the 50% contour
+  does not move; `shiftEdge` is the control that grows or shrinks a selection.
+- **matting declines to guess.** Where the local foreground and background are the
+  same colour, or there is not enough confident sample on both sides, the pixel
+  keeps the cut's own value. `refineRadius` on a flat image is exactly the
+  identity.
+
 ## `src/core/blend.js`
 
 `BLEND_MODES` (array of `{id,name,gco,group}`), `getBlendMode(id)`,
@@ -901,6 +983,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/render/{fast-blur,gpu-blend}.js`
 - `src/ui/{welcome,canvas-menu,brand,curve-editor,gradient-editor}.js`
 - `src/core/smart.js`
+- `src/select/{maxflow,grabcut,refine}.js`
 - `src/vector/path.js`, `src/text/text-render.js`
 
 **CSS:** put component styles in a sibling `.css` file and `import './x.css'`

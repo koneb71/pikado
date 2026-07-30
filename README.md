@@ -22,7 +22,9 @@ builds them:
   natively supports; the rest (Linear Burn, Vivid Light, Divide, Darker Colour,
   …) run in a fragment shader, with an exact CPU path kept for small documents.
 - **Selections** — stored as an 8-bit coverage mask, so feathering, antialiasing
-  and partial selection are exact rather than approximated by paths.
+  and partial selection are exact rather than approximated by paths. Select and
+  Mask refines a boundary with real alpha matting, and Select Subject is a
+  graph cut rather than a guess (see below).
 - **History** — snapshot-based undo with copy-on-write pixel buffers, so a
   history step costs a few hundred bytes unless pixels actually changed.
 - **Non-destructive editing** — adjustment layers re-process the composite
@@ -95,6 +97,45 @@ in an app that keeps your work locally it is not an error. When a new version ha
 been fetched you get an "Update ready" button; Pikado will not reload the page on
 your behalf, since you might be halfway through a brush stroke.
 
+## Selecting the hard things
+
+Most selection tools answer "which pixels look like the one I clicked". Select
+and Mask answers a harder question — "where does this object end" — and it does
+it with two classical algorithms rather than a model.
+
+**The cut.** Paint a few strokes to say what is definitely subject and definitely
+background. Pikado fits a five-component Gaussian mixture to each set of colours,
+builds a graph where every pixel is a node whose links to its neighbours are
+cheap across an edge and expensive across flat colour, and takes the minimum cut
+with the Boykov–Kolmogorov max-flow algorithm. Then it refits both mixtures from
+the result and cuts again. That is GrabCut, and it is genuinely good at finding
+where one material stops and another starts.
+
+**The matte.** A cut is binary, and real edges are not. Set a Radius and Pikado
+stops trusting the cut inside a band around the boundary and asks the image
+instead: given the foreground and background colours typical of this
+neighbourhood, what mixture is this pixel? The closed-form answer to the
+compositing equation is what recovers hair, fur and motion blur. Where it cannot
+tell — where the two sides are the same colour — it keeps the cut's answer rather
+than inventing a number.
+
+Then the familiar controls: Smooth, Feather, Contrast, Shift Edge, and
+Decontaminate Colors to pull the green screen out of the fringe. Seven view modes
+(Onion Skin, Marching Ants, Overlay, On Black, On White, Black & White, On
+Layers), and five outputs — selection, layer mask, new layer, new layer with
+mask, new document.
+
+Everything upstream stays live while you work: the sliders re-run from the cut,
+the cut re-runs from your strokes, and nothing is baked until you press OK. So
+you can reach for Radius after twenty brush strokes and it behaves as if you had
+set it first.
+
+**Select Subject** is the same machinery with the strokes guessed for you, from a
+histogram-contrast saliency measure and a centre prior. It works on a subject
+that stands out from its background. It does not know what a person is, and when
+saliency finds nothing convincing it says so instead of selecting the whole
+frame.
+
 ## Right-click does the right thing
 
 Right-clicking the canvas asks the active tool what it can do *here*, at the
@@ -132,6 +173,7 @@ src/
   filters/     filter registry + implementations by menu
   adjustments/ adjustment registry + implementations
   effects/     layer style renderers + the Layer Style dialog
+  select/      graph-cut segmentation, alpha matting, edge refinement
   vector/      path model, geometry, shape rasterizing
   text/        text layout, rasterizing, font handling
   layers/      layer operations (merge, group, mask, rasterize…)
@@ -230,10 +272,15 @@ Stated plainly so you don't find out by clicking:
 
 - **Camera Raw, the 3D workspace, and the video timeline.** Not present. Nor is
   proprietary raw decoding (CR2/NEF/ARW) or video import/export.
-- **Select Subject / Select and Mask.** These are machine-learning features in
-  Photoshop. Rather than ship a fake, they're omitted. Quick Selection, Magic
-  Wand, Color Range and the Magnetic Lasso are all real and do the edge-finding
-  work honestly.
+- **A trained model behind Select Subject.** Photoshop's is a neural network;
+  Pikado's is classical computer vision — histogram-contrast saliency to guess
+  where the subject is, then GrabCut (iterated graph cuts over Gaussian mixture
+  colour models) to find its boundary. That is a real algorithm with real
+  behaviour, not a stub: it finds the boundary between two *colour
+  distributions*, so it does well on a subject that stands out from its
+  background and honestly not well on one that shares its palette. A few brush
+  strokes in Select and Mask fix that, which is how GrabCut is designed to be
+  used. It has no idea what a person or a cat is.
 - **ICC colour management.** Everything is 8-bit sRGB internally. 16-bit PSDs
   open by converting down to 8-bit. CMYK and Lab exist as colour maths (for the
   Info panel, Selective Color, and so on) but not as document modes.

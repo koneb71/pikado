@@ -142,6 +142,9 @@ export class SelectionTool extends Tool {
         cmd('select.all', { label: 'Select All' }),
         cmd('select.reselect', { hideWhenDisabled: true }),
         sep(),
+        cmd('select.subject'),
+        cmd('select.select-and-mask'),
+        sep(),
         cmd('layer.new', { label: 'New Layer' }),
         cmd('select.load'),
       ];
@@ -151,6 +154,7 @@ export class SelectionTool extends Tool {
       cmd('select.deselect'),
       cmd('select.inverse', { label: 'Select Inverse' }),
       sep(),
+      cmd('select.select-and-mask'),
       ...this.selectionModifyItems(),
       sep(),
       cmd('layer.via-copy', { hideWhenDisabled: true }),

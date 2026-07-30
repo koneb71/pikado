@@ -1,0 +1,101 @@
+/*
+ * Select and Mask.
+ *
+ * The workspace is a two-column dialog: a preview that takes whatever space is
+ * left, and a fixed-width control column that scrolls on its own. The preview
+ * pane is deliberately the flexible one — an edge refinement you cannot see at a
+ * useful size is not a refinement — so the height is tied to the viewport rather
+ * than to the content, and the controls never push it smaller.
+ */
+
+.pk-dialog.pk-sam {
+  /* Wider than the framework default; the preview needs the room. */
+  max-width: calc(100vw - 32px);
+}
+
+.pk-sam-layout {
+  display: flex;
+  gap: var(--s3, 16px);
+  align-items: stretch;
+  min-height: 0;
+}
+
+.pk-sam-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pk-sam-view {
+  flex: 1 1 auto;
+  /* A neutral surround, as the artboard has: any tint here would be read as
+     part of the image being matted. */
+  background: var(--void, #17171b);
+  border: 1px solid var(--hair, rgba(255, 255, 255, .08));
+  border-radius: var(--r-md, 8px);
+  min-height: 340px;
+  height: min(58vh, 620px);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.pk-sam-canvas {
+  display: block;
+  /* The checkerboard shows through wherever coverage is partial, which is the
+     whole point of the On Black / On White views. */
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, .045) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, .045) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, .045) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, .045) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.pk-sam-status {
+  flex: 0 0 auto;
+  font-size: var(--fs-sm, 11px);
+  color: var(--text-faint, rgba(255, 255, 255, .45));
+  font-variant-numeric: tabular-nums;
+  min-height: 14px;
+}
+
+.pk-sam-side {
+  flex: 0 0 268px;
+  width: 268px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: min(64vh, 700px);
+  padding-right: 2px;
+}
+
+.pk-sam-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.pk-sam-actions .pk-btn {
+  flex: 1 1 auto;
+}
+
+/* The control column's own headings, so Edge Detection and Global Refinements
+   read as groups rather than as one long list of sliders. */
+.pk-sam-side .pk-form-label {
+  margin-top: 4px;
+  font-size: var(--fs-sm, 11px);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-dim, rgba(255, 255, 255, .6));
+}
+
+@media (max-width: 900px) {
+  .pk-sam-layout { flex-direction: column; }
+  .pk-sam-side { flex: 1 1 auto; width: auto; max-height: none; }
+  .pk-sam-view { height: 42vh; }
+}
