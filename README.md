@@ -30,6 +30,12 @@ boilerplate: it caches the content-hashed `/assets/` forever and forbids caching
 of either is how a browser ends up asking for asset hashes the server no longer
 has.
 
+## Demo
+https://pikado.koneb.me
+
+<img width="1799" height="1041" alt="image" src="https://github.com/user-attachments/assets/d999296e-0532-469d-a47b-0f8b63c984b3" />
+
+
 ## What it is
 
 Pikado is a real layered image editor, not a canvas demo. The document model,
