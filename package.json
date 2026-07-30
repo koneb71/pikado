@@ -3,7 +3,29 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Pikado - a browser-based raster & vector image editor in the spirit of Photopea/Photoshop",
+  "description": "A browser-based raster and vector image editor in the spirit of Photopea and Photoshop. Runs entirely client-side.",
+  "license": "MIT",
+  "author": "Neiell Care L. Paradiang",
+  "homepage": "https://github.com/koneb71/pikado#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/koneb71/pikado.git"
+  },
+  "bugs": {
+    "url": "https://github.com/koneb71/pikado/issues"
+  },
+  "keywords": [
+    "image-editor",
+    "photo-editor",
+    "raster",
+    "vector",
+    "canvas",
+    "webgl",
+    "psd",
+    "layers",
+    "browser",
+    "offline"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",

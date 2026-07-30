@@ -4,11 +4,17 @@ A browser-based raster and vector image editor in the spirit of Photopea and
 Photoshop. Everything runs client-side — no server, no upload, no account.
 
 ```bash
+git clone https://github.com/koneb71/pikado.git
+cd pikado
 npm install
 npm run dev      # http://localhost:5173 (Vite takes the next free port if busy)
 npm run build    # production bundle in dist/
 npm test         # opens the regression suite at /tests/
 ```
+
+Vite is the only dependency. There is no build step to configure, no framework,
+and no TypeScript — the source is plain ES modules that a browser could load
+directly.
 
 ## What it is
 
@@ -459,8 +465,16 @@ error:
 | WebGL2 | the ten non-native blend modes at speed | exact CPU path, slower on large documents |
 | Canvas2D `filter` | GPU Gaussian blur | JS box-blur passes |
 
+## Contributing
+
+Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
+covers the setup, and — more usefully — the two conventions that are easy to
+violate by accident here: every test must be shown to fail against the bug it
+claims to catch, and the docs are not allowed to describe features that do not
+exist. Both exist because this project has been bitten by their absence.
+
 ## Licence
 
-Provided as-is for the requester. Photoshop and Photopea are trademarks of their
-respective owners; Pikado is an independent implementation and is not affiliated
-with either.
+[MIT](LICENSE). Photoshop and Photopea are trademarks of their respective
+owners; Pikado is an independent implementation and is not affiliated with
+either.

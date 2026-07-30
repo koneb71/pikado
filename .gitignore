@@ -11,10 +11,11 @@ dist-ssr/
 node_modules/.vite/
 .eslintcache
 
-# Editor and OS noise
+# Editor, agent and OS noise
 .vscode/*
 !.vscode/extensions.json
 .idea/
+.claude/
 *.swp
 *.swo
 .DS_Store
