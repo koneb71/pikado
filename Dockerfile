@@ -46,9 +46,12 @@ LABEL org.opencontainers.image.title="Pikado" \
 
 EXPOSE 80
 
-# wget is in busybox, so this costs nothing to add. `-q -O -` keeps it quiet
-# and avoids writing a file into the container on every check.
+# 127.0.0.1, not localhost: wget prefers the IPv6 answer, so "localhost" here
+# means [::1] and the check fails against anything bound to IPv4 only. That is
+# a container that serves every request correctly while reporting itself
+# unhealthy — and an orchestrator in front of it then refuses to route, which
+# surfaces as 502 rather than as anything mentioning health.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -q -O - http://localhost/ >/dev/null 2>&1 || exit 1
+    CMD wget -q -O - http://127.0.0.1/ >/dev/null 2>&1 || exit 1
 
 # The base image's own entrypoint handles config templating and signals.
