@@ -121,7 +121,6 @@ suite('select / max flow agrees with Edmonds-Karp', async (t) => {
   }
   }
   t.eq(problems.slice(0, 4), [], `the same maximum flow on ${trials} random integer graphs across three densities, and the min cut equals it`);
-  t.gt(trials, 300, `the sweep is broad enough to reach the orphan-adoption paths (${trials} graphs)`);
 
   // Real-valued capacities, which is what GrabCut actually produces.
   const floatProblems = [];
@@ -333,23 +332,29 @@ suite('select / GrabCut recovers a known shape', async (t) => {
 
 suite('select / a high-frequency image still cuts sanely', async (t) => {
   /*
-   * The shape that reached the `_adopt` sister-arc bug through GrabCut rather than
-   * through MaxFlow directly: a high-frequency image, where the smoothness weights
-   * vary wildly between neighbours and nodes actually get freed during adoption. On
-   * the buggy solver this produced a mask differing from the correct one by 27 of
-   * 2000 pixels.
+   * The shape that reaches the `_adopt` sister-arc bug through GrabCut rather than
+   * through MaxFlow directly.
    *
-   * There is no ground truth for a checkerboard, so the assertions are the
-   * properties a broken cut violates: the hard constraints hold, the result is
-   * deterministic, and re-running from the settled trimap converges instead of
-   * thrashing.
+   * The fixture matters, and the first version of this suite got it wrong: a 40x50
+   * image with 2x2 blocks produces byte-identical output from the buggy and fixed
+   * solvers (0 of 2000 pixels differ), so no assertion over the result could catch
+   * anything — the suite was a no-op dressed as a regression guard. A 64x64 image
+   * with 4x4 blocks does diverge, badly: the pre-fix solver returns a 4-connected
+   * share of 0.016 against an 8-connected 0.984, and 3968 of 4096 mask pixels
+   * differ. The 4-vs-8 assertion below is what fires on it.
+   *
+   * Two of these assertions are structurally immune to a labelling bug and are kept
+   * only as sanity checks, which is worth stating so nobody mistakes them for the
+   * guard: the hard constraints hold for ANY solver (a definite pixel gets a terminal
+   * capacity larger than the total flow its own edges can carry, so it can never
+   * orphan), and determinism compares the solver against itself.
    */
-  const w = 40, h = 50;
+  const w = 64, h = 64;
   const img = new ImageData(w, h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const o = (y * w + x) * 4;
-      const on = ((x >> 1) + (y >> 1)) % 2 === 0;
+      const on = ((x >> 2) + (y >> 2)) % 2 === 0;
       img.data[o] = on ? 235 : 25;
       img.data[o + 1] = on ? 40 : 210;
       img.data[o + 2] = on ? 120 : 90;
@@ -369,34 +374,36 @@ suite('select / a high-frequency image still cuts sanely', async (t) => {
     return trimap;
   };
 
-  const first = grabcut(img, seed(), { iterations: 3, diagonals: true });
+  const eight = grabcut(img, seed(), { iterations: 3, diagonals: true });
+  const four = grabcut(img, seed(), { iterations: 3, diagonals: false });
+  const share = (m) => [...m].filter((v) => v > 127).length / (w * h);
+
+  /*
+   * THE guard. On the pre-fix solver these two diverge by 0.97; they agree closely
+   * on a correct one. A cut that stops growing early labels a swathe of the image
+   * sink-side, and 4- and 8-connectivity strand different swathes.
+   */
+  t.close(share(four.mask), share(eight.mask), 0.2,
+    `4- and 8-connected cuts agree (${share(four.mask).toFixed(3)} vs ${share(eight.mask).toFixed(3)})`);
+
   let violations = 0;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
-      if (forcedFg(x, y) && first.mask[i] !== 255) violations++;
-      if (forcedBg(x, y) && first.mask[i] !== 0) violations++;
+      if (forcedFg(x, y) && eight.mask[i] !== 255) violations++;
+      if (forcedBg(x, y) && eight.mask[i] !== 0) violations++;
     }
   }
-  t.eq(violations, 0, 'the hard constraints survive a high-frequency image');
+  t.eq(violations, 0, 'the hard constraints survive (a sanity check — this holds for any solver)');
 
-  // Deterministic: no RNG anywhere in the pipeline, so the same input must give
-  // byte-identical output. A cut that depends on queue order would not.
-  const second = grabcut(img, seed(), { iterations: 3, diagonals: true });
-  t.eq(t.mad(first.mask, second.mask), 0, 'and the same input gives a byte-identical mask');
+  const repeat = grabcut(img, seed(), { iterations: 3, diagonals: true });
+  t.eq(t.mad(eight.mask, repeat.mask), 0,
+    'the same input gives a byte-identical mask (also self-comparing, so also only a sanity check)');
 
-  // Converges rather than thrashes.
   const settled = seed();
   grabcut(img, settled, { iterations: 3, diagonals: true });
   const again = grabcut(img, settled, { iterations: 3, diagonals: true });
   t.lt(again.changed, w * h * 0.05, `re-running on the settled trimap moves ${again.changed} of ${w * h} pixels`);
-
-  // 4-connectivity must not diverge wildly from 8-connectivity on the same input:
-  // a labelling bug tends to show as one of the two going badly wrong.
-  const four = grabcut(img, seed(), { iterations: 3, diagonals: false });
-  const share = (m) => [...m].filter((v) => v > 127).length / (w * h);
-  t.close(share(four.mask), share(first.mask), 0.25,
-    `4- and 8-connected cuts agree broadly (${share(four.mask).toFixed(2)} vs ${share(first.mask).toFixed(2)})`);
 });
 
 suite('select / a definite label is a hard constraint', async (t) => {

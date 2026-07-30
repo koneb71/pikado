@@ -11,6 +11,9 @@ import { getComposite, getViewComposite, compositeDocument } from '/src/render/c
 import { exportDocument } from '/src/io/save.js';
 import { createCanvas, ctx2d, ctx2dRead, loadImage } from '/src/core/util.js';
 import { getCommand } from '/src/commands/registry.js';
+import { Layer, LayerType } from '/src/core/layer.js';
+import { rasterizeTextLayer, defaultTextProps } from '/src/text/text-render.js';
+import { DEFAULT_STYLES } from '/src/effects/styles.js';
 import { savePKD, loadPKD } from '/src/io/pkd.js';
 
 /**
@@ -93,6 +96,8 @@ suite('color / tone curves invert themselves', async (t) => {
 /* ------------------------------------------------------------------ */
 /* Transforms                                                          */
 /* ------------------------------------------------------------------ */
+
+const corner = (x, y) => ({ x, y, in: null, out: null, corner: true });
 
 const PROBES = [[0, 0, 0], [1, 1, 1], [0.5, 0.5, 0.5], [1, 0, 0], [0.2, 0.6, 0.9], [0.04, 0.04, 0.04]];
 
@@ -219,7 +224,7 @@ suite('color / assign relabels, convert moves pixels', async (t) => {
   t.eq(doc.history.states[doc.history.index].label, 'Assign Profile: Adobe RGB (1998)', 'as its own history step');
 
   // Convert back: the numbers must move.
-  convertToProfile(doc, 'srgb');
+  await convertToProfile(doc, 'srgb');
   t.eq(profileOf(doc).id, 'srgb', 'converting changes the profile too');
   t.gt(t.mad(t.bytes(doc.layers[0].canvas), before), 1, 'but this time the pixels moved');
   t.eq(doc.history.states[doc.history.index].label, 'Convert to Profile: sRGB IEC61966-2.1', 'in its own step');
@@ -232,8 +237,136 @@ suite('color / assign relabels, convert moves pixels', async (t) => {
   // pointless lossy round trip.
   const doc2 = t.doc(8, 8, '#808080', 'same');
   const pixels = t.bytes(doc2.layers[0].canvas);
-  t.eq(convertToProfile(doc2, 'srgb'), null, 'converting to the current profile does nothing');
+  t.eq(await convertToProfile(doc2, 'srgb'), null, 'converting to the current profile does nothing');
   t.eq(t.mad(t.bytes(doc2.layers[0].canvas), pixels), 0, 'and leaves the pixels alone');
+});
+
+suite('color / convert reaches rendered pixels, not just parameters', async (t) => {
+  /*
+   * Text, shape and smart layers keep their colour somewhere OTHER than the canvas
+   * the compositor draws, and that canvas is a cache regenerated from the parameter.
+   * So Convert has to do BOTH halves: change the parameter and re-render. An earlier
+   * version of the fix did only the first, which looked wrong immediately (nothing
+   * re-rendered) after an earlier version had done only the second, which looked
+   * right until the next re-render reverted it.
+   *
+   * These assertions check the *rendered* pixels, which is the half that was missing.
+   */
+  const { createShapeLayer } = await import('/src/vector/path.js');
+  const { convertToSmartObject } = await import('/src/layers/ops.js');
+  const { renderSmartObject, isSmartLayer } = await import('/src/core/smart.js');
+
+  /* --- text ---------------------------------------------------------- */
+  {
+    const doc = t.doc(60, 40, '#ffffff', 'text-convert');
+    const layer = new Layer({
+      name: 'T', type: LayerType.TEXT,
+      text: { ...defaultTextProps(), content: 'Ag', size: 26, color: '#00ff40', x: 4, y: 30 },
+    });
+    layer.ensureCanvas(60, 40);
+    doc.layers.unshift(layer);
+    rasterizeTextLayer(layer, doc);
+    doc.commit('Text');
+    t.gt(t.inked(layer.canvas), 20, 'the text rendered');
+    const pixelsBefore = t.bytes(layer.canvas);
+    const colourBefore = layer.text.color;
+
+    await convertToProfile(doc, 'prophoto');
+    const live = doc.findLayer(layer.id);
+    t.ne(live.text.color, colourBefore, `the text colour parameter is converted (${colourBefore} -> ${live.text.color})`);
+    t.gt(t.mad(t.bytes(live.canvas), pixelsBefore), 0.5,
+      'AND the rendered pixels move with it, so the canvas is not left in the old space');
+  }
+
+  /* --- shape --------------------------------------------------------- */
+  {
+    const doc = t.doc(60, 40, '#ffffff', 'shape-convert');
+    const layer = createShapeLayer(
+      doc,
+      [{ closed: true, points: [[8, 8], [50, 8], [50, 32], [8, 32]].map(([x, y]) => corner(x, y)) }],
+      {
+        fill: { kind: 'solid', color: '#00ff40' },
+        stroke: { enabled: true, color: '#ff0080', width: 3, align: 'center', cap: 'butt', join: 'miter', dash: 'solid' },
+      },
+      'Shape'
+    );
+    if (layer) {
+      doc.layers.unshift(layer);
+      doc.commit('Shape');
+      const pixelsBefore = t.bytes(layer.canvas);
+      const fillBefore = layer.shape.fill.color;
+      const strokeBefore = layer.shape.stroke.color;
+
+      await convertToProfile(doc, 'prophoto');
+      const live = doc.findLayer(layer.id);
+      t.ne(live.shape.fill.color, fillBefore, `the fill colour is converted (${fillBefore} -> ${live.shape.fill.color})`);
+      t.ne(live.shape.stroke.color, strokeBefore, 'and the stroke colour');
+      t.gt(t.mad(t.bytes(live.canvas), pixelsBefore), 0.5, 'and the shape is re-rasterised');
+    } else {
+      t.ok(true, 'createShapeLayer is unavailable in this build, so the shape case is skipped');
+    }
+  }
+
+  /* --- smart object -------------------------------------------------- */
+  {
+    const doc = t.doc(60, 40, '#ffffff', 'smart-convert');
+    const layer = doc.activeLayer();
+    const c = ctx2d(layer.canvas);
+    c.fillStyle = '#00ff40';
+    c.fillRect(0, 0, 60, 40);
+    doc.commit('Paint');
+
+    const smart = convertToSmartObject(doc);
+    t.ok(isSmartLayer(smart), 'the layer became a Smart Object');
+    const id = smart.id;
+    const renderBefore = t.bytes(doc.findLayer(id).canvas);
+    const sourceBefore = doc.findLayer(id).smart.source;
+
+    await convertToProfile(doc, 'prophoto');
+    const live = doc.findLayer(id);
+    t.gt(t.mad(t.bytes(live.canvas), renderBefore), 0.5,
+      'converting moves the smart layer\'s VISIBLE pixels, not only its hidden source');
+    t.isNot(live.smart.source, sourceBefore,
+      'and swaps in a converted clone rather than mutating the source in place');
+
+    // The source object every earlier history state points at must be untouched, or
+    // undo cannot work and a second convert double-converts.
+    doc.history.undo();
+    const undone = doc.findLayer(id);
+    t.eq(t.mad(t.bytes(undone.canvas), renderBefore), 0, 'so undo restores the render exactly');
+    t.is(undone.smart.source, sourceBefore, 'pointing back at the original source document');
+
+    // Convert, undo, convert again: the second result must equal the first, not be
+    // double-converted.
+    await convertToProfile(doc, 'prophoto');
+    const first = t.bytes(doc.findLayer(id).canvas);
+    doc.history.undo();
+    await convertToProfile(doc, 'prophoto');
+    t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), first), 0,
+      'and convert / undo / convert lands in the same place rather than converting twice');
+  }
+});
+
+suite('color / layer effect colours are converted too', async (t) => {
+  // Effect colours are parameters the compositor re-renders every frame, so leaving
+  // them unconverted means a drop shadow stays in the old space forever while the
+  // layer it belongs to moves. This is the same defect class as the text/shape one,
+  // one field over.
+  const doc = t.doc(50, 40, '#ffffff', 'styles-convert');
+  const layer = doc.activeLayer();
+  const c = ctx2d(layer.canvas);
+  c.fillStyle = '#8080ff';
+  c.fillRect(10, 10, 30, 20);
+  layer.styles = structuredClone(DEFAULT_STYLES);
+  layer.styles.dropShadow = { ...layer.styles.dropShadow, enabled: true, color: '#ff2000' };
+  doc.commit('Shadow');
+  const before = layer.styles.dropShadow.color;
+
+  await convertToProfile(doc, 'prophoto');
+  const live = doc.findLayer(layer.id);
+  t.ne(live.styles.dropShadow.color, before,
+    `the drop shadow colour is converted (${before} -> ${live.styles.dropShadow.color})`);
+  t.eq(live.styles.dropShadow.enabled, true, 'and the rest of the effect is left intact');
 });
 
 suite('color / a convert round trip through a wider space is near-lossless', async (t) => {
@@ -249,9 +382,9 @@ suite('color / a convert round trip through a wider space is near-lossless', asy
   doc.commit('Spread');
   const before = t.bytes(doc.layers[0].canvas);
 
-  convertToProfile(doc, 'prophoto');
+  await convertToProfile(doc, 'prophoto');
   t.gt(t.mad(t.bytes(doc.layers[0].canvas), before), 1, 'converting to ProPhoto moves the numbers');
-  convertToProfile(doc, 'srgb');
+  await convertToProfile(doc, 'srgb');
   const after = t.mad(t.bytes(doc.layers[0].canvas), before);
   // 8-bit through a much larger space costs a little precision; that is real and
   // worth pinning, so a regression that costs a lot shows up.
@@ -347,7 +480,7 @@ suite('color / the profile is part of the document, not just of the view', async
   const pixels = t.bytes(doc.layers[0].canvas);
   t.eq(profileOf(doc).id, 'srgb', 'an untagged document reads as sRGB');
 
-  convertToProfile(doc, 'adobe-rgb');
+  await convertToProfile(doc, 'adobe-rgb');
   t.eq(profileOf(doc).id, 'adobe-rgb', 'converting sets the profile');
   doc.history.undo();
   t.eq(profileOf(doc).id, 'srgb', 'and undo puts the profile back, not just the pixels');
@@ -416,66 +549,110 @@ suite('color / grey profiles adapt their white point too', async (t) => {
 
 suite('color / the ICC parser survives hostile bytes', async (t) => {
   /*
-   * parseICC reads a file. Every offset and length in an ICC profile comes from
-   * that file, and a tag claiming to start at 4 GB or hold 2 GB of samples is a
-   * two-line edit away in any hex editor. The contract is that it RETURNS a
-   * failure — a throw would escape into a file-open handler.
+   * parseICC reads a file. Every offset and length in an ICC profile comes from that
+   * file, and a tag claiming to start at 4 GB or hold 2 GB of samples is a two-line
+   * edit away in any hex editor.
+   *
+   * The first version of this suite only asserted that parseICC did not THROW — which
+   * a blanket try/catch guarantees unconditionally, so every bounds check inside
+   * could have been deleted and it would still have passed. It was the same
+   * unfalsifiable shape it was written to replace. So each case now asserts the
+   * SPECIFIC outcome the specific bounds check produces, and the throw-free property
+   * is checked separately as a floor rather than as the whole test.
    */
   const base = buildProfile({ desc: 'Victim' });
 
-  const corrupt = (mutate) => {
+  const mutated = (mutate) => {
     const bytes = new Uint8Array(base);
     mutate(bytes, new DataView(bytes.buffer));
-    let result;
-    try {
-      result = parseICC(bytes);
-    } catch (err) {
-      return { threw: String((err && err.message) || err) };
-    }
-    return { threw: null, ok: result.ok, reason: result.reason };
+    let result = null, threw = null;
+    try { result = parseICC(bytes); } catch (err) { threw = String((err && err.message) || err); }
+    return { result, threw };
   };
 
-  const cases = {
-    'a tag offset past the end of the file': (b, dv) => dv.setUint32(132 + 4, 0xfffff000),
-    'a tag size past the end of the file': (b, dv) => dv.setUint32(132 + 8, 0x7fffffff),
-    'an absurd tag count': (b, dv) => dv.setUint32(128, 0x0fffffff),
-    'a negative-looking profile size': (b, dv) => dv.setUint32(0, 0xffffffff),
-    'a truncated buffer': (b) => b.fill(0, b.length - 40),
-  };
-  for (const [name, mutate] of Object.entries(cases)) {
-    const r = corrupt(mutate);
-    t.eq(r.threw, null, `${name}: returns instead of throwing`);
-  }
+  // A clean profile must parse, or nothing below proves anything.
+  const clean = parseICC(base);
+  t.ok(clean.ok, 'the unmutated fixture parses, so the mutations below are the variable');
 
-  // A curv tag declaring far more samples than its own size can hold must not
-  // allocate for the declared count nor read past the buffer.
-  const hugeCurve = (() => {
-    const bytes = new Uint8Array(base);
-    const dv = new DataView(bytes.buffer);
-    // Find the rTRC tag and rewrite its sample count.
+  // Tag extents are validated when the table is read, and a tag that does not fit is
+  // dropped — which for rXYZ means the profile has no colorants and is rejected with
+  // that exact reason. Deleting the extent check changes this outcome.
+  /*
+   * Corrupt a tag the profile CANNOT do without, or the drop is invisible: the first
+   * tag in the fixture is `desc`, and losing a description just falls back to a
+   * default. `rXYZ` is a red colorant — without it there is no matrix and the profile
+   * must be rejected, which is what makes the extent check observable.
+   */
+  const corruptTag = (name, field, value) => mutated((b, dv) => {
     for (let i = 0; i < dv.getUint32(128); i++) {
       const at = 132 + i * 12;
-      const name = String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
-      if (name !== 'rTRC') continue;
-      dv.setUint32(dv.getUint32(at + 4) + 8, 0x00ffffff);
+      const sig = String.fromCharCode(b[at], b[at + 1], b[at + 2], b[at + 3]);
+      if (sig === name) dv.setUint32(at + field, value);
     }
-    return bytes;
-  })();
-  let threw = null;
-  let out = null;
-  try { out = parseICC(hugeCurve); } catch (err) { threw = String((err && err.message) || err); }
-  t.eq(threw, null, 'a curve declaring 16 million samples in a 14-byte tag does not throw');
-  t.ok(out && typeof out.ok === 'boolean', 'and returns a verdict either way');
+  });
 
-  // Random bytes, as a fuzz sweep.
-  const rnd = (() => { let s = 99; return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; }; })();
+  const farOffset = corruptTag('rXYZ', 4, 0xfffff000);
+  t.eq(farOffset.threw, null, 'a tag offset past the end of the file does not throw');
+  t.notOk(farOffset.result.ok, 'and the profile is rejected, because the dropped tag was load-bearing');
+  t.ok(/colorant/i.test(farOffset.result.reason), `naming what is missing (${farOffset.result.reason})`);
+
+  const hugeSize = corruptTag('rXYZ', 8, 0x7fffffff);
+  t.eq(hugeSize.threw, null, 'a tag size past the end does not throw');
+  t.notOk(hugeSize.result.ok, 'and is rejected too');
+
+  // The header's own size field must not be trusted over the buffer length.
+  const bigClaim = mutated((b, dv) => dv.setUint32(0, 0xffffffff));
+  t.eq(bigClaim.threw, null, 'a profile claiming to be 4 GB does not throw');
+  t.notOk(bigClaim.result.ok, 'and is rejected');
+  t.ok(/are present/.test(bigClaim.result.reason), `naming the mismatch (${bigClaim.result.reason})`);
+
+  // A tag count that would run the table past the file.
+  const manyTags = mutated((b, dv) => dv.setUint32(128, 0x0fffffff));
+  t.eq(manyTags.threw, null, 'an absurd tag count does not throw');
+  t.notOk(manyTags.result.ok, 'and is rejected');
+  t.ok(/tag table/.test(manyTags.result.reason), `naming the tag table (${manyTags.result.reason})`);
+
+  /*
+   * The curve-count check is the one with an observable positive outcome: a curv tag
+   * declaring 16 million samples inside a 14-byte tag must still parse, with the
+   * sample count clamped to what the tag can hold — not allocate 16 million floats,
+   * and not read past the buffer.
+   */
+  const hugeCurve = mutated((b, dv) => {
+    for (let i = 0; i < dv.getUint32(128); i++) {
+      const at = 132 + i * 12;
+      const name = String.fromCharCode(b[at], b[at + 1], b[at + 2], b[at + 3]);
+      if (name === 'rTRC') dv.setUint32(dv.getUint32(at + 4) + 8, 0x00ffffff);
+    }
+  });
+  t.eq(hugeCurve.threw, null, 'a curve declaring 16 million samples in a 14-byte tag does not throw');
+  t.notOk(hugeCurve.result.ok, 'and the profile is rejected rather than parsed with a bogus curve');
+  t.ok(/curve|rTRC/i.test(hugeCurve.result.reason), `saying which tag (${hugeCurve.result.reason})`);
+
+  const short = parseICC(new Uint8Array(64));
+  t.notOk(short.ok, 'a truncated file is rejected');
+  t.ok(/too short/.test(short.reason), `and says so (${short.reason})`);
+
+  const notICC = new Uint8Array(200);
+  notICC.set(new TextEncoder().encode('not an icc file at all'), 0);
+  t.notOk(parseICC(notICC).ok, 'a file with no acsp signature is rejected');
+  t.ok(/not an ICC profile/.test(parseICC(notICC).reason), 'and says so');
+
+  // The floor: random corruption must never throw, whatever it hits.
+  const rnd = (() => { let s2 = 99; return () => { s2 = (s2 * 1103515245 + 12345) & 0x7fffffff; return s2 / 0x7fffffff; }; })();
   const throws = [];
-  for (let trial = 0; trial < 60; trial++) {
+  let parsedAnyway = 0;
+  for (let trial = 0; trial < 80; trial++) {
     const bytes = new Uint8Array(base);
     for (let k = 0; k < 12; k++) bytes[Math.floor(rnd() * bytes.length)] = Math.floor(rnd() * 256);
-    try { parseICC(bytes); } catch (err) { throws.push(String((err && err.message) || err)); }
+    try {
+      if (parseICC(bytes).ok) parsedAnyway++;
+    } catch (err) { throws.push(String((err && err.message) || err)); }
   }
-  t.eq(throws.slice(0, 3), [], 'and 60 randomly corrupted profiles all return rather than throw');
+  t.eq(throws.slice(0, 3), [], 'and 80 randomly corrupted profiles all return rather than throw');
+  // Not every corruption is fatal — most bytes are payload — so some still parse.
+  // Asserting that keeps the sweep from passing on a parser that rejects everything.
+  t.gt(parsedAnyway, 0, `while ${parsedAnyway} of 80 remained valid enough to parse, so the sweep is not just rejecting everything`);
 });
 
 /* ------------------------------------------------------------------ */

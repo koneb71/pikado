@@ -343,10 +343,25 @@ export function makeTransform(from, to, opts = {}) {
       out = dstGray ? [xyz[1], xyz[1], xyz[1]] : mul3(dstInv, xyz);
     }
 
-    // 3. black point compensation, on the linear range
+    /*
+     * 3. Black point compensation, on the linear range.
+     *
+     * Maps srcBlack onto dstBlack and 1 onto 1. The piecewise part matters now that
+     * `bkpt` is actually read: a plain linear remap sends every value BELOW the
+     * source black point negative, where it clips to zero, so a profile declaring a
+     * 2% media black silently crushed everything darker than 2% into flat black.
+     * Nothing should be below the media black in theory; in practice an 8-bit file
+     * carrying a converted-in profile often is. Values under srcBlack are therefore
+     * compressed into [0, dstBlack] instead of discarded, which keeps the whole
+     * transfer monotonic and loses nothing.
+     */
     if (scaleBlack) {
+      const scale = (1 - dstBlack) / (1 - srcBlack);
       for (let i = 0; i < 3; i++) {
-        out[i] = dstBlack + (out[i] - srcBlack) * ((1 - dstBlack) / (1 - srcBlack));
+        const v = out[i];
+        out[i] = v >= srcBlack
+          ? dstBlack + (v - srcBlack) * scale
+          : (srcBlack > 0 ? (v / srcBlack) * dstBlack : dstBlack);
       }
     }
 
@@ -568,8 +583,13 @@ function readBlackPoint(dv, tag) {
   const xyz = readXYZTag(dv, tag);
   if (!xyz) return 0;
   const y = xyz[1];
-  // A media black above a few per cent is a broken profile, not a dark medium.
-  return Number.isFinite(y) && y > 0 && y < 0.2 ? y : 0;
+  /*
+   * A media black above a few per cent is a broken tag, not a dark medium: real
+   * print media sit around 0.3-2% and a display profile lower still. The old bound
+   * of 0.2 would have let a malformed profile claim a 20% black and crush a fifth of
+   * the tonal range on every conversion.
+   */
+  return Number.isFinite(y) && y > 0 && y < 0.05 ? y : 0;
 }
 
 function readXYZTag(dv, tag) {

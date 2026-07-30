@@ -270,6 +270,33 @@ export function smoothMask(mask, w, h, radius) {
 }
 
 /**
+ * The width, in pixels, of a mask's soft transition.
+ *
+ * Partial-coverage area divided by contour length is a width — but only if the
+ * length is measured properly. Counting horizontal sign changes with a wrapped
+ * `i - 1` compares the last pixel of one row against the first of the next, which
+ * inflates the count on some masks and deflates it on others. Both directions are
+ * counted here, within their own rows and columns.
+ *
+ * Returns 0 for a hard mask, which callers read as "nothing to preserve".
+ */
+function transitionWidth(mask, w, h) {
+  let partial = 0, crossings = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const v = mask[i];
+      if (v > 8 && v < 247) partial++;
+      if (x > 0 && (v > 127) !== (mask[i - 1] > 127)) crossings++;
+      if (y > 0 && (v > 127) !== (mask[i - w] > 127)) crossings++;
+    }
+  }
+  // Two crossings per contour pixel on average (one per axis), so halve.
+  const contour = crossings / 2;
+  return contour > 0 ? partial / contour : 0;
+}
+
+/**
  * Feather: blur the coverage. `boxBlurMask` runs three box passes, which is a
  * close enough approximation of a Gaussian that the difference is invisible in
  * an 8-bit mask. It *returns* a new mask rather than blurring in place.
@@ -330,15 +357,16 @@ export function shiftEdge(mask, w, h, percent) {
    * estimated from how much partial coverage it has. A hard mask keeps a narrow
    * ramp; a soft one keeps its softness.
    */
-  let partialCount = 0, edgeCount = 0;
-  for (let i = 0; i < mask.length; i++) {
-    const v = mask[i];
-    if (v > 8 && v < 247) partialCount++;
-    if (v > 127 !== (mask[i > 0 ? i - 1 : 0] > 127)) edgeCount++;
-  }
-  // Partial pixels per unit of contour length approximates the falloff width.
-  const softness = edgeCount > 0 ? partialCount / edgeCount : 0;
-  const ramp = Math.max(12, Math.min(200, softness * 26));
+  const softness = transitionWidth(mask, w, h);
+  /*
+   * The ramp is in mask levels; the softness is in pixels. A box-blurred mask changes
+   * by roughly 255 / (2 * spread) levels per pixel near the contour, so preserving a
+   * transition `softness` pixels wide needs a ramp of `softness * 255 / (2 * spread)`
+   * levels. That derivation is the point: the first version multiplied the estimate by
+   * a magic 26 and clamped at 200, which saturated on almost any soft mask and gave
+   * every result the same hardness — the very thing the estimate was added to avoid.
+   */
+  const ramp = Math.max(12, Math.min(255, (softness * 255) / (2 * spread)));
 
   for (let i = 0; i < mask.length; i++) {
     const v = (blurred[i] - cut) / ramp + 0.5;
@@ -387,15 +415,18 @@ export function decontaminateColors(image, mask, amount = 100, opts = {}) {
    * The falloff width is estimated the same way `shiftEdge` estimates it: partial
    * pixels per unit of contour length.
    */
-  let partialCount = 0, edgeCount = 0;
-  for (let i = 0; i < mask.length; i++) {
-    const v = mask[i];
-    if (v > 8 && v < 247) partialCount++;
-    if ((v > 127) !== (mask[i > 0 ? i - 1 : 0] > 127)) edgeCount++;
-  }
-  const falloff = edgeCount > 0 ? partialCount / edgeCount : 0;
-  const bandRadius = Math.max(6, Math.min(64, Math.round(opts.radius || falloff * 1.6)));
-  const win = Math.max(4, Math.round(bandRadius * 0.8));
+  const falloff = transitionWidth(mask, w, h);
+  const bandRadius = Math.max(6, Math.min(48, Math.round(opts.radius || falloff * 1.6)));
+  /*
+   * The sampling window is capped hard, and separately from the band.
+   *
+   * It is the inner loop of a per-fringe-pixel search, so its cost is quadratic: at
+   * the 51 px an unbounded `bandRadius * 0.8` reached, that is 10,609 samples for
+   * every fringe pixel, running synchronously at full document resolution while the
+   * Select and Mask preview waits. Twelve pixels is ample — the background it needs
+   * is right there across the edge — and caps the inner loop at 625.
+   */
+  const win = Math.max(4, Math.min(12, Math.round(bandRadius * 0.8)));
 
   const { band } = edgeBand(mask, w, h, bandRadius);
   for (let y = 0; y < h; y++) {

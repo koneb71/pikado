@@ -189,7 +189,8 @@ registerPanel({
       renderBar();
       let plays = 0;
       const tick = () => {
-        if (!playing || doc() !== d) return stop();
+        // `body.isConnected` covers the panel being closed or re-docked; see above.
+        if (!playing || doc() !== d || !body.isConnected) return stop();
         const frames = framesOf(d);
         const i = frameIndex(d);
         const wrapped = i + 1 >= frames.length;
@@ -208,17 +209,18 @@ registerPanel({
     document.addEventListener('visibilitychange', () => { if (document.hidden && playing) stop(); });
 
     /*
-     * And stop when the panel itself goes away. Closing the Timeline detaches its
-     * DOM but nothing tears the timer chain down, so playback kept running —
-     * stepping frames, emitting events and repainting a strip nobody could see,
-     * for as long as the tab stayed open. A MutationObserver on the panel's own
-     * detachment is the only signal available: the panel host does not offer a
-     * teardown hook.
+     * And stop when the panel itself goes away. Closing the Timeline detaches its DOM
+     * but nothing tears the timer chain down, so playback kept running — stepping
+     * frames, emitting events and repainting a strip nobody could see — for as long
+     * as the tab stayed open.
+     *
+     * The check lives in the playback tick rather than in a MutationObserver. An
+     * observer on `body.parentNode` captured at build time watches the wrong node the
+     * moment the dock re-renders: `panel-host.js` builds a fresh group body and
+     * re-parents every visible panel, leaving the observer bound to a detached
+     * element that will never fire again. `body.isConnected` asks the question
+     * directly, costs nothing, and cannot go stale.
      */
-    const detachWatch = new MutationObserver(() => {
-      if (!body.isConnected && playing) stop();
-    });
-    if (body.parentNode) detachWatch.observe(body.parentNode, { childList: true });
 
     /* --- selection ---------------------------------------------------- */
 

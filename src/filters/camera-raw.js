@@ -231,18 +231,8 @@ function sampleLUT(lut, v) {
 }
 
 /**
- * Force a transfer curve to be non-decreasing, in place.
- *
- * This is not a nicety. The four tone sliders are additive bumps whose weights
- * have real slope — `wBlacks` is `(1 - l)^6`, so its derivative at black is -6,
- * and at Blacks +100 the transfer function's own slope became `1 + 0.3 * (-6)`,
- * which is **negative**. A negative slope means darker input produced lighter
- * output: a tonal inversion, visible as a bright halo in the deepest shadows, and
- * it got worse when two sliders stacked. Rather than hand-tuning coefficients until
- * it happens not to occur — which would silently break again the moment a weight
- * changed — the curve is built freely and then made monotonic by construction.
- * Clamping the running maximum flattens exactly the stretch that would have
- * inverted and leaves everything else untouched.
+ * Force a transfer curve to be non-decreasing, in place. A backstop; the curves
+ * below are built monotonic.
  */
 function enforceMonotonic(lut) {
   for (let i = 1; i <= LUT_STEPS; i++) if (lut[i] < lut[i - 1]) lut[i] = lut[i - 1];
@@ -252,24 +242,96 @@ function enforceMonotonic(lut) {
 /**
  * The tone-region transfer curve, in encoded lightness.
  *
- * Each slider moves its own region, and the result is applied back as a gain on
- * all three channels so hue and saturation survive. Working in the encoded domain
- * is what makes the sliders feel linear: a 1.3x gain on *linear* light is
- * invisible in deep shadow, while the same slider position as a lightness delta is
- * clearly visible, which is what a user expects from "Shadows +80".
+ * Four sliders, applied as four **strictly monotone** operations composed in order.
+ * That construction is the point, and it took three wrong versions to arrive at:
  *
- * Every slider adds with its own sign, so Highlights negative darkens highlights.
- * (An earlier version multiplied the highlight term by -1.4, which combined with a
- * negative slider to *brighten* what it was meant to recover.)
+ *   1. Summing weight bumps onto the identity made the curve NON-MONOTONIC.
+ *      `wBlacks` is `(1-l)^6`, derivative -6 at black, so at Blacks +100 the
+ *      transfer slope was `1 + 0.3 x (-6)` — negative. Darker in, lighter out.
+ *   2. Clamping the running maximum afterwards made it monotonic by flattening the
+ *      whole would-have-inverted stretch to one value: the shadows posterised into a
+ *      single tone. Scaling the delta to its largest monotonic fraction had the same
+ *      character — a near-zero slope across a range, because all the lift sat where
+ *      the weight was steep.
+ *   3. A monotone spline through five control points spread the lift out, but the
+ *      points themselves can be contradictory (Shadows +100 pushes the quarter tone
+ *      above the midpoint), and forcing them into order flattened a segment instead.
+ *      At the extreme — every slider pushed inward — the whole ramp collapsed to one
+ *      tone.
+ *
+ * Composing operations that are each strictly increasing cannot produce a plateau at
+ * all, whatever the sliders say, because the slope of a composition is the product
+ * of the slopes and none of them is zero. Clipping still happens where the user asks
+ * for it — crushing blacks clips at the bottom, that is what crushing means — but
+ * nothing collapses in the middle.
+ *
+ *   Blacks / Whites  move the endpoints  (a levels-style remap)
+ *   Shadows          lifts or lowers the darks, holding 0 and 1 fixed
+ *   Highlights       pulls or pushes the brights, holding 0 and 1 fixed
  */
 function toneRegionLUT(shadows, highlights, whites, blacks) {
-  const K = 0.3;
   const lut = new Float32Array(LUT_STEPS + 1);
+
+  // Endpoint moves. A positive Blacks raises the black point (greying the shadows,
+  // slope 1 - B, no clipping); a negative one deepens it (slope 1/(1-B), clipping at
+  // the bottom). Whites is the mirror image.
+  const b = blacks * 0.25;
+  const w = whites * 0.25;
+
+  /*
+   * Region shaping, applied to HALF the range each.
+   *
+   * A gamma over the whole range is strictly increasing and fixes both endpoints,
+   * which is why it was tempting — but it is not confined: a Highlights gamma pulls
+   * the midtones and shadows down too, and measured on a test patch, Highlights -80
+   * took a shadow from 22 to 11. That is exactly the crosstalk the sliders exist to
+   * avoid, and it is worse than the weight-based version it replaced.
+   *
+   * Applying each gamma to its own half of the range — rescaled to 0..1 so the gamma
+   * still fixes both ends of that half — confines it completely. Both halves meet at
+   * the midpoint with the same value, so the curve is continuous, and each piece is
+   * strictly increasing, so the whole is monotone. The slope changes at the midpoint;
+   * that kink is invisible in practice, and it is a far better trade than a slider
+   * that moves tones it does not name.
+   */
+  /*
+   * The exponent is 2^(-slider·k), NOT 1/(1 + slider·k).
+   *
+   * The reciprocal form looks equivalent and is not: it needs k < 1 to keep the
+   * denominator positive, and confining each gamma to half the range meant k had to
+   * rise to about 1.3 for the sliders to stay effective. At k = 1.3 anything past
+   * |slider| = 0.77 drives the denominator NEGATIVE — the exponent flips sign, the
+   * power explodes, and half the tonal range collapses to a single value. Highlights
+   * +100 flattened everything above mid grey to 128.
+   *
+   * An exponential is positive for every input, symmetric in log space (so +50 and
+   * -50 are equal and opposite), and has no pole to fall into.
+   */
+  const shadowGamma = 2 ** (-shadows * 1.6);
+  const highlightGamma = 2 ** (highlights * 1.6);
+
   for (let i = 0; i <= LUT_STEPS; i++) {
-    const le = i / LUT_STEPS;
-    const delta = shadows * wShadows(le) + highlights * wHighlights(le)
-      + whites * wWhites(le) + blacks * wBlacks(le);
-    lut[i] = clamp01(le + delta * K);
+    let v = i / LUT_STEPS;
+
+    if (b > 0) v = v * (1 - b) + b;
+    else if (b < 0) v = (v + b) / (1 + b);
+
+    if (w > 0) v = v / (1 - Math.min(0.9, w));
+    else if (w < 0) v = v * (1 + w);
+
+    v = clamp01(v);
+
+    if (shadows && v < 0.5) {
+      const u = v / 0.5;
+      v = 0.5 * (u <= 0 ? 0 : u ** shadowGamma);
+    }
+    if (highlights && v > 0.5) {
+      // On the complement within the upper half, so it shapes the bright end.
+      const u = (v - 0.5) / 0.5;
+      v = 0.5 + 0.5 * (u >= 1 ? 1 : 1 - (1 - u) ** highlightGamma);
+    }
+
+    lut[i] = clamp01(v);
   }
   return enforceMonotonic(lut);
 }
@@ -791,8 +853,19 @@ function applyDehaze(lin, w, h, amount) {
 
   const strength = Math.min(0.95, Math.abs(amount) * 0.95);
   const adding = amount < 0;
+  /*
+   * Adding haze needs a DIFFERENT transmission map from removing it.
+   *
+   * The estimated map describes the veil already present, so it is near 1 wherever
+   * the image is dark and clear — and `A·(1 - t)` there is near zero. Running it
+   * forward therefore added almost no veil to exactly the dark regions haze affects
+   * most, which is the opposite of hazy. Real haze thickens with distance and, absent
+   * a depth map, the honest approximation is uniform: every pixel gets the same
+   * transmission, so the whole image lifts and flattens the way a veil makes it.
+   */
+  const uniformT = 1 - strength * 0.8;
   for (let i = 0, p = 0; p < n; p++, i += 4) {
-    const t = Math.max(0.1, 1 - strength * (minned[p] / A));
+    const t = adding ? uniformT : Math.max(0.1, 1 - strength * (minned[p] / A));
     for (let c = 0; c < 3; c++) {
       const I = lin[i + c];
       /*

@@ -75,7 +75,7 @@ export function assignProfile(doc, profile) {
  *
  * @param {{intent?:string, blackPoint?:boolean}} [opts]
  */
-export function convertToProfile(doc, profile, opts = {}) {
+export async function convertToProfile(doc, profile, opts = {}) {
   if (!doc) return null;
   const to = typeof profile === 'string' ? getProfile(profile) : profile;
   if (!to) return null;
@@ -84,12 +84,66 @@ export function convertToProfile(doc, profile, opts = {}) {
     app.toast(`This document is already ${to.name}.`, 'info');
     return null;
   }
+  // Text, shape and smart layers have to be re-rendered, which needs modules a
+  // colour module cannot import at the top without a cycle. Awaiting here is what
+  // makes "converted" mean the visible pixels too, not just the parameters.
+  await primeColorHelpers();
   convertSurfaces(doc, from, to, opts);
   doc.profile = to;
   doc.invalidate();
   doc.commit(`Convert to Profile: ${to.name}`);
   return to;
 }
+
+/*
+ * `smart.js`, `text-render.js` and `path.js` all pull in enough of the app that
+ * importing them at the top of a colour module risks a cycle, and Convert is a
+ * once-in-a-while command — so they are resolved lazily and cached. A missing
+ * module degrades to "the parameter is converted but the cache is not re-rendered",
+ * which is logged rather than silent.
+ */
+let helpers = null;
+function loadHelpers() {
+  if (helpers) return helpers;
+  helpers = { ready: false };
+  return helpers;
+}
+
+export async function primeColorHelpers() {
+  const [smart, text, path] = await Promise.all([
+    import('../core/smart.js'),
+    import('../text/text-render.js'),
+    import('../vector/path.js'),
+  ]);
+  helpers = {
+    ready: true,
+    cloneSourceDocument: smart.cloneSourceDocument,
+    renderSmartObject: smart.renderSmartObject,
+    rasterizeTextLayer: text.rasterizeTextLayer,
+    rasterizeShapeLayer: path.rasterizeShapeLayer,
+  };
+  return helpers;
+}
+
+const cloneSmartSource = (source) => {
+  const h = loadHelpers();
+  if (h.ready) return h.cloneSourceDocument(source, source.name);
+  console.warn('[color] colour helpers were not primed; the smart source is converted in place');
+  return source;
+};
+const renderSmart = (layer, doc) => {
+  const h = loadHelpers();
+  if (h.ready) h.renderSmartObject(layer, doc);
+  else console.warn('[color] smart layer not re-rendered: helpers not primed');
+};
+const rasterizeText = (layer, doc) => {
+  const h = loadHelpers();
+  if (h.ready) h.rasterizeTextLayer(layer, doc);
+};
+const rasterizeShape = (layer, doc) => {
+  const h = loadHelpers();
+  if (h.ready) layer.canvas = h.rasterizeShapeLayer(layer, doc);
+};
 
 /** One colour string through the transform, back as a hex string. */
 function convertColorString(value, from, to, opts) {
@@ -102,55 +156,116 @@ function convertColorString(value, from, to, opts) {
   return toHex({ r: clamp(out[0]), g: clamp(out[1]), b: clamp(out[2]), a: c.a }, c.a < 1);
 }
 
-/** Convert every colour-bearing surface and parameter in a document. */
+/**
+ * Convert every colour-bearing surface and parameter in a document.
+ *
+ * The hard part is not the pixels — it is that several layer types keep their
+ * colour somewhere OTHER than the canvas the compositor draws, and the canvas is a
+ * cache regenerated from that somewhere. Converting the cache alone looks right
+ * until the next re-render silently reverts it; converting the source alone looks
+ * WRONG immediately, because nothing re-renders. Both halves are needed, and an
+ * earlier version of this function did exactly one of them for each type.
+ */
 function convertSurfaces(doc, from, to, opts, depth = 0) {
-  // A Smart Object can contain a Smart Object. Real files do not nest deeply, and
-  // a cycle would be a corrupt document, so cap it rather than trusting the data.
+  // A Smart Object can contain a Smart Object. Real files do not nest deeply, and a
+  // cycle would be a corrupt document, so cap it rather than trusting the data.
   if (depth > 8) return;
 
   for (const layer of doc.flatLayers()) {
     if (layer.type === 'adjustment') continue;
 
+    doc.beginEdit(layer);
+
+    // Layer effects hold their own colours and are re-rendered by the compositor on
+    // every frame, so they are pure parameters: convert them and nothing else.
+    if (layer.styles) layer.styles = convertStyles(layer.styles, from, to, opts);
+
     if (layer.smart && layer.smart.source) {
-      convertSurfaces(layer.smart.source, from, to, opts, depth + 1);
-      layer.smart.sourceVersion = (layer.smart.sourceVersion || 0) + 1;
+      /*
+       * Convert a CLONE and swap it in, rather than converting the embedded document
+       * in place. `Layer.snapshot()` copies the smart payload shallowly, so every
+       * history state shares one source object: mutating it escapes history
+       * entirely, which made Convert un-undoable for smart contents and made
+       * convert/undo/convert double-convert the pixels.
+       */
+      const source = cloneSmartSource(layer.smart.source);
+      convertSurfaces(source, from, to, opts, depth + 1);
+      source.profile = to;
+      layer.smart = {
+        ...layer.smart,
+        source,
+        sourceVersion: (layer.smart.sourceVersion || 0) + 1,
+      };
       layer._smartCache = null;
+      // And re-render, or the visible pixels stay in the old space until something
+      // else happens to touch the layer.
+      renderSmart(layer, doc);
+      layer.thumbDirty = true;
       continue;
     }
 
     if (layer.text) {
-      doc.beginEdit(layer);
       layer.text = { ...layer.text, color: convertColorString(layer.text.color, from, to, opts) };
+      rasterizeText(layer, doc);
       layer.thumbDirty = true;
       continue;
     }
 
     if (layer.shape) {
-      doc.beginEdit(layer);
-      const shape = { ...layer.shape };
-      if (shape.fill) {
-        shape.fill = { ...shape.fill };
-        if (shape.fill.color) shape.fill.color = convertColorString(shape.fill.color, from, to, opts);
-        if (Array.isArray(shape.fill.stops)) {
-          shape.fill.stops = shape.fill.stops.map((s) => ({ ...s, color: convertColorString(s.color, from, to, opts) }));
-        }
-      }
-      if (shape.stroke && shape.stroke.color) {
-        shape.stroke = { ...shape.stroke, color: convertColorString(shape.stroke.color, from, to, opts) };
-      }
-      layer.shape = shape;
+      layer.shape = convertShape(layer.shape, from, to, opts);
+      rasterizeShape(layer, doc);
       layer.thumbDirty = true;
       continue;
     }
 
     if (!layer.canvas) continue;
-    doc.beginEdit(layer);
     const cv = layer.canvas;
     const img = ctx2dRead(cv).getImageData(0, 0, cv.width, cv.height);
     transformImageData(img, from, to, opts);
     ctx2d(cv).putImageData(img, 0, 0);
     layer.thumbDirty = true;
   }
+}
+
+/** A shape's fill and stroke colours, converted. */
+function convertShape(shape, from, to, opts) {
+  const out = { ...shape };
+  if (out.fill) {
+    out.fill = { ...out.fill };
+    if (out.fill.color) out.fill.color = convertColorString(out.fill.color, from, to, opts);
+    if (Array.isArray(out.fill.stops)) {
+      out.fill.stops = out.fill.stops.map((st) => ({ ...st, color: convertColorString(st.color, from, to, opts) }));
+    }
+  }
+  if (out.stroke && out.stroke.color) {
+    out.stroke = { ...out.stroke, color: convertColorString(out.stroke.color, from, to, opts) };
+  }
+  return out;
+}
+
+/**
+ * Layer-effect colours, converted.
+ *
+ * Effects are the case one field over from the one the earlier fix addressed: a drop
+ * shadow's colour is a parameter the compositor re-renders every frame, so leaving
+ * it unconverted means the shadow stays in the old space forever while the layer it
+ * belongs to moves.
+ */
+function convertStyles(styles, from, to, opts) {
+  const out = structuredClone(styles);
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { for (const item of node) walk(item); return; }
+    for (const [key, value] of Object.entries(node)) {
+      if (typeof value === 'string' && /^(color|highlightColor|shadowColor)$/.test(key)) {
+        node[key] = convertColorString(value, from, to, opts);
+      } else if (value && typeof value === 'object') {
+        walk(value);
+      }
+    }
+  };
+  walk(out);
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -296,3 +411,7 @@ export async function adoptEmbeddedProfile(doc, fileBytes, { quiet = false } = {
 // The compositor cannot import this module (it would be a cycle), so hand it the
 // proof renderer on import. `src/main.js` imports this module for the side effect.
 registerProofRenderer(applyProof);
+
+// Warm the re-render helpers while nothing is happening, so the first Convert does
+// not pay for three dynamic imports. `convertToProfile` awaits them regardless.
+primeColorHelpers().catch((err) => console.info('[color] helpers not preloaded', err));

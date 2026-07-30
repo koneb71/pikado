@@ -189,6 +189,86 @@ suite('camera raw / each tone slider moves its own region', async (t) => {
   t.close(sat(red(toned)), sat(red(base)), 0.08, 'a tone move keeps saturation');
 });
 
+suite('camera raw / the tone curve is well behaved across every slider', async (t) => {
+  /*
+   * A grey ramp is the only way to see what a tone curve actually does, and this one
+   * went through four wrong shapes before it behaved. Each failure is a distinct mode,
+   * and each is checked here:
+   *
+   *   inversion  — summed weight bumps gave the curve a negative slope at black:
+   *                darker input, lighter output.
+   *   collapse   — clamping the running maximum afterwards flattened the whole
+   *                would-have-inverted stretch into one tone.
+   *   contradiction — a spline through control points that a slider pair can push out
+   *                of order flattened a segment instead.
+   *   sign flip  — a 1/(1 + slider·k) exponent with k > 1 goes NEGATIVE past
+   *                |slider| = 1/k, exploding the power and collapsing half the range.
+   *                It only showed at the extremes, so the sweep runs the extremes.
+   *   crosstalk  — a gamma over the whole range is not confined: Highlights pulled a
+   *                shadow patch from 22 down to 11.
+   */
+  const W = 128;
+  const ramp = () => {
+    const img = new ImageData(W, 4);
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        const v = Math.round((x / (W - 1)) * 255);
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+        img.data[i + 3] = 255;
+      }
+    }
+    return img;
+  };
+  const row = (params) => {
+    const img = developImage(ramp(), params);
+    return Array.from({ length: W }, (_, x) => img.data[(2 * W + x) * 4]);
+  };
+  const analyse = (out) => {
+    let inversions = 0, longest = 1, run = 1, at = 0;
+    for (let i = 1; i < out.length; i++) {
+      if (out[i] < out[i - 1]) inversions++;
+      // Runs at 0 or 255 are clipping, which is a legitimate result of asking to
+      // crush blacks or blow whites. A run in the INTERIOR is the defect.
+      if (out[i] === out[i - 1] && out[i] !== 0 && out[i] !== 255) {
+        run++;
+        if (run > longest) { longest = run; at = out[i]; }
+      } else run = 1;
+    }
+    return { inversions, longest, at, distinct: new Set(out).size };
+  };
+
+  const base = row({});
+  const problems = [];
+  for (const key of ['shadows', 'highlights', 'whites', 'blacks']) {
+    for (const value of [-100, -80, -50, -20, 20, 50, 80, 100]) {
+      const r = analyse(row({ [key]: value }));
+      if (r.inversions) problems.push(`${key} ${value}: ${r.inversions} inversions`);
+      if (r.longest > 6) problems.push(`${key} ${value}: interior plateau of ${r.longest} at ${r.at}`);
+      if (r.distinct < 40) problems.push(`${key} ${value}: only ${r.distinct} of 128 levels survive`);
+    }
+  }
+  t.eq(problems.slice(0, 4), [], 'every slider, across its whole range, stays monotonic and graduated');
+
+  // Region confinement. The ramp indices are a deep shadow and a near-white.
+  const shadow = 11, bright = 119;
+  const hiDown = row({ highlights: -80 });
+  t.lt(hiDown[bright], base[bright] - 25, `Highlights -80 recovers the bright end (${base[bright]} -> ${hiDown[bright]})`);
+  t.close(hiDown[shadow], base[shadow], 2, 'and does not touch the shadow at all');
+  t.gt(row({ highlights: 80 })[bright], base[bright], 'Highlights +80 goes the other way');
+
+  const shUp = row({ shadows: 80 });
+  t.gt(shUp[shadow], base[shadow] + 25, `Shadows +80 lifts the dark end (${base[shadow]} -> ${shUp[shadow]})`);
+  t.close(shUp[bright], base[bright], 2, 'and does not touch the bright end');
+  t.lt(row({ shadows: -80 })[shadow], base[shadow], 'Shadows -80 deepens it');
+
+  // The worst combination: everything pushed inward at once.
+  const inward = analyse(row({ shadows: 100, highlights: -100, whites: -100, blacks: 100 }));
+  t.eq(inward.inversions, 0, 'all four pushed inward stays monotonic');
+  t.lt(inward.longest, 7, 'without a plateau');
+  t.gt(inward.distinct, 55, `and keeps the ramp graduated (${inward.distinct} of 128 levels)`);
+});
+
 suite('camera raw / contrast pivots on middle grey', async (t) => {
   const base = fixture();
   const hard = dev({ contrast: 70 });
@@ -457,12 +537,31 @@ suite('camera raw / effects behave as named', async (t) => {
     `dehaze restores contrast across the veil (${hazedSpread.toFixed(0)} -> ${spread(cleared).toFixed(0)})`);
   t.lt(lum(shadow(cleared)), lum(shadow(hazed)) - 5, 'by pulling the lifted blacks back down');
 
-  // And negative dehaze must ADD veil — the forward model, not a reflection of the
-  // inverse, which overshot into crushed blacks past about -40.
+  /*
+   * Negative dehaze must ADD veil. Two wrong versions to guard against, so the
+   * assertions name both:
+   *
+   *   - reflecting the dehazed value about the input, which overshot past about -40
+   *     into crushed blacks and clipped highlights;
+   *   - running the forward model with the transmission estimated from the image's
+   *     EXISTING haze, which is near 1 wherever the image is dark and clear, so
+   *     almost no veil reached the dark regions haze affects most.
+   *
+   * "Stays in range" was the original assertion here and it cannot fail — the data is
+   * a Uint8ClampedArray, so every value is 0..255 by construction, whatever the maths
+   * did. It is replaced by measurements that can.
+   */
   const veiled = dev({ dehaze: -80 });
-  t.lt(spread(veiled), spread(base), 'negative dehaze reduces contrast, as adding haze does');
-  t.gt(lum(shadow(veiled)), lum(shadow(base)), 'lifting the blacks rather than crushing them');
-  t.ok([...veiled.data].every((v) => v >= 0 && v <= 255), 'and stays in range');
+  t.lt(spread(veiled), spread(base) - 10,
+    `negative dehaze flattens contrast (${spread(base).toFixed(0)} -> ${spread(veiled).toFixed(0)})`);
+  t.gt(lum(shadow(veiled)), lum(shadow(base)) + 8,
+    `lifting the blacks rather than crushing them (${lum(shadow(base)).toFixed(0)} -> ${lum(shadow(veiled)).toFixed(0)})`);
+  t.lt(lum(white(veiled)), lum(white(base)) + 1, 'and pulling the whites down rather than blowing them');
+
+  // Monotone in the amount: -80 must veil more than -30, not overshoot past it.
+  const mild = dev({ dehaze: -30 });
+  t.lt(spread(veiled), spread(mild), 'more negative dehaze means more veil, not an overshoot');
+  t.gt(lum(shadow(veiled)), lum(shadow(mild)), 'and a higher black point');
 });
 
 /* ------------------------------------------------------------------ */

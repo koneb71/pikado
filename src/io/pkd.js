@@ -142,13 +142,27 @@ function encodeProfile(profile) {
   if (!profile) return null;
   if (!profile.embedded) return { id: profile.id };
   const trc = profile.trc || {};
+  /*
+   * The curve is always stored as a SAMPLE TABLE, whatever shape it had.
+   * Reconstructing it from a name worked for the gamma case and quietly lost
+   * everything else: an ICC parametric curve has no `.samples` and a name of
+   * 'Parametric sRGB', so it came back as the plain sRGB curve regardless of its
+   * real parameters. Sampling is exact to 8-bit either way and needs no guessing.
+   */
+  const samples = trc.samples
+    ? [...trc.samples]
+    : typeof trc.toLinear === 'function'
+      ? Array.from({ length: 256 }, (_, i) => trc.toLinear(i / 255))
+      : null;
   return {
     id: 'embedded',
     name: profile.name || 'Embedded profile',
     space: profile.space || 'rgb',
     white: profile.white ? [...profile.white] : null,
     matrix: profile.matrix ? [...profile.matrix] : null,
-    samples: trc.samples ? [...trc.samples] : null,
+    // Without this, the bkpt-reading support was dead for any saved project.
+    blackPoint: profile.blackPoint || 0,
+    samples,
     gammaName: trc.name || null,
   };
 }
@@ -164,7 +178,10 @@ function decodeProfile(stored) {
     space: stored.space || 'rgb',
     white: stored.white || WHITE_POINTS.D50,
     matrix: stored.matrix || null,
-    trc: stored.samples
+    blackPoint: stored.blackPoint || 0,
+    // Samples first: every profile written by this version has them, whatever curve
+    // shape it started as. The gamma fallback is only for files from before that.
+    trc: stored.samples && stored.samples.length > 1
       ? TRC.table(Float32Array.from(stored.samples))
       : gamma ? TRC.gamma(Number(gamma[1])) : TRC.srgb,
     embedded: true,

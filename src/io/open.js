@@ -174,6 +174,14 @@ export async function openImageBlob(blob, name = 'Image', opts = {}) {
   if (target) return placeAsLayer(target, canvas, name);
   const doc = documentFromCanvas(canvas, name);
   await adoptProfileFrom(blob, doc);
+  /*
+   * Re-baseline history AFTER adopting the profile. `documentFromCanvas` clears
+   * history to a single 'Open' state, and the profile is part of a history state, so
+   * adopting it afterwards left the baseline holding `profile: null` — the very first
+   * undo threw the embedded profile away and relabelled the document sRGB.
+   */
+  doc.history.clear('Open');
+  doc.dirty = false;
   return adopt(doc);
 }
 
