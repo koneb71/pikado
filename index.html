@@ -35,6 +35,51 @@
     </div>
     <input id="file-input" type="file" multiple accept="image/*,.psd,.psb,.svg,.pkd" hidden />
     <script type="module" src="/src/main.js"></script>
+    <script>
+      /*
+       * Self-heal a stale service worker.
+       *
+       * The worker caches the app shell, and `/assets/*` is served cache-first because
+       * a content hash means those bytes can never change. The failure mode that
+       * combination allows: if a cached `index.html` survives a deploy, it names asset
+       * hashes that no longer exist on the server. The module then fails to load and
+       * the page sits there — blank, with nothing in the console, and no way out,
+       * because every reload is answered from the same cache.
+       *
+       * That is the worst kind of failure for an app that keeps a user's work locally,
+       * so it gets an escape hatch: if the entry module has not booted shortly after
+       * load, drop the worker and its caches and reload once. `sessionStorage` makes it
+       * once — a genuinely broken build must show its error rather than reload forever.
+       *
+       * Only while online, and the asymmetry is deliberate. Offline, that cache is the
+       * only copy of the app there is; clearing it would turn a blank page into a page
+       * that cannot come back at all, and it would be clearing it at the one moment the
+       * network cannot replace it. A blank page offline recovers by itself the next time
+       * there is a network, because navigation is network-first. `onLine` is only
+       * trustworthy when false — true can mean a LAN with no route out — and false is
+       * the direction this needs.
+       *
+       * The user's documents are in IndexedDB (src/io/store.js), which the Cache API
+       * does not touch, so nothing below can lose work.
+       */
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          if (window.pikado || sessionStorage.getItem('pk-healed')) return;
+          if (!('serviceWorker' in navigator)) return;
+          if (navigator.onLine === false) return;
+          sessionStorage.setItem('pk-healed', '1');
+          console.warn('[pikado] the app did not start; clearing a stale service worker and reloading');
+          Promise.all([
+            navigator.serviceWorker.getRegistrations().then(function (rs) {
+              return Promise.all(rs.map(function (r) { return r.unregister(); }));
+            }),
+            typeof caches !== 'undefined'
+              ? caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })
+              : null,
+          ]).catch(function () { /* reload regardless */ }).then(function () { location.reload(); });
+        }, 4000);
+      });
+    </script>
     <noscript>Pikado needs JavaScript enabled.</noscript>
   </body>
 </html>

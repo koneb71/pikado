@@ -138,6 +138,13 @@ async function cacheFirst(req) {
   try {
     const res = await fetch(req);
     if (isCacheable(res)) await cache.put(req, res.clone());
+    /*
+     * A hashed asset that is neither cached NOR on the server means this client is
+     * running a shell from a previous deploy: the hash it is asking for no longer
+     * exists. Nothing here can serve it, but the page's self-heal (see index.html)
+     * needs the failure to be visible rather than swallowed, so the real status is
+     * passed through instead of being turned into a friendly offline page.
+     */
     return res;
   } catch {
     return offlineResponse('This asset is not available offline.');
