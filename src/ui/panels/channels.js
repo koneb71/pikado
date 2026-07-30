@@ -101,7 +101,7 @@ registerPanel({
   icon: 'channels',
   group: 'top',
   order: 1,
-  defaultOpen: false,
+  defaultOpen: true,
   build(body) {
     body.classList.add('pkch-body');
     let selectedId = 'composite';

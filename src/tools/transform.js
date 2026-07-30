@@ -2,6 +2,7 @@ import { app } from '../core/app.js';
 import { isSmartLayer, getSmartTransform, setSmartTransform, matrixMultiply } from '../core/smart.js';
 import { createCanvas, cloneCanvas, clamp, deg2rad, rad2deg } from '../core/util.js';
 import { LayerType } from '../core/layer.js';
+import { OVERLAY } from '../ui/brand.js';
 
 /**
  * The free-transform session.
@@ -986,7 +987,7 @@ function handleBox(ctx, p, filled = true) {
   const r = 4;
   ctx.beginPath();
   ctx.rect(p.x - r, p.y - r, r * 2, r * 2);
-  ctx.fillStyle = filled ? '#ffffff' : '#1473e6';
+  ctx.fillStyle = filled ? '#ffffff' : OVERLAY.accent;
   ctx.fill();
   ctx.strokeStyle = 'rgba(0,0,0,.85)';
   ctx.lineWidth = 1;
@@ -1054,7 +1055,7 @@ export function drawTransformOverlay(ctx, view) {
         else {
           ctx.beginPath();
           ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
-          ctx.fillStyle = '#1473e6';
+          ctx.fillStyle = OVERLAY.accent;
           ctx.fill();
           ctx.strokeStyle = 'rgba(255,255,255,.9)';
           ctx.lineWidth = 1;

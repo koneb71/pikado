@@ -1,25 +1,46 @@
-.pksw-body { display: flex; flex-direction: column; gap: 6px; padding: 6px; }
+/* Swatches: a dense grid of colour chips. The chrome around them is as quiet
+   as possible so the colours are the only saturated thing here. */
 
-.pksw-tools { display: flex; align-items: center; gap: 2px; }
-.pksw-reset { height: 22px; padding: 0 8px; }
+.pksw-body { display: flex; flex-direction: column; gap: 9px; }
 
-.pksw-grid { display: flex; flex-wrap: wrap; gap: 2px; }
+.pksw-tools { display: flex; align-items: center; gap: 3px; }
+.pksw-reset { margin-left: auto; height: 24px; padding: 0 10px; font-size: var(--fs-sm); border-radius: var(--r-sm); }
+
+.pksw-grid { display: flex; flex-wrap: wrap; gap: 4px; }
 .pksw-chip {
-  width: 17px; height: 17px; padding: 0; flex: 0 0 auto; cursor: pointer;
-  border: 1px solid rgba(0, 0, 0, .45); border-radius: 2px;
+  width: 18px; height: 18px; padding: 0; flex: 0 0 auto;
+  cursor: pointer;
+  border: none;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 1px var(--hair-2);
+  transition: box-shadow .12s ease, transform .12s ease;
 }
-.pksw-chip:hover { outline: 1px solid var(--fg-bright); outline-offset: 0; }
-.pksw-chip.is-selected { box-shadow: 0 0 0 2px var(--accent); }
+.pksw-chip:hover { transform: scale(1.14); box-shadow: 0 0 0 1px var(--hair-3), var(--sh-2); }
+/* A ring separated from the chip by a dark gap, so it reads on any colour. */
+.pksw-chip.is-selected {
+  box-shadow: 0 0 0 1.5px var(--s2), 0 0 0 3px var(--accent);
+  transform: scale(1.06);
+}
 
-.pksw-empty { color: var(--fg-dim); font-size: 11px; padding: 4px 2px; }
+.pksw-empty { color: var(--text-faint); font-size: var(--fs-sm); padding: 5px 2px; }
 
-.pksw-groups { display: flex; flex-direction: column; gap: 2px; }
+.pksw-groups { display: flex; flex-direction: column; gap: 3px; }
 .pksw-group-head {
-  display: flex; align-items: center; gap: 5px; width: 100%; height: 22px;
-  background: none; border: none; color: var(--fg-dim); cursor: pointer;
-  font-size: 11px; text-align: left; padding: 0 2px;
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; height: 24px;
+  background: none; border: none;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 0 4px;
+  transition: color .12s ease, background .12s ease;
 }
-.pksw-group-head:hover { color: var(--fg-bright); }
-.pksw-group-head svg { width: 12px; height: 12px; transition: transform .12s; flex: 0 0 auto; }
-.pksw-group-body { display: none; padding: 2px 0 6px 4px; }
+.pksw-group-head:hover { color: var(--text-hi); background: rgba(255, 255, 255, .04); }
+.pksw-group-head svg { width: 12px; height: 12px; transition: transform .12s ease; flex: 0 0 auto; }
+.pksw-group-body { display: none; padding: 3px 0 7px 6px; }
 .pksw-group.is-open .pksw-group-body { display: block; }

@@ -3,13 +3,20 @@
 .pk-matrix {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 4px;
+  gap: 5px;
+  padding: 7px;
+  background: var(--s0);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
 }
 
 .pk-matrix-cell {
   width: 100%;
   min-width: 0;
-  padding: 4px 2px;
+  height: 26px;
+  padding: 0 2px;
+  background: var(--s2);
+  border-radius: var(--r-xs);
   text-align: center;
   font-variant-numeric: tabular-nums;
   -moz-appearance: textfield;
@@ -21,7 +28,10 @@
   margin: 0;
 }
 
+/* The centre tap is the one that matters, so it carries the accent. */
 .pk-matrix-cell.center {
-  border-color: var(--accent);
-  color: var(--fg-bright);
+  border-color: var(--accent-ring);
+  background: var(--accent-dim);
+  color: var(--text-hi);
+  font-weight: 600;
 }

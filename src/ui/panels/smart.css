@@ -2,18 +2,22 @@
 
 .pk-lay-thumbbox { position: relative; }
 
+/* A small corner medallion on the thumbnail. It overhangs the thumb, so the
+   thumb must not clip — its canvas carries the rounded corners instead. */
 .pk-lay-smartbadge {
   position: absolute;
-  right: -1px;
-  bottom: -1px;
-  width: 13px;
-  height: 13px;
+  right: -3px;
+  bottom: -3px;
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-1, #2a2a2a);
-  border: 1px solid #101010;
-  color: var(--fg-bright, #eee);
+  background: var(--s1);
+  border: none;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 1px var(--hair-3), var(--sh-1);
+  color: var(--text-hi);
   pointer-events: none;
 }
 .pk-lay-smartbadge[hidden] { display: none; }

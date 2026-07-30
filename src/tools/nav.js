@@ -1,6 +1,7 @@
 import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { deg2rad, rad2deg } from '../core/util.js';
+import { OVERLAY } from '../ui/brand.js';
 
 /**
  * Navigation tools: Hand, Rotate View and Zoom.
@@ -188,7 +189,7 @@ class RotateViewTool extends Tool {
     ctx.arc(0, 0, 56, 0, Math.PI * 2);
     ctx.stroke();
     ctx.rotate(rot);
-    ctx.strokeStyle = '#1473e6';
+    ctx.strokeStyle = OVERLAY.accent;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(0, 0);

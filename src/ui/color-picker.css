@@ -1,58 +1,173 @@
-.pk-colorpicker .pk-dialog-body { padding: 12px; }
+/* ==========================================================================
+   Colour picker (src/ui/color-picker.js)
 
-.pkcp { display: flex; flex-direction: column; gap: 10px; }
-.pkcp-top { display: flex; gap: 8px; align-items: flex-start; }
+   The one place in the app where saturated colour is the subject, so the
+   chrome around it stays almost silent: inset surfaces, hairlines, and
+   micro-caps channel labels. The drag handles are drawn on the canvases as
+   white rings with a dark outline so they read on any hue.
+   ========================================================================== */
 
+.pk-colorpicker .pk-dialog-body { padding: 14px; }
+
+.pkcp { display: flex; flex-direction: column; gap: 12px; }
+.pkcp-top { display: flex; gap: 10px; align-items: flex-start; }
+
+/* Canvases can't take a border without clipping their paint, so the hairline
+   is an inset ring drawn over the top edge of the pixels. */
 .pkcp-sv {
-  width: 256px; height: 256px; flex: 0 0 auto;
-  border: 1px solid var(--line-soft); border-radius: 2px;
-  cursor: crosshair; touch-action: none;
+  width: 256px;
+  height: 256px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--r-md);
+  box-shadow: inset 0 0 0 1px var(--hair-2), var(--sh-1);
+  cursor: crosshair;
+  touch-action: none;
 }
-.pkcp-strips { display: flex; gap: 6px; flex: 0 0 auto; }
+
+.pkcp-strips { display: flex; gap: 7px; flex: 0 0 auto; }
+
 .pkcp-strip {
-  width: 18px; height: 256px;
-  border: 1px solid var(--line-soft); border-radius: 2px;
-  cursor: ns-resize; touch-action: none;
+  width: 19px;
+  height: 256px;
+  border: none;
+  border-radius: var(--r-md);
+  box-shadow: inset 0 0 0 1px var(--hair-2), var(--sh-1);
+  cursor: ns-resize;
+  touch-action: none;
 }
 
-.pkcp-side { flex: 1 1 auto; display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+/* HSB and RGB sit side by side rather than stacked, so the numeric fields stay
+   the width of the numbers in them instead of stretching across the column. */
+.pkcp-side {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-content: start;
+  gap: 9px 10px;
+  min-width: 0;
+}
 
+.pkcp-side > .pkcp-compare,
+.pkcp-side > .pkcp-field { grid-column: 1 / -1; }
+
+/* One rounded chip, split in half: new above, original below. */
 .pkcp-compare {
-  display: flex; flex-direction: column;
-  height: 52px; border: 1px solid var(--line-soft); border-radius: 2px; overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 56px;
+  border: none;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--hair-2), var(--sh-1);
 }
+
 .pkcp-half { flex: 1 1 0; border: none; padding: 0; display: block; width: 100%; }
 .pkcp-half:not(.is-new) { cursor: pointer; }
-.pkcp-half.is-new { border-bottom: 1px solid rgba(0, 0, 0, .35); }
+.pkcp-half.is-new { border-bottom: 1px solid rgba(0, 0, 0, .45); }
 
-.pkcp-group { display: flex; flex-direction: column; gap: 4px; }
-.pkcp-group.pkcp-wide { flex-direction: row; gap: 8px; }
+/* ------------------------------------------------------------ numeric grid */
+
+.pkcp-group { display: flex; flex-direction: column; gap: 5px; }
+.pkcp-group.pkcp-wide { flex-direction: row; gap: 9px; }
 .pkcp-group.pkcp-wide .pkcp-field { flex: 1 1 0; }
 
-.pkcp-field { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--fg-dim); }
-.pkcp-field > span { width: 12px; flex: 0 0 auto; color: var(--fg); text-align: right; }
-.pkcp-field > em { font-style: normal; width: 10px; flex: 0 0 auto; }
-.pkcp-num { flex: 1 1 auto; min-width: 0; text-align: right; }
-.pkcp-hexrow > span { font-family: var(--mono); }
-.pkcp-hex { flex: 1 1 auto; min-width: 0; font-family: var(--mono); text-transform: lowercase; }
-
-.pkcp-bottom { display: flex; flex-direction: column; gap: 8px; }
-.pkcp-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-
-.pkcp-recent { display: flex; align-items: center; gap: 3px; flex: 1 1 auto; flex-wrap: wrap; }
-.pkcp-recent-label { font-size: 11px; color: var(--fg-dim); margin-right: 3px; }
-.pkcp-recent-empty { font-size: 11px; color: var(--fg-dim); opacity: .7; }
-.pkcp-chip {
-  width: 16px; height: 16px; padding: 0; flex: 0 0 auto;
-  border: 1px solid var(--line-soft); border-radius: 2px; cursor: pointer;
+/* label | field | unit. The unit track is reserved even on rows that have no
+   unit, so every input in the grid ends on the same vertical line. */
+.pkcp-field {
+  display: grid;
+  grid-template-columns: 13px minmax(0, 1fr) 11px;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
 }
-.pkcp-chip:hover { border-color: var(--fg-bright); }
+
+/* Channel letters are micro-caps: unmistakably labels, never loud. */
+.pkcp-field > span {
+  grid-column: 1;
+  color: var(--text-dim);
+  text-align: right;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.pkcp-field > em {
+  grid-column: 3;
+  font-style: normal;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.pkcp-num {
+  min-width: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pkcp-hexrow > span { text-transform: none; letter-spacing: 0; color: var(--text-faint); }
+.pkcp-hex {
+  min-width: 0;
+  font-family: var(--mono);
+  text-transform: lowercase;
+  letter-spacing: .02em;
+}
+
+/* ---------------------------------------------------------------- bottom */
+
+.pkcp-bottom { display: flex; flex-direction: column; gap: 10px; }
+.pkcp-foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+.pkcp-recent { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; flex-wrap: wrap; }
+
+.pkcp-recent-label {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+
+.pkcp-recent-empty { font-size: var(--fs-sm); color: var(--text-faint); }
+
+.pkcp-chip {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  flex: 0 0 auto;
+  border: 1px solid var(--hair-3);
+  border-radius: var(--r-xs);
+  box-shadow: var(--lift);
+  cursor: pointer;
+  transition: box-shadow .12s ease, border-color .12s ease;
+}
+
+.pkcp-chip:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
 
 /* --- the reusable swatch button ---------------------------------- */
 
 .pk-color-btn {
-  position: relative; width: 26px; height: 26px; padding: 0; flex: 0 0 auto;
-  border: 1px solid var(--line-soft); border-radius: 3px; cursor: pointer;
+  position: relative;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  flex: 0 0 auto;
+  border: 1px solid var(--hair-3);
+  border-radius: var(--r-sm);
+  box-shadow: var(--lift);
+  cursor: pointer;
+  transition: border-color .12s ease, box-shadow .12s ease;
 }
-.pk-color-btn:hover { border-color: var(--fg-bright); }
-.pk-color-btn-fill { position: absolute; inset: 0; border-radius: 2px; }
+
+.pk-color-btn:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.pk-color-btn-fill { position: absolute; inset: 0; border-radius: calc(var(--r-sm) - 1px); }

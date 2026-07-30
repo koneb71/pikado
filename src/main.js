@@ -3,6 +3,7 @@ import './styles.css';
 import { app } from './core/app.js';
 import { CanvasView } from './ui/canvas-view.js';
 import { el } from './core/util.js';
+import { brandMark } from './ui/brand.js';
 
 /* --- registration side effects ------------------------------------- */
 /* Each module registers itself with the relevant registry on import.   */
@@ -164,8 +165,9 @@ function installBusy() {
 /** Placeholder shown when every document is closed. */
 function installWelcome(areaEl) {
   const welcome = el('div.pk-empty.pk-welcome', {},
+    el('div.pk-welcome-mark', { html: brandMark({ size: 60, title: 'Pikado' }) }),
     el('h1', { text: 'Pikado' }),
-    el('p', { text: 'A full image editor in your browser. Open an image, drop a file anywhere, or start from a blank canvas.' }),
+    el('p', { text: 'An image studio that runs entirely in your browser. Open a photo, drop a file anywhere, or start from a blank canvas.' }),
     el('div.pk-empty-actions', {},
       el('button.pk-btn.primary', { text: 'New document', onclick: () => import('./ui/dialogs/new-document.js').then((m) => m.showNewDocumentDialog()) }),
       el('button.pk-btn', { text: 'Open…', onclick: () => document.getElementById('file-input').click() })

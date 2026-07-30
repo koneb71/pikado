@@ -1,4 +1,8 @@
-/* Drag-and-drop target shown while files hover over the window. */
+/* Drag-and-drop target shown while files hover over the window.
+
+   A full-area accent wash with a dashed inset frame reads as "the whole
+   canvas is the target" — far calmer than a floating box, and it never
+   competes with the artwork underneath. */
 
 .pk-drop-overlay {
   position: absolute;
@@ -8,43 +12,66 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  background: color-mix(in srgb, var(--bg-0) 72%, transparent);
-  backdrop-filter: blur(2px);
+  background:
+    linear-gradient(var(--accent-dim), var(--accent-dim)),
+    color-mix(in srgb, var(--s0) 72%, transparent);
+  backdrop-filter: blur(3px);
 }
 
 .pk-drop-overlay.is-active {
   display: flex;
+  animation: pk-drop-in .14s ease;
+}
+
+@keyframes pk-drop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* The dashed frame is the overlay's own inset border, not a box around the
+   message, so the drop zone is unmistakably the whole area. */
+.pk-drop-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-lg);
+  opacity: .75;
 }
 
 .pk-drop-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 28px 44px;
-  border: 2px dashed var(--accent);
-  border-radius: calc(var(--radius) * 2);
-  background: var(--bg-2);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  gap: 7px;
+  padding: 0 32px;
   text-align: center;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .pk-drop-title {
-  font-size: 15px;
+  font-size: 19px;
   font-weight: 600;
-  color: var(--fg-bright);
+  letter-spacing: -.02em;
+  color: var(--text-hi);
 }
 
 .pk-drop-hint {
-  font-size: 12px;
-  color: var(--fg-dim);
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  line-height: 1.6;
 }
 
 .pk-drop-hint kbd {
-  padding: 1px 5px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  background: var(--bg-3);
-  font: inherit;
-  font-size: 11px;
+  font-family: var(--font);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  padding: 2px 6px;
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-xs);
+  background: var(--s3);
+  color: var(--text);
+  box-shadow: var(--lift);
 }

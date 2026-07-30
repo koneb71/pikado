@@ -1,40 +1,66 @@
-/* Status bar readouts. */
+/* Status bar — the quietest strip in the app. Labels recede, values are the
+   only bright thing, and every number is tabular so nothing twitches while the
+   view changes. Segments are separated by space and faint seams, not borders. */
 
 .pk-statusbar .pk-sb-zoom {
-  width: 50px;
-  height: 18px;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 19px;
   text-align: right;
-  padding: 0 4px;
-  font-size: 11px;
-}
-.pk-statusbar .pk-unit { margin-left: -6px; }
-
-.pk-statusbar .pk-sb-zoomsel,
-.pk-statusbar .pk-sb-mode {
-  height: 18px;
-  font-size: 11px;
-  padding: 0 2px 0 4px;
+  padding: 0 3px;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-hi);
   background: transparent;
   border-color: transparent;
-  color: var(--fg-dim);
-  max-width: 140px;
+  border-radius: var(--r-xs);
+  box-shadow: none;
+}
+/* Looks like text until you approach it, then like a field. */
+.pk-statusbar .pk-sb-zoom:hover { background: var(--s2); border-color: var(--hair-2); }
+.pk-statusbar .pk-sb-zoom:focus {
+  background: var(--s0);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+/* The unit belongs to the number, so it is pulled back inside the bar's gap. */
+.pk-statusbar .pk-unit { flex: 0 0 auto; margin-left: -8px; color: var(--text-faint); }
+
+/* The readouts keep their size; only the trailing hint gives up room, so the
+   bar never squeezes a label into its own chevron. */
+.pk-statusbar .pk-sb-zoomsel,
+.pk-statusbar .pk-sb-mode {
+  flex: 0 0 auto;
+  height: 20px;
+  font-size: var(--fs-sm);
+  padding: 0 2px 0 5px;
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  max-width: 148px;
+  box-shadow: none;
 }
 .pk-statusbar .pk-sb-zoomsel:hover,
-.pk-statusbar .pk-sb-mode:hover { border-color: #4a4a4a; color: var(--fg); }
+.pk-statusbar .pk-sb-mode:hover { background: var(--s2); border-color: transparent; color: var(--text-hi); }
+.pk-statusbar .pk-sb-zoomsel:focus,
+.pk-statusbar .pk-sb-mode:focus { background: var(--s2); border-color: transparent; box-shadow: none; }
 
 .pk-sb-dims,
 .pk-sb-status,
 .pk-sb-tool,
 .pk-sb-mem { flex: 0 0 auto; }
 
-.pk-sb-status { color: var(--fg); }
-.pk-sb-tool { color: var(--fg); }
+.pk-sb-dims { color: var(--text-hi); font-variant-numeric: tabular-nums; }
+.pk-sb-status { color: var(--text-hi); font-variant-numeric: tabular-nums; margin-left: -6px; }
+.pk-sb-tool { color: var(--text-hi); font-weight: 500; }
+.pk-sb-mem { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
 .pk-sb-hint {
   flex: 0 1 auto;
   min-width: 0;
   text-align: right;
-  color: #7d7d7d;
+  color: var(--text-faint);
 }
 
-.pk-statusbar .pk-vsep { height: 13px; }
+.pk-statusbar .pk-vsep { height: 12px; background: var(--hair); margin-inline: 0; }

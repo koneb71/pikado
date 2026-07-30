@@ -1,11 +1,18 @@
-.pkn-body { display: flex; flex-direction: column; gap: 6px; padding: 6px; }
+/* Navigator: a neutral thumbnail of the document. The surround stays
+   uncoloured for the same reason the artboard does. */
+
+.pkn-body { display: flex; flex-direction: column; gap: 8px; }
 
 .pkn-view {
-  display: block; width: 100%; height: 132px; cursor: move; touch-action: none;
-  background: var(--bg-1); border: 1px solid var(--line); border-radius: 2px;
+  display: block; width: 100%; height: 136px;
+  cursor: move; touch-action: none;
+  background: var(--void);
+  border: none;
+  border-radius: var(--r-sm);
+  box-shadow: 0 0 0 1px var(--hair-2), inset 0 1px 0 rgba(255, 255, 255, .04);
 }
 
-.pkn-controls { display: flex; align-items: center; gap: 4px; }
-.pkn-pctwrap { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
-.pkn-pct { width: 56px; text-align: right; }
+.pkn-controls { display: flex; align-items: center; gap: 7px; }
+.pkn-pctwrap { display: flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+.pkn-pct { width: 56px; text-align: right; font-variant-numeric: tabular-nums; }
 .pkn-range { flex: 1 1 auto; min-width: 40px; }

@@ -1,54 +1,69 @@
-/* Tone-curve widget (src/ui/curve-editor.js) */
+/* ==========================================================================
+   Tone-curve widget (src/ui/curve-editor.js)
+
+   The plot is an inset --s0 surface: faint hairline grid, the curve in the
+   accent, control points as white dots with a dark outline. The canvas paints
+   its own rounded plate, so this file only frames and spaces it.
+   ========================================================================== */
 
 .pk-curve {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
 }
 
 .pk-curve-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   width: 100%;
 }
 
 .pk-curve-lbl {
-  color: var(--fg-dim);
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
   flex: 0 0 auto;
 }
 
 .pk-curve-head .pk-select { flex: 1 1 auto; min-width: 0; }
-.pk-curve-head .pk-curve-chan { flex: 0 0 82px; }
+.pk-curve-head .pk-curve-chan { flex: 0 0 86px; }
 
 .pk-curve-canvas {
   display: block;
-  border-radius: 2px;
-  background: var(--bg-0);
+  border-radius: var(--r-md);
+  background: transparent;
   cursor: crosshair;
   touch-action: none;
   outline: none;
 }
 
 .pk-curve-canvas:focus-visible {
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 .pk-curve-foot {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
 }
 
 .pk-curve-readout {
-  color: var(--fg-dim);
-  font-family: var(--mono);
-  font-size: 10px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  letter-spacing: .01em;
 }
 
 .pk-curve-foot .pk-spacer { flex: 1 1 auto; }
-.pk-curve-reset { padding: 2px 8px; }
+
+.pk-curve-reset {
+  height: 22px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+}

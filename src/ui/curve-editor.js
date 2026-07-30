@@ -15,11 +15,34 @@ import { drawHistogram, setupHiDPI, currentHistogram, emptyHistogram } from './h
  */
 
 export const CURVE_CHANNELS = [
-  { id: 'rgb', label: 'RGB', color: '#e8e8e8' },
+  { id: 'rgb', label: 'RGB', color: 'accent' },
   { id: 'r', label: 'Red', color: '#ff5d5d' },
   { id: 'g', label: 'Green', color: '#54d954' },
   { id: 'b', label: 'Blue', color: '#6ea8ff' },
 ];
+
+/**
+ * Read a design token so the painted plot matches the stylesheet instead of
+ * carrying its own hardcoded palette. Cached: the tokens never change at
+ * runtime, and `draw()` runs on every pointer move.
+ */
+const tokenCache = new Map();
+function token(name, fallback) {
+  if (tokenCache.has(name)) return tokenCache.get(name);
+  let v = fallback;
+  try {
+    v = getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+  } catch {
+    v = fallback;
+  }
+  tokenCache.set(name, v);
+  return v;
+}
+
+/** The composite curve is drawn in the accent; per-channel curves keep theirs. */
+function channelColor(meta) {
+  return meta.color === 'accent' ? token('--accent-hi', '#9184ff') : meta.color;
+}
 
 const IDENTITY = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
 
@@ -328,9 +351,17 @@ function buildCurveEditor(container, cfg) {
   function draw() {
     const chan = value.channel;
     const meta = CURVE_CHANNELS.find((c) => c.id === chan) || CURVE_CHANNELS[0];
+    const ink = channelColor(meta);
+    const R = 9; // --r-md
     ctx.clearRect(0, 0, W, W);
 
-    ctx.fillStyle = '#1c1c1c';
+    // The plot is a rounded inset plate, so it matches the cards around it.
+    ctx.save();
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(PAD, PAD, size, size, R);
+    else ctx.rect(PAD, PAD, size, size);
+    ctx.clip();
+    ctx.fillStyle = token('--s0', '#0f0f13');
     ctx.fillRect(PAD, PAD, size, size);
 
     drawHistogram(canvas, hist, {
@@ -341,8 +372,8 @@ function buildCurveEditor(container, cfg) {
       clear: false,
     });
 
-    // Grid.
-    ctx.strokeStyle = 'rgba(255,255,255,.10)';
+    // Grid — a faint hairline, matching --hair.
+    ctx.strokeStyle = 'rgba(255,255,255,.07)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let i = 1; i < 4; i++) {
@@ -355,21 +386,28 @@ function buildCurveEditor(container, cfg) {
     ctx.stroke();
 
     // Baseline.
-    ctx.strokeStyle = 'rgba(255,255,255,.22)';
+    ctx.strokeStyle = 'rgba(255,255,255,.16)';
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(PAD, PAD + size);
     ctx.lineTo(PAD + size, PAD);
     ctx.stroke();
     ctx.setLineDash([]);
+    ctx.restore();
 
-    // Frame.
-    ctx.strokeStyle = 'rgba(255,255,255,.28)';
-    ctx.strokeRect(PAD + 0.5, PAD + 0.5, size - 1, size - 1);
+    // Frame: a hairline seam around the plate, not a hard border.
+    ctx.save();
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(PAD + 0.5, PAD + 0.5, size - 1, size - 1, R - 0.5);
+    else ctx.rect(PAD + 0.5, PAD + 0.5, size - 1, size - 1);
+    ctx.strokeStyle = 'rgba(255,255,255,.11)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
 
     // The curve itself, sampled through the LUT so it matches the pixels.
     const lut = curveToLUT(value[chan]);
-    ctx.strokeStyle = meta.color;
+    ctx.strokeStyle = ink;
     ctx.lineWidth = 1.6;
     ctx.beginPath();
     for (let x = 0; x <= 255; x++) {
@@ -378,17 +416,26 @@ function buildCurveEditor(container, cfg) {
     }
     ctx.stroke();
 
-    // Control points.
+    // Control points: crisp white dots with a dark outline, so they read on
+    // top of the curve, the histogram and the grid alike.
     const pts = value[chan];
     for (let i = 0; i < pts.length; i++) {
       const p = toPx(pts[i].x, pts[i].y);
+      const on = i === selected;
       ctx.beginPath();
-      ctx.arc(p.px, p.py, i === selected ? 4.5 : 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = i === selected ? '#ffffff' : meta.color;
+      ctx.arc(p.px, p.py, on ? 4.5 : 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = on ? '#ffffff' : ink;
       ctx.fill();
-      ctx.strokeStyle = '#141414';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.lineWidth = 1.5;
       ctx.stroke();
+      if (on) {
+        ctx.beginPath();
+        ctx.arc(p.px, p.py, 4.5, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
     }
   }
 

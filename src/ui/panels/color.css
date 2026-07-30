@@ -1,52 +1,80 @@
-.pkc-body { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+/* Colour picker: two overlapping chips, channel sliders, a spectrum ramp. */
 
-.pkc-head { display: flex; gap: 10px; align-items: flex-start; }
-.pkc-headcol { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pkc-body { display: flex; flex-direction: column; gap: 10px; }
 
-.pkc-chips { display: flex; gap: 4px; flex: 0 0 auto; }
-.pkc-stack { position: relative; width: 44px; height: 44px; }
+.pkc-head { display: flex; gap: 11px; align-items: flex-start; }
+.pkc-headcol { flex: 1 1 auto; display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+
+.pkc-chips { display: flex; gap: 5px; flex: 0 0 auto; }
+.pkc-stack { position: relative; width: 46px; height: 46px; }
 .pkc-chip {
-  position: absolute; width: 28px; height: 28px; padding: 0;
-  border: 1px solid var(--line-soft); border-radius: 2px; cursor: pointer;
+  position: absolute;
+  width: 30px; height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  box-shadow: 0 0 0 1px var(--hair-3), var(--sh-1);
+  cursor: pointer;
+  overflow: hidden;
+  transition: box-shadow .12s ease;
 }
 .pkc-chip-fill { position: absolute; inset: 0; }
 .pkc-fg { left: 0; top: 0; z-index: 2; }
 .pkc-bg { right: 0; bottom: 0; z-index: 1; }
-.pkc-chip.is-target { border-color: var(--fg-bright); box-shadow: 0 0 0 1px var(--accent); z-index: 3; }
+/* Which chip an edit lands on. */
+.pkc-chip.is-target { box-shadow: 0 0 0 2px var(--accent), var(--sh-1); z-index: 3; }
 
 .pkc-chip-tools { display: flex; flex-direction: column; justify-content: space-between; }
-.pkc-mini { width: 20px; height: 20px; }
+.pkc-mini { width: 21px; height: 21px; border-radius: var(--r-xs); }
 .pkc-mini svg { width: 12px; height: 12px; }
 .pkc-reset {
-  position: relative; width: 18px; height: 18px; padding: 0;
+  position: relative; width: 19px; height: 19px; padding: 0;
   background: none; border: none; cursor: pointer;
 }
 .pkc-reset-b, .pkc-reset-w {
-  position: absolute; width: 11px; height: 11px; border: 1px solid var(--line-soft);
+  position: absolute; width: 12px; height: 12px;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 1px var(--hair-3);
 }
 .pkc-reset-b { left: 0; top: 0; background: #000; z-index: 2; }
 .pkc-reset-w { right: 0; bottom: 0; background: #fff; z-index: 1; }
 
 .pkc-mode { width: 100%; }
-.pkc-hexrow { display: flex; align-items: center; gap: 4px; }
-.pkc-hexrow > span { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
-.pkc-hex { flex: 1 1 auto; min-width: 0; font-family: var(--mono); }
+.pkc-hexrow { display: flex; align-items: center; gap: 5px; }
+.pkc-hexrow > span { font-family: var(--mono); font-size: var(--fs-sm); color: var(--text-faint); }
+.pkc-hex { flex: 1 1 auto; min-width: 0; font-family: var(--mono); letter-spacing: .04em; }
 
-.pkc-sliders { display: flex; flex-direction: column; gap: 6px; }
-.pkc-slider { display: flex; align-items: center; gap: 6px; }
-.pkc-sname { width: 12px; flex: 0 0 auto; font-size: 11px; color: var(--fg-dim); text-align: center; }
+.pkc-sliders { display: flex; flex-direction: column; gap: 7px; }
+.pkc-slider { display: flex; align-items: center; gap: 7px; }
+.pkc-sname {
+  width: 13px; flex: 0 0 auto;
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: .05em;
+  color: var(--text-dim); text-align: center;
+}
 .pkc-track {
-  position: relative; flex: 1 1 auto; height: 12px; min-width: 40px;
-  border: 1px solid var(--line-soft); border-radius: 2px; cursor: pointer; touch-action: none;
+  position: relative; flex: 1 1 auto; height: 13px; min-width: 40px;
+  border: none;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 1px var(--hair-2);
+  cursor: pointer; touch-action: none;
 }
 .pkc-thumb {
-  position: absolute; top: -3px; width: 9px; height: 16px; margin-left: -4.5px;
-  border: 1px solid #101010; border-radius: 2px; background: #e2e2e2;
-  pointer-events: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, .25) inset;
+  position: absolute; top: -3px;
+  width: 9px; height: 19px; margin-left: -4.5px;
+  border: none;
+  border-radius: var(--r-xs);
+  /* Same off-white as the .pk-range knob in styles.css, so every draggable
+     handle in the app is one object. No token exists for it yet. */
+  background: #e9e9f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 0, 0, .35);
+  pointer-events: none;
 }
-.pkc-num { width: 46px; flex: 0 0 auto; text-align: right; }
+.pkc-num { width: 48px; flex: 0 0 auto; text-align: right; font-variant-numeric: tabular-nums; }
 
 .pkc-ramp {
-  display: block; width: 100%; height: 30px; cursor: crosshair; touch-action: none;
-  border: 1px solid var(--line-soft); border-radius: 2px;
+  display: block; width: 100%; height: 34px;
+  cursor: crosshair; touch-action: none;
+  border: none;
+  border-radius: var(--r-sm);
+  box-shadow: 0 0 0 1px var(--hair-2);
 }

@@ -3,25 +3,26 @@
 .pk-align-bar {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
 }
 
 .pk-align-bar .pk-icon-btn {
-  width: 24px;
-  height: 24px;
+  width: 25px;
+  height: 25px;
 }
 
 .pk-align-bar .pk-vsep {
   width: 1px;
   height: 18px;
-  margin: 0 5px;
-  background: var(--line-soft);
+  margin: 0 6px;
+  background: var(--hair-2);
   display: inline-block;
 }
 
 .pk-align-bar .pk-align-dist {
-  height: 22px;
-  padding: 0 7px;
-  font-size: 11px;
-  margin-left: 2px;
+  height: 23px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+  border-radius: var(--r-sm);
+  margin-left: 4px;
 }

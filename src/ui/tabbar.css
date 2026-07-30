@@ -1,66 +1,88 @@
-/* Document tabs. */
+/* Document tabs — browser-style: inactive tabs are just text, the active one is
+   a card that rises out of the bar and is capped with an accent edge. */
 
 .pk-tab {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 210px;
-  min-width: 96px;
-  padding: 0 6px 0 11px;
-  border-right: 1px solid var(--line);
-  background: var(--bg-1);
-  color: var(--fg-dim);
+  gap: 7px;
+  max-width: 204px;
+  min-width: 108px;
+  margin-top: 3px;
+  padding: 0 5px 0 11px;
+  border: none;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  background: transparent;
+  color: var(--text-dim);
   cursor: default;
   flex: 0 0 auto;
+  transition: background .12s ease, color .12s ease;
 }
-.pk-tab:hover { background: var(--bg-2); }
+.pk-tab:hover { background: rgba(255, 255, 255, .045); color: var(--text); }
+
 .pk-tab.active {
-  background: var(--bg-canvas);
-  color: var(--fg-bright);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  background: var(--s2);
+  color: var(--text-hi);
+  box-shadow: var(--lift);
+}
+/* The accent lives on the top edge only — a marker, not a filled tab. */
+.pk-tab.active::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  top: 0;
+  height: 2px;
+  border-radius: var(--r-full);
+  background: var(--accent);
 }
 
-.pk-tab-name { font-size: 11px; }
+.pk-tab-name { font-size: var(--fs-sm); letter-spacing: -.005em; }
+.pk-tab.active .pk-tab-name { font-weight: 500; }
 
 .pk-tab-dirty {
   width: 6px;
   height: 6px;
   flex: 0 0 6px;
   border-radius: 50%;
-  background: var(--accent-hi);
+  background: var(--accent);
 }
+.pk-tab:not(.active) .pk-tab-dirty { background: var(--text-faint); }
 
 .pk-tab-close {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   background: none;
   border: none;
-  border-radius: 3px;
-  color: var(--fg-dim);
+  border-radius: var(--r-xs);
+  color: var(--text-faint);
   cursor: default;
   opacity: 0;
+  transition: opacity .12s ease, background .12s ease, color .12s ease;
 }
 .pk-tab:hover .pk-tab-close,
 .pk-tab.active .pk-tab-close { opacity: 1; }
-.pk-tab-close:hover { background: #565656; color: #fff; }
+.pk-tab-close:hover { background: var(--s4); color: var(--text-hi); }
 .pk-tab-close svg { stroke: currentColor; fill: none; stroke-width: 1.6; }
 
 .pk-tab-new {
-  width: 28px;
-  flex: 0 0 28px;
+  width: 26px;
+  flex: 0 0 26px;
   display: flex;
   align-items: center;
   justify-content: center;
+  margin: 4px 0 4px 3px;
   background: none;
   border: none;
-  border-right: 1px solid var(--line);
-  color: var(--fg-dim);
+  border-radius: var(--r-sm);
+  color: var(--text-faint);
   cursor: default;
+  transition: background .12s ease, color .12s ease;
 }
-.pk-tab-new:hover { background: var(--bg-2); color: var(--fg-bright); }
-.pk-tab-new svg { stroke: currentColor; fill: none; }
+.pk-tab-new:hover { background: var(--s3); color: var(--text-hi); }
+.pk-tab-new svg { stroke: currentColor; fill: none; stroke-width: 1.5; }

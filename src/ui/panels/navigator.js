@@ -135,7 +135,12 @@ registerPanel({
         ctx.moveTo(corners[0].x, corners[0].y);
         for (let i = 1; i < 4; i++) ctx.lineTo(corners[i].x, corners[i].y);
         ctx.closePath();
-        ctx.strokeStyle = '#ff2f2f';
+        // Selection and state are the accent's job, so the view rectangle takes
+        // it too. A dark casing under it keeps it legible over pale artwork.
+        ctx.strokeStyle = 'rgba(0,0,0,.45)';
+        ctx.lineWidth = 3.5;
+        ctx.stroke();
+        ctx.strokeStyle = getComputedStyle(view).getPropertyValue('--accent').trim() || '#7c6af6';
         ctx.lineWidth = 1.5;
         ctx.stroke();
         ctx.restore();

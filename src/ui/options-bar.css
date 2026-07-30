@@ -1,86 +1,200 @@
-/* Tool options bar — one horizontal strip, never stacked. */
+/* Tool options — a quiet contextual strip, one horizontal line, never stacked.
+
+   It is not a second toolbar: nothing in here is a raised slab. The tool
+   identity sits at the left, then labels are micro-caps and values are the only
+   bright text, so the eye lands on what is editable. */
 
 .pk-ob-tool {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   flex: 0 0 auto;
-  color: var(--fg-bright);
-  padding-right: 2px;
+  color: var(--text-hi);
+  padding-right: 1px;
 }
-.pk-ob-tool-ico { display: flex; color: var(--fg); }
-.pk-ob-tool-ico svg { stroke: currentColor; fill: none; }
-.pk-ob-tool-name { white-space: nowrap; font-weight: 500; }
+.pk-ob-tool-ico { display: flex; color: var(--text-dim); }
+.pk-ob-tool-ico svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.pk-ob-tool-name {
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
 
 .pk-ob-field {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex: 0 0 auto;
   white-space: nowrap;
 }
+/* Slightly more air between fields than inside one, so label/value pairs read
+   as groups instead of one long run of words. */
+.pk-optionsbar > .pk-ob-field + .pk-ob-field { margin-left: 4px; }
 
 .pk-ob-label {
-  color: var(--fg-dim);
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
+/* A draggable label. The dotted rule is the resting affordance; the hover chip
+   makes it unmistakable that this text is a control. */
 .pk-scrub {
-  cursor: ew-resize;
-  padding: 2px 1px;
-  border-bottom: 1px dashed rgba(255, 255, 255, .22);
+  cursor: col-resize;
+  padding: 3px 4px;
+  margin: -3px -1px;
+  border-radius: var(--r-xs);
+  border-bottom: 1px dashed var(--hair-2);
   touch-action: none;
   user-select: none;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
 }
-.pk-scrub:hover { color: var(--fg-bright); border-bottom-color: var(--accent-hi); }
-.pk-scrub.dragging { color: #fff; border-bottom-color: var(--accent-hi); }
+.pk-scrub:hover {
+  background: var(--s3);
+  color: var(--text-hi);
+  border-bottom-color: var(--accent-ring);
+}
+.pk-scrub.dragging {
+  background: var(--accent-dim);
+  color: var(--accent-hi);
+  border-bottom-color: var(--accent);
+}
 
-.pk-optionsbar input[type="number"].pk-ob-num { width: 54px; height: 21px; text-align: right; background: var(--bg-0); border: 1px solid #4a4a4a; border-radius: 3px; padding: 0 4px; }
-.pk-optionsbar input[type="number"].pk-ob-num:focus { border-color: var(--accent); outline: none; }
-.pk-ob-select { height: 22px; max-width: 150px; }
-.pk-ob-text { height: 22px; width: 120px; }
-.pk-ob-btn { height: 22px; padding: 0 9px; }
-.pk-ob-static { color: var(--fg-dim); white-space: nowrap; }
-.pk-ob-custom { display: flex; align-items: center; gap: 5px; }
+.pk-optionsbar input[type="number"].pk-ob-num {
+  width: 56px;
+  height: 24px;
+  text-align: right;
+  background: var(--s0);
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-sm);
+  padding: 0 6px;
+  color: var(--text-hi);
+  font-variant-numeric: tabular-nums;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.pk-optionsbar input[type="number"].pk-ob-num:hover { border-color: var(--hair-3); }
+.pk-optionsbar input[type="number"].pk-ob-num:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
 
-.pk-ob-color { position: relative; width: 34px; height: 20px; overflow: hidden; }
+.pk-ob-select { height: 24px; max-width: 150px; font-size: var(--fs); }
+.pk-ob-text { height: 24px; width: 128px; }
+.pk-ob-btn { height: 24px; padding: 0 11px; border-radius: var(--r-sm); font-size: var(--fs-sm); }
+.pk-ob-static { color: var(--text-dim); white-space: nowrap; font-size: var(--fs-sm); }
+.pk-ob-custom { display: flex; align-items: center; gap: 6px; }
+
+.pk-ob-color {
+  position: relative;
+  width: 32px;
+  height: 22px;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+}
 .pk-ob-color-fill { position: absolute; inset: 0; display: block; }
 
-.pk-optionsbar .pk-vsep { margin: 0 3px; }
+.pk-optionsbar .pk-vsep { margin: 0 4px; height: 17px; background: var(--hair-2); }
+.pk-optionsbar .pk-unit { color: var(--text-faint); }
+.pk-optionsbar .pk-check { font-size: var(--fs-sm); }
 
-/* segmented radio */
-.pk-seg { display: flex; align-items: stretch; border: 1px solid #4a4a4a; border-radius: 3px; overflow: hidden; }
-.pk-seg-btn {
-  height: 20px;
-  padding: 0 8px;
-  background: var(--bg-0);
+/* ------------------------------------------------------- segmented control */
+
+/* One recessed track, one raised segment. No accent fill: the mode is state,
+   but it is state the user reads constantly, so it stays neutral. */
+.pk-seg {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 24px;
+  padding: 2px;
+  background: var(--s3);
   border: none;
-  border-right: 1px solid #4a4a4a;
-  color: var(--fg-dim);
+  border-radius: var(--r-full);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .3);
+  overflow: hidden;
+}
+.pk-seg-btn {
+  height: 100%;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-full);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: 500;
   cursor: default;
   white-space: nowrap;
+  transition: background .12s ease, color .12s ease;
 }
-.pk-seg-btn:last-child { border-right: none; }
-.pk-seg-btn:hover { background: var(--bg-3); color: var(--fg); }
-.pk-seg-btn.active { background: var(--accent); color: #fff; }
+.pk-seg-btn:hover { background: rgba(255, 255, 255, .05); color: var(--text); }
+.pk-seg-btn.active {
+  background: var(--s5);
+  color: var(--text-hi);
+  box-shadow: var(--sh-1), var(--lift);
+}
+.pk-seg-btn.active:hover { background: var(--s5); color: var(--text-hi); }
 
-/* popover slider */
+/* ---------------------------------------------------------- slider popover */
+
+/* Two rows: the label with its unit as a suffix, then the slider and its value.
+   A grid keeps the unit out of an orphaned third line. */
 .pk-ob-popover {
   position: fixed;
   z-index: 9200;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 210px;
-  padding: 9px 11px;
-  background: var(--bg-2);
-  border: 1px solid #4c4c4c;
-  border-radius: 5px;
-  box-shadow: 0 12px 34px rgba(0, 0, 0, .55);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px 8px;
+  min-width: 218px;
+  padding: 10px 12px 11px;
+  background: var(--s3);
+  border: none;
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-pop);
+  animation: pk-ob-pop-in .12s ease-out;
 }
-.pk-ob-popover-title { color: var(--fg-dim); font-size: 11px; }
+@keyframes pk-ob-pop-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.pk-ob-popover-title {
+  grid-column: 1;
+  grid-row: 1;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.pk-ob-popover .pk-unit { grid-column: 2; grid-row: 1; justify-self: end; color: var(--text-faint); }
+.pk-ob-popover .pk-slider-row { grid-column: 1 / -1; }
+.pk-ob-popover .pk-num {
+  width: 54px;
+  height: 24px;
+  flex: 0 0 auto;
+  text-align: right;
+  background: var(--s0);
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-sm);
+  padding: 0 6px;
+  color: var(--text-hi);
+  font-variant-numeric: tabular-nums;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.pk-ob-popover .pk-num:hover { border-color: var(--hair-3); }
+.pk-ob-popover .pk-num:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
 
+/* ------------------------------------------------------- transform commit */
+
+/* Commit/cancel keep their semantic colour; the hover is a low-alpha wash of
+   that same colour, since the surface scale has no tinted step. */
 .pk-ob-commit { color: var(--ok); }
 .pk-ob-cancel { color: var(--danger); }
-.pk-ob-commit:hover, .pk-ob-cancel:hover { color: #fff; }
+.pk-ob-commit:hover { background: rgba(67, 201, 138, .16); color: var(--ok); }
+.pk-ob-cancel:hover { background: rgba(242, 85, 90, .16); color: var(--danger); }

@@ -142,7 +142,7 @@ function buildLayersPanel(bodyEl) {
 
   const blendRow = el('div.pk-lay-hrow', {}, blendSel, opacity.node);
   const lockRow = el('div.pk-lay-hrow', {},
-    el('span.pk-lay-hlabel', { text: 'Lock:' }),
+    el('span.pk-lay-hlabel', { text: 'Lock' }),
     el('div.pk-lay-locks', {}, ...lockBtns.map((b) => b.node)),
     el('span.pk-spacer'),
     fill.node
@@ -271,7 +271,7 @@ function buildLayersPanel(bodyEl) {
       push(v, true);
     });
     num.addEventListener('change', () => push(Number(num.value) || 0, false));
-    const node = el('div.pk-lay-op', {}, el('span.pk-lay-hlabel', { text: `${label}:` }), num, range);
+    const node = el('div.pk-lay-op', {}, el('span.pk-lay-hlabel', { text: label }), num, range);
     return {
       node,
       set(v) {
@@ -525,6 +525,9 @@ function buildLayersPanel(bodyEl) {
     p.eye.classList.toggle('off', !l.visible);
 
     p.pad.style.width = `${item.depth * 13 + (l.clipped ? 8 : 0)}px`;
+    /* Nesting depth as an attribute so the stylesheet can draw an indent guide
+       on child rows only (the clipping offset must not trigger one). */
+    row.dataset.depth = String(item.depth);
     p.tri.classList.toggle('hidden', !isGroup);
     p.tri.classList.toggle('closed', isGroup && !l.expanded);
     p.clip.hidden = !l.clipped;

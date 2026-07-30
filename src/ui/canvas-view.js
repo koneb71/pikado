@@ -1,6 +1,7 @@
 import { app } from '../core/app.js';
 import { getComposite } from '../render/compositor.js';
 import { createCanvas } from '../core/util.js';
+import { OVERLAY } from './brand.js';
 
 /**
  * The document view: draws the composite plus all on-canvas chrome
@@ -79,6 +80,21 @@ export class CanvasView {
 
     const m = view.matrix();
 
+    // --- drop the artboard onto the surround -----------------------------
+    // A soft shadow under the document makes it read as a physical sheet on a
+    // neutral table, which is also the cue that tells you where the artboard
+    // ends and the (identically neutral) surround begins.
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+    ctx.shadowBlur = 26;
+    ctx.shadowOffsetY = 6;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    this._pathDocRect(ctx, m, doc);
+    ctx.fill();
+    ctx.restore();
+
     // --- checkerboard behind the document -------------------------------
     ctx.save();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -112,9 +128,11 @@ export class CanvasView {
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
-    // --- canvas border ---------------------------------------------------
+    // --- artboard edge ---------------------------------------------------
+    // A light hairline, not a black outline: the shadow already separates the
+    // sheet from the surround, so this only needs to crisp up the boundary.
     ctx.save();
-    ctx.strokeStyle = 'rgba(0,0,0,.75)';
+    ctx.strokeStyle = 'rgba(255,255,255,.09)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     this._pathDocRect(ctx, m, doc);
@@ -209,7 +227,7 @@ export class CanvasView {
     ctx.save();
     ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
     ctx.lineWidth = 1 / view.scale;
-    ctx.strokeStyle = '#37c1ff';
+    ctx.strokeStyle = OVERLAY.guide;
     ctx.beginPath();
     for (const g of doc.guides) {
       if (g.axis === 'v') { ctx.moveTo(g.pos, 0); ctx.lineTo(g.pos, doc.height); }

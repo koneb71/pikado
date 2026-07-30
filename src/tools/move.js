@@ -9,6 +9,7 @@ import {
   getTransformNumeric, setTransformNumeric,
 } from './transform.js';
 import './move.css';
+import { OVERLAY } from '../ui/brand.js';
 
 /**
  * Move tool + Artboard tool.
@@ -848,11 +849,11 @@ class ArtboardTool extends Tool {
       ctx.lineTo(p3.x, p3.y);
       ctx.closePath();
       ctx.lineWidth = active ? 2 : 1;
-      ctx.strokeStyle = active ? '#1473e6' : 'rgba(120,170,255,.75)';
+      ctx.strokeStyle = active ? OVERLAY.accent : OVERLAY.accentSoft;
       ctx.stroke();
 
       const label = `${a.name}  ${Math.round(a.width)} × ${Math.round(a.height)}`;
-      ctx.fillStyle = active ? '#7ab8ff' : 'rgba(200,215,240,.85)';
+      ctx.fillStyle = active ? OVERLAY.accentHi : 'rgba(220,222,240,.85)';
       ctx.fillText(label, p0.x, p0.y - 4);
 
       if (active) {
@@ -873,7 +874,7 @@ class ArtboardTool extends Tool {
       const p0 = view.toScreen(d.rect.x, d.rect.y);
       const p2 = view.toScreen(d.rect.x + d.rect.width, d.rect.y + d.rect.height);
       ctx.setLineDash([4, 3]);
-      ctx.strokeStyle = '#1473e6';
+      ctx.strokeStyle = OVERLAY.accent;
       ctx.lineWidth = 1;
       ctx.strokeRect(Math.min(p0.x, p2.x), Math.min(p0.y, p2.y), Math.abs(p2.x - p0.x), Math.abs(p2.y - p0.y));
       ctx.setLineDash([]);

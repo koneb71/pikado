@@ -18,10 +18,17 @@ const STORAGE_KEY = 'pikado.panels';
 
 /** Vertical order of the known groups; unknown groups are appended. */
 const GROUP_ORDER = ['top', 'mid', 'bottom'];
-/** Default share of the dock height each group receives. */
-const GROUP_WEIGHT = { top: 3.4, mid: 1, bottom: 2.2 };
+/**
+ * Default share of the dock height each group receives.
+ *
+ * Weighted towards `top` on purpose: Layers is where the work happens and it is
+ * the one panel that always wants more rows, whereas Colour/Swatches has a
+ * fixed natural height and the bottom group is mostly read-only. An even split
+ * left Layers showing three rows on a 900px window.
+ */
+const GROUP_WEIGHT = { top: 5, mid: 1.1, bottom: 2 };
 
-const HEAD_H = 27;
+const HEAD_H = 31;
 
 /** @type {Map<string, object>} panel id -> definition */
 export const PANELS = new Map();

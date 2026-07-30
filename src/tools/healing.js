@@ -6,6 +6,7 @@ import { Selection, morph } from '../core/selection.js';
 import { getComposite } from '../render/compositor.js';
 import { BrushToolBase, tweakDefaults, blurImageData } from './brush.js';
 import { makeTiledCanvas, patternOptions } from '../paint/patterns.js';
+import { OVERLAY } from '../ui/brand.js';
 
 /**
  * Healing family: Spot Healing Brush, Healing Brush, Patch and Red Eye.
@@ -849,7 +850,7 @@ class PatchTool extends Tool {
       const a = view.toScreen(this.points[0].x, this.points[0].y);
       const b = view.toScreen(this.points[0].x + this.offset.dx, this.points[0].y + this.offset.dy);
       ctx.setLineDash([]);
-      ctx.strokeStyle = '#37c1ff';
+      ctx.strokeStyle = OVERLAY.accent;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);

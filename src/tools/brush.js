@@ -5,6 +5,7 @@ import { BLEND_MODES, isNativeBlend, gcoFor, blendCPU } from '../core/blend.js';
 import { getComposite } from '../render/compositor.js';
 import { createCanvas, ctx2dRead, clamp, clamp255 } from '../core/util.js';
 import { rgb, rgb2hsl, hsl2rgb, toCss, luminance, colorDistance } from '../core/color.js';
+import { OVERLAY } from '../ui/brand.js';
 
 /**
  * Painting tools: Brush, Pencil, Colour Replacement, Mixer Brush.
@@ -375,7 +376,7 @@ export class BrushToolBase extends Tool {
   }
 
   /** Little crosshair marker, used for clone/heal source points. */
-  drawCrosshair(ctx, view, docX, docY, css = '#37c1ff') {
+  drawCrosshair(ctx, view, docX, docY, css = OVERLAY.accent) {
     const p = view.toScreen(docX, docY);
     ctx.save();
     ctx.lineWidth = 1;

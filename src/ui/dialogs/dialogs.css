@@ -1,18 +1,24 @@
 /* ==========================================================================
    Shared styling for the Pikado document / export / preference dialogs.
    Imported by every module in src/ui/dialogs/.
+
+   Follows the design system in src/styles.css: contrast steps and hairlines
+   instead of dark borders, generous radii, micro-caps labels, and exactly one
+   accent — used as a tint plus a small solid marker, never as a filled slab.
    ========================================================================== */
+
+/* ---------------------------------------------------------------- layout */
 
 .pkd-cols {
   display: flex;
-  gap: 14px;
+  gap: 16px;
   align-items: flex-start;
 }
 
 .pkd-col {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 11px;
   min-width: 0;
 }
 
@@ -25,42 +31,71 @@
 }
 
 .pkd-row .pk-field { flex: 1 1 0; min-width: 0; }
-.pkd-row .pk-field.fixed { flex: 0 0 92px; }
+.pkd-row .pk-field.fixed { flex: 0 0 100px; }
+/* Trailing units sit beside a control, so they centre on it rather than
+   dropping to the row's baseline. */
+.pkd-row > .pk-unit { align-self: center; }
 
+/* A checkbox inside a .pk-field is a control, not a caption — the shared
+   micro-caps rule for field labels must not swallow it. */
+.pk-dialog .pk-field > label.pk-check {
+  font-size: var(--fs);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+}
+.pk-dialog .pk-field > label.pk-check:hover { color: var(--text-hi); }
+
+/* ------------------------------------------------------------ typography */
+
+/* Section headers are micro-caps like every other label, so a hairline rule
+   underneath is what separates them from the field captions below. */
 .pkd-section {
-  color: var(--fg-bright);
+  font-size: var(--fs-micro);
   font-weight: 600;
-  margin: 2px 0 -2px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 2px 0 0;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--hair);
 }
 
 .pkd-note {
-  color: var(--fg-dim);
-  line-height: 1.5;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
 }
 
+/* A quiet readout. Numbers are tabular so a live value never shifts width. */
 .pkd-readout {
-  background: var(--bg-1);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  padding: 7px 9px;
-  color: var(--fg-dim);
-  line-height: 1.55;
-  font-family: var(--mono);
-  font-size: 11px;
+  background: var(--s0);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+  padding: 9px 11px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
   white-space: pre-wrap;
 }
 
-.pkd-readout b { color: var(--fg-bright); font-weight: 600; }
+.pkd-readout b {
+  color: var(--text-hi);
+  font-weight: 600;
+  font-size: var(--fs);
+}
 
 /* ---------------------------------------------------------------- presets */
 
 .pkd-presets {
-  flex: 0 0 190px;
+  flex: 0 0 210px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  border-right: 1px solid var(--line-soft);
-  padding-right: 12px;
+  gap: 10px;
+  border-right: 1px solid var(--hair);
+  padding-right: 16px;
 }
 
 .pkd-cats {
@@ -69,248 +104,395 @@
   gap: 4px;
 }
 
+/* Category pills: quiet by default, tinted (never filled) when active. */
 .pkd-cat {
+  height: 22px;
+  padding: 0 10px;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  color: var(--fg-dim);
-  padding: 3px 9px;
+  border: none;
+  border-radius: var(--r-full);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
   cursor: pointer;
-  font-size: 11px;
+  transition: background .12s ease, color .12s ease;
 }
 
-.pkd-cat:hover { background: var(--bg-3); color: var(--fg); }
-.pkd-cat.active { background: var(--accent-soft); border-color: var(--accent); color: var(--fg-bright); }
+.pkd-cat:hover { background: var(--s3); color: var(--text-hi); }
+.pkd-cat.active { background: var(--accent-dim); color: var(--accent-hi); font-weight: 600; }
 
 .pkd-preset-list {
-  max-height: 268px;
+  max-height: 292px;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 5px;
+  padding-right: 2px;
 }
 
+/* Preset cards: a hairline card each, tinted plus a solid accent bar when
+   picked, so the selection reads instantly without a saturated block. */
 .pkd-preset {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: 5px 7px;
+  background: var(--s1);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+  padding: 6px 10px;
   cursor: pointer;
-  color: var(--fg);
-}
-
-.pkd-preset:hover { background: var(--bg-3); }
-.pkd-preset.active { background: var(--accent-soft); border-color: var(--accent); }
-.pkd-preset small { color: var(--fg-dim); font-size: 10.5px; }
-
-/* ------------------------------------------------------------- orientation */
-
-.pkd-seg {
-  display: inline-flex;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
+  color: var(--text);
   overflow: hidden;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
 
-.pkd-seg button {
-  background: var(--bg-2);
+.pkd-preset::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+
+.pkd-preset:hover { background: var(--s3); border-color: var(--hair-2); color: var(--text-hi); }
+
+.pkd-preset.active {
+  background: var(--accent-dim);
+  border-color: var(--hair-2);
+  color: var(--text-hi);
+}
+.pkd-preset.active::before { opacity: 1; }
+
+.pkd-preset > span { font-weight: 500; }
+.pkd-preset small {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+  letter-spacing: .01em;
+  font-variant-numeric: tabular-nums;
+}
+.pkd-preset.active small { color: var(--text-dim); }
+
+/* --------------------------------------------------- segmented pill groups */
+
+/* Orientation and export scale share one control: a rail with an inset track
+   and a tinted, lifted chip on the active choice. */
+.pkd-seg,
+.pkd-size-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--s0);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-full);
+  width: max-content;
+  max-width: 100%;
+  flex-wrap: nowrap;
+}
+
+.pkd-seg button,
+.pkd-size-btns button {
+  height: 21px;
+  padding: 0 12px;
+  background: transparent;
   border: none;
-  color: var(--fg-dim);
-  padding: 4px 10px;
+  border-radius: var(--r-full);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
   cursor: pointer;
-  height: var(--row-h);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: background .12s ease, color .12s ease;
 }
 
-.pkd-seg button + button { border-left: 1px solid var(--line-soft); }
-.pkd-seg button:hover { background: var(--bg-3); color: var(--fg); }
-.pkd-seg button.active { background: var(--accent); color: #fff; }
+.pkd-seg button:hover,
+.pkd-size-btns button:hover { background: var(--s3); color: var(--text-hi); }
+
+.pkd-seg button.active,
+.pkd-size-btns button.active {
+  background: var(--accent-dim);
+  color: var(--accent-hi);
+  font-weight: 600;
+  box-shadow: var(--lift);
+}
 
 /* ----------------------------------------------------------- chain / links */
 
+/* Constrain-proportions toggle: a real button, with an interlocked pair of
+   links when on and a broken pair when off. */
 .pkd-chain {
   flex: 0 0 auto;
-  width: 22px;
-  height: 46px;
-  margin-bottom: 2px;
-  border: none;
-  background: transparent;
-  color: var(--fg-dim);
-  cursor: pointer;
+  align-self: center;
   position: relative;
+  width: 27px;
+  height: 27px;
+  margin: 8px 0 0;
   padding: 0;
+  background: var(--s3);
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-sm);
+  box-shadow: var(--lift);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
 
 .pkd-chain::before,
 .pkd-chain::after {
   content: '';
   position: absolute;
-  left: 3px;
-  right: 9px;
-  height: 9px;
-  border: 1px solid currentColor;
+  top: 9px;
+  width: 12px;
+  height: 7px;
+  border: 1.5px solid currentColor;
+  border-radius: var(--r-full);
+  transition: left .12s ease, width .12s ease;
 }
 
-.pkd-chain::before { top: 6px; border-bottom: none; border-radius: 3px 3px 0 0; }
-.pkd-chain::after { bottom: 6px; border-top: none; border-radius: 0 0 3px 3px; }
-.pkd-chain.on { color: var(--accent); }
-.pkd-chain.off::before { top: 3px; }
-.pkd-chain.off::after { bottom: 3px; }
-.pkd-chain:hover { color: var(--fg-bright); }
+/* Linked: the two rings interlock. Broken: they shrink and pull apart. */
+.pkd-chain.on::before { left: 3px; }
+.pkd-chain.on::after { left: 10px; }
+.pkd-chain.off::before { left: 1px; width: 10px; }
+.pkd-chain.off::after { left: 14px; width: 10px; }
+
+.pkd-chain:hover { background: var(--s4); border-color: var(--hair-3); color: var(--text-hi); }
+.pkd-chain.on {
+  background: var(--accent-dim);
+  border-color: var(--accent-ring);
+  color: var(--accent-hi);
+}
+.pkd-chain.on:hover { color: var(--accent-hi); }
 
 /* ------------------------------------------------------------ anchor grid */
 
 .pkd-anchor {
   display: grid;
-  grid-template-columns: repeat(3, 26px);
-  grid-template-rows: repeat(3, 26px);
-  gap: 2px;
+  grid-template-columns: repeat(3, 28px);
+  grid-template-rows: repeat(3, 28px);
+  gap: 3px;
   width: max-content;
+  padding: 3px;
+  background: var(--s0);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
 }
 
 .pkd-anchor button {
-  background: var(--bg-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 2px;
+  background: var(--s2);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-xs);
   cursor: pointer;
-  color: var(--fg-dim);
+  color: var(--text-faint);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
 
-.pkd-anchor button:hover { background: var(--bg-3); }
-.pkd-anchor button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pkd-anchor button:hover { background: var(--s4); color: var(--text-hi); }
+.pkd-anchor button.active {
+  background: var(--accent-dim);
+  border-color: var(--accent-ring);
+  color: var(--accent-hi);
+  box-shadow: var(--lift);
+}
 
 /* ---------------------------------------------------------------- preview */
 
+/* Neutral checkerboard. It covers a large area here, so the two greys are
+   kept close together — enough to read as "transparent", quiet enough not to
+   fight the image sitting on top of it. A hairline, not a frame. */
 .pkd-preview {
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  background-color: #6a6a6a;
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-md);
+  background-color: #8a8a8a;
   background-image:
-    linear-gradient(45deg, #9a9a9a 25%, transparent 25%),
-    linear-gradient(-45deg, #9a9a9a 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #9a9a9a 75%),
-    linear-gradient(-45deg, transparent 75%, #9a9a9a 75%);
-  background-size: 14px 14px;
-  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+    linear-gradient(45deg, #797979 25%, transparent 25%),
+    linear-gradient(-45deg, #797979 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #797979 75%),
+    linear-gradient(-45deg, transparent 75%, #797979 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
   min-height: 120px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .3);
 }
 
-.pkd-preview canvas { display: block; max-width: 100%; max-height: 100%; }
+.pkd-preview canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  box-shadow: var(--sh-1);
+}
 
 /* ------------------------------------------------------------ preferences */
 
-.pkd-prefs { display: flex; gap: 14px; align-items: stretch; min-height: 330px; }
+.pkd-prefs { display: flex; gap: 16px; align-items: stretch; min-height: 340px; }
 
 .pkd-prefs-nav {
-  flex: 0 0 148px;
+  flex: 0 0 158px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  border-right: 1px solid var(--line-soft);
-  padding-right: 10px;
+  gap: 3px;
+  border-right: 1px solid var(--hair);
+  padding-right: 14px;
 }
 
+/* Category rows: the same language as the Layer Style effect list. */
 .pkd-prefs-nav button {
+  display: flex;
+  align-items: center;
+  height: 28px;
   text-align: left;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  color: var(--fg);
-  padding: 6px 9px;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  padding: 0 10px;
   cursor: pointer;
+  transition: background .12s ease, color .12s ease;
 }
 
-.pkd-prefs-nav button:hover { background: var(--bg-3); }
-.pkd-prefs-nav button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--fg-bright); }
+.pkd-prefs-nav button:hover { background: var(--s3); color: var(--text-hi); }
+.pkd-prefs-nav button.active {
+  background: var(--accent-dim);
+  color: var(--text-hi);
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
 
-.pkd-prefs-body { flex: 1 1 auto; min-width: 0; overflow: auto; max-height: 62vh; }
+.pkd-prefs-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  max-height: 62vh;
+  padding-right: 2px;
+}
+
+.pkd-prefs-body .pkd-section { margin-bottom: 10px; }
 
 /* -------------------------------------------------------------- shortcuts */
 
-.pkd-keys-search { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.pkd-keys-search { display: flex; gap: 10px; align-items: center; margin-bottom: 11px; }
 .pkd-keys-search .pk-input { flex: 1 1 auto; }
+.pkd-keys-search .pk-hint {
+  margin: 0;
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
 
-.pkd-keys-scroll { max-height: 56vh; overflow: auto; border: 1px solid var(--line-soft); border-radius: var(--radius); }
+.pkd-keys-scroll {
+  max-height: 56vh;
+  overflow: auto;
+  background: var(--s1);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+}
 
-.pkd-keys-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.pkd-keys-table { width: 100%; border-collapse: collapse; font-size: var(--fs); }
 
 .pkd-keys-table th {
   position: sticky;
   top: 0;
-  background: var(--bg-3);
+  background: var(--s2);
   text-align: left;
-  padding: 6px 9px;
-  color: var(--fg-dim);
+  padding: 7px 12px;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
   font-weight: 600;
-  border-bottom: 1px solid var(--line-soft);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--hair-2);
   z-index: 1;
 }
 
-.pkd-keys-table td { padding: 4px 9px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-.pkd-keys-table tr:hover td { background: var(--bg-2); }
-.pkd-keys-group td { background: var(--bg-1); color: var(--fg-bright); font-weight: 600; }
-.pkd-keys-table tr:hover .pkd-keys-group td { background: var(--bg-1); }
-
-.pkd-key-btn {
-  min-width: 96px;
-  font-family: var(--mono);
-  font-size: 11px;
-  background: var(--bg-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 3px;
-  color: var(--fg);
-  padding: 2px 7px;
-  cursor: pointer;
-  text-align: center;
+.pkd-keys-table td {
+  padding: 4px 12px;
+  height: 30px;
+  border-bottom: 1px solid var(--hair);
+  vertical-align: middle;
+  color: var(--text-hi);
+  line-height: 1.35;
 }
 
-.pkd-key-btn:hover { border-color: var(--accent); }
-.pkd-key-btn.recording { background: var(--accent); border-color: var(--accent); color: #fff; }
-.pkd-key-btn.custom { color: var(--accent); border-color: var(--accent); }
+.pkd-keys-table tr:last-child td { border-bottom: none; }
+.pkd-keys-table tr:hover td { background: rgba(255, 255, 255, .035); }
+
+/* The command id is tertiary: it identifies, it does not need to be read. */
+.pkd-keys-table td .pk-hint {
+  margin-top: 0;
+  font-size: var(--fs-micro);
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
+/* Group headers are micro-caps seams rather than filled bars. */
+.pkd-keys-group td {
+  background: var(--s0);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  height: 26px;
+  border-top: 1px solid var(--hair);
+}
+.pkd-keys-table tr:hover .pkd-keys-group td,
+.pkd-keys-table tr.pkd-keys-group:hover td { background: var(--s0); }
+
+/* Shortcut chips echo the kbd treatment on the welcome screen. */
+.pkd-key-btn {
+  min-width: 100px;
+  font-family: var(--font);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  background: var(--s3);
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-xs);
+  box-shadow: var(--lift);
+  color: var(--text);
+  padding: 3px 8px;
+  cursor: pointer;
+  text-align: center;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.pkd-key-btn:hover { background: var(--s4); border-color: var(--hair-3); color: var(--text-hi); }
+.pkd-key-btn.recording {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent-hi);
+}
+.pkd-key-btn.custom { color: var(--accent-hi); border-color: var(--accent-ring); }
 .pkd-key-clear { visibility: hidden; }
 .pkd-keys-table tr:hover .pkd-key-clear { visibility: visible; }
 
-/* ----------------------------------------------------------- export sizes */
-
-.pkd-size-btns { display: flex; gap: 4px; flex-wrap: wrap; }
-
-.pkd-size-btns button {
-  background: var(--bg-2);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  color: var(--fg-dim);
-  padding: 3px 10px;
-  cursor: pointer;
-  height: var(--row-h);
-}
-
-.pkd-size-btns button:hover { background: var(--bg-3); color: var(--fg); }
-.pkd-size-btns button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-
 /* ----------------------------------------------------------------- about */
 
-.pkd-about { font-size: 12px; line-height: 1.55; }
-.pkd-about p { margin: 0 0 4px; color: var(--fg); }
+.pkd-about { font-size: var(--fs); line-height: 1.65; }
+.pkd-about p { margin: 0 0 6px; color: var(--text); }
 
 .pkd-about ul {
-  margin: 2px 0 6px;
-  padding-left: 18px;
-  color: var(--fg-dim);
-  max-height: 190px;
+  margin: 4px 0 8px;
+  padding: 8px 8px 8px 26px;
+  color: var(--text-dim);
+  max-height: 200px;
   overflow: auto;
+  background: var(--s1);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
 }
 
-.pkd-about li { margin: 1px 0; }
+.pkd-about li { margin: 2px 0; }

@@ -10,6 +10,7 @@ import { applyFilterCommand, applyAdjustmentCommand } from '../filters/run.js';
 import { addAdjustmentLayer } from '../layers/ops.js';
 import { toolGroups } from '../tools/base.js';
 import './menubar.css';
+import { brandLock, BRAND, installFavicon } from './brand.js';
 
 /**
  * The application menu bar.
@@ -46,10 +47,7 @@ export function buildMenubar(rootEl) {
   rootEl.replaceChildren();
 
   rootEl.appendChild(
-    el('div.pk-brand', { title: 'Pikado' },
-      el('span.pk-brand-mark', { html: BRAND_MARK }),
-      el('span.pk-brand-text', { text: 'Pikado' })
-    )
+    el('div.pk-brand', { title: `${BRAND.name} — ${BRAND.tagline}`, html: brandLock({ size: 21, wordSize: 15 }) })
   );
 
   bar.menus = el('nav.pk-menus', { role: 'menubar' });
@@ -65,13 +63,9 @@ export function buildMenubar(rootEl) {
   app.on('ready', loadTree);
   for (const ev of ['docs-change', 'active-doc', 'doc-change', 'history-change']) app.on(ev, syncTitle);
 
+  installFavicon();
   installGlobalHandlers();
 }
-
-const BRAND_MARK =
-  '<svg viewBox="0 0 32 32" width="16" height="16" aria-hidden="true">' +
-  '<rect width="32" height="32" rx="7" fill="#1473e6"/>' +
-  '<path d="M9 23V9h6.4a4.6 4.6 0 0 1 0 9.2H12V23H9z" fill="#fff"/></svg>';
 
 /* ------------------------------------------------------------------ */
 /* Tree loading                                                        */

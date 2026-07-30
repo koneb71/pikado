@@ -1,5 +1,13 @@
 /* ==========================================================================
    Pikado — panel dock chrome + shared panel primitives.
+
+   The dock is a stack of CARDS, not a tiled grey column: each group sits on
+   --s2 with a light hairline, a generous radius and a soft shadow, and the
+   gap between cards does the separating so no dark rules are needed. Inside a
+   card, state is carried by a tinted surface plus a small solid accent marker
+   — never by a saturated slab — and headers are micro-caps so the hierarchy
+   reads before you start parsing words.
+
    Imported by src/ui/panel-host.js and by every panel module, so anything a
    panel needs visually should live here.
    ========================================================================== */
@@ -11,60 +19,104 @@
   flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-width: none;
 }
+.pk-panels.pk-dock::-webkit-scrollbar { width: 0; height: 0; }
 
+/* Every group is a self-contained card floating on the frame. */
 .pk-pgroup {
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  background: var(--bg-2);
+  background: var(--s2);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-1), var(--lift);
 }
 .pk-pgroup.collapsed { flex: 0 0 auto !important; }
 .pk-pgroup.collapsed .pk-pgroup-body { display: none; }
+.pk-pgroup.collapsed .pk-pgroup-head { border-bottom-color: transparent; }
 .pk-pgroup.collapsed .pk-pgroup-collapse svg { transform: rotate(-90deg); }
 
+/* The head is part of the card, so it takes the card surface and is separated
+   from the body by a hairline seam rather than a border. */
 .pk-pgroup-head {
   flex: 0 0 auto;
-  height: 27px;
+  height: 31px;
   display: flex;
   align-items: stretch;
-  background: var(--bg-1);
-  border-bottom: 1px solid var(--line);
-  border-top: 1px solid var(--line);
-  padding-right: 2px;
-  gap: 2px;
+  background: transparent;
+  border-bottom: 1px solid var(--hair);
+  padding: 0 4px 0 5px;
+  gap: 5px;
 }
-.pk-pgroup:first-child .pk-pgroup-head { border-top: none; }
 
 .pk-ptabs {
   flex: 1 1 auto;
   display: flex;
   align-items: stretch;
   min-width: 0;
+  gap: 1px;
   overflow: hidden;
 }
 
+/* Quiet underline tabs: the active one is named by weight, colour and a small
+   2px accent rule that lands on the head's seam. */
 .pk-ptab {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 0 9px;
-  max-width: 130px;
+  gap: 6px;
+  padding: 0 8px;
+  max-width: 132px;
   background: transparent;
   border: none;
-  border-right: 1px solid var(--line);
-  color: var(--fg-dim);
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+  transition: color .12s ease, background .12s ease;
 }
-.pk-ptab:hover { color: var(--fg-bright); }
-.pk-ptab.active { background: var(--bg-2); color: var(--fg-bright); }
-.pk-ptab-ico { display: inline-flex; flex: 0 0 auto; opacity: .85; }
+.pk-ptab:hover { color: var(--text-hi); background: rgba(255, 255, 255, .04); }
+.pk-ptab.active { color: var(--text-hi); font-weight: 500; }
+.pk-ptab.active::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  bottom: 0;
+  height: 2px;
+  border-radius: var(--r-full) var(--r-full) 0 0;
+  background: var(--accent);
+}
+.pk-ptab-ico { display: inline-flex; flex: 0 0 auto; color: var(--text-faint); transition: color .12s ease; }
+.pk-ptab:hover .pk-ptab-ico { color: var(--text-dim); }
+.pk-ptab.active .pk-ptab-ico { color: var(--accent-hi); }
 .pk-ptab-ico svg { display: block; }
 .pk-ptab-label { overflow: hidden; text-overflow: ellipsis; }
-.pk-ptabs.solo .pk-ptab { border-right: none; font-weight: 600; }
+
+/* Four tabs cannot carry four names in a 304px dock — squeezing them produces
+   "P… H N.. C…". Past three, the inactive tabs fall back to their icon (the
+   button keeps its title attribute) and only the active tab is named. */
+.pk-ptabs:has(> .pk-ptab:nth-child(4)) .pk-ptab:not(.active) { padding: 0 7px; }
+.pk-ptabs:has(> .pk-ptab:nth-child(4)) .pk-ptab:not(.active) .pk-ptab-label { display: none; }
+
+/* A group with a single panel has no tabs to switch — its title is a header. */
+.pk-ptabs.solo .pk-ptab {
+  cursor: default;
+  padding-left: 4px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.pk-ptabs.solo .pk-ptab:hover { background: transparent; color: var(--text-dim); }
+.pk-ptabs.solo .pk-ptab.active::after { display: none; }
+.pk-ptabs.solo .pk-ptab.active .pk-ptab-ico { color: var(--text-faint); }
 
 .pk-pgroup-tools {
   flex: 0 0 auto;
@@ -72,8 +124,8 @@
   align-items: center;
   gap: 1px;
 }
-.pk-pgroup-tools .pk-icon-btn { width: 21px; height: 21px; }
-.pk-pgroup-tools .pk-icon-btn svg { transition: transform .12s ease; }
+.pk-pgroup-tools .pk-icon-btn { width: 23px; height: 23px; border-radius: var(--r-sm); }
+.pk-pgroup-tools .pk-icon-btn svg { width: 14px; height: 14px; transition: transform .12s ease; }
 
 .pk-pgroup-body {
   flex: 1 1 auto;
@@ -87,9 +139,8 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 8px;
+  padding: 9px 10px 10px;
 }
-.pk-panel[hidden] { display: none; }
 /* Panels that manage their own scrolling (Layers, History) opt out. */
 .pk-panel.pk-panel-flush {
   overflow: hidden;
@@ -97,71 +148,77 @@
   display: flex;
   flex-direction: column;
 }
-.pk-panel-error { color: var(--danger); padding: 10px; }
+/* Several panels set their own `display` on the panel node (`.pkch-body`,
+   `.pkp-body`, the flush rule above), and those selectors are at least as
+   specific as this one — and in stylesheets that may load later. Hiding a
+   background tab is not negotiable, so it is the one !important here; without
+   it a built panel keeps painting behind its sibling tab. */
+.pk-panel[hidden] { display: none !important; }
+.pk-panel-error { color: var(--danger); padding: 12px; line-height: 1.5; }
 /* The app disables selection globally; text fields inside panels need it back. */
 .pk-panel input, .pk-panel textarea { user-select: text; -webkit-user-select: text; }
 
+/* The divider lives *in* the gap between two cards: invisible at rest apart
+   from a short grip, accent while dragging. Negative margins collapse the
+   flex gap it would otherwise add on top of --gap. */
 .pk-pdivider {
-  flex: 0 0 5px;
-  height: 5px;
-  background: var(--bg-0);
+  flex: 0 0 9px;
+  height: 9px;
+  margin: calc(-1px - var(--gap)) 0;
+  background: transparent;
   cursor: ns-resize;
   position: relative;
-  z-index: 2;
+  z-index: 3;
 }
 .pk-pdivider::after {
   content: '';
   position: absolute;
   left: 50%;
-  top: 2px;
-  width: 26px;
-  height: 1px;
-  margin-left: -13px;
-  background: #555;
+  top: 50%;
+  width: 28px;
+  height: 2px;
+  margin: -1px 0 0 -14px;
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, .09);
+  transition: background .12s ease, width .12s ease;
 }
-.pk-pdivider:hover, .pk-pdivider.active { background: var(--accent); }
+.pk-pdivider:hover::after { background: var(--hair-3); width: 40px; margin-left: -20px; }
+.pk-pdivider.active::after { background: var(--accent); width: 40px; margin-left: -20px; }
 
 /* ------------------------------------------------------------- popup menu */
+/* Base look is owned by menubar.css so both menu flavours match. These rules
+   only add what a <button>-based popup item needs on top of it. */
 
-.pk-menu {
-  position: fixed;
-  z-index: 4000;
-  background: var(--bg-3);
-  border: 1px solid #4f4f4f;
-  border-radius: var(--radius);
-  box-shadow: 0 10px 34px rgba(0, 0, 0, .55);
-  padding: 4px 0;
-  max-height: 78vh;
-  overflow-y: auto;
-}
 .pk-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   width: 100%;
-  height: 23px;
-  padding: 0 12px 0 4px;
   background: none;
   border: none;
-  color: var(--fg);
-  cursor: pointer;
+  font: inherit;
   text-align: left;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
 }
-.pk-menu-item:hover:not(:disabled) { background: var(--accent); color: #fff; }
-.pk-menu-item:disabled { color: var(--fg-dim); opacity: .55; cursor: default; }
-.pk-menu-check { width: 16px; display: inline-flex; justify-content: center; flex: 0 0 auto; }
-.pk-menu-check svg { display: block; }
-.pk-menu-label { flex: 1 1 auto; }
-.pk-menu-accel { color: var(--fg-dim); font-size: 11px; margin-left: 18px; }
-.pk-menu-item:hover:not(:disabled) .pk-menu-accel { color: #dbe8fb; }
-.pk-menu-sep { border-top: 1px solid var(--line-soft); margin: 4px 0; }
-.pk-menu-header {
-  padding: 4px 12px 3px 20px;
-  color: var(--fg-dim);
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: .5px;
+.pk-menu-item:hover:not(:disabled) { background: var(--s5); color: var(--text-hi); }
+.pk-menu-item:disabled { color: var(--text-faint); cursor: default; }
+.pk-menu-item:hover:not(:disabled) .pk-menu-accel { color: var(--text-dim); }
+
+.pk-menu-check {
+  width: 16px;
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-hi);
+}
+.pk-menu-check svg { display: block; stroke: currentColor; fill: none; stroke-width: 2; }
+.pk-menu-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.pk-menu-accel {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  margin-left: 20px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* -------------------------------------------------- shared panel primitives */
@@ -169,64 +226,73 @@
 .pk-panel-section {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding-bottom: 9px;
+  gap: 8px;
+  padding-bottom: 11px;
 }
+.pk-panel-section:last-child { padding-bottom: 2px; }
 .pk-panel-section + .pk-panel-section {
-  border-top: 1px solid var(--line-soft);
-  padding-top: 9px;
+  border-top: 1px solid var(--hair);
+  padding-top: 11px;
 }
 .pk-panel-title {
-  color: var(--fg-bright);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
   font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
-.pk-panel-note { color: var(--fg-dim); font-size: 11px; line-height: 1.5; }
+.pk-panel-note { color: var(--text-faint); font-size: var(--fs-sm); line-height: 1.55; }
 
 .pk-panel-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 22px;
+  gap: 7px;
+  min-height: 24px;
 }
 .pk-panel-row > label,
 .pk-panel-key {
   flex: 0 0 auto;
-  color: var(--fg-dim);
-  font-size: 11px;
-  min-width: 62px;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  min-width: 66px;
 }
 .pk-panel-row .pk-input,
 .pk-panel-row .pk-select { flex: 1 1 auto; }
-.pk-panel-val { color: var(--fg); font-variant-numeric: tabular-nums; }
+.pk-panel-val { color: var(--text-hi); font-variant-numeric: tabular-nums; }
 
 .pk-panel-grid {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 6px 8px;
+  gap: 7px 10px;
   align-items: center;
 }
 
+/* Sticky sub-header / footer strips inside a flush panel. Both sit on a
+   fractionally lighter surface and are seamed with a hairline, never a rule. */
 .pk-panel-head {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 5px 6px;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
+  gap: 5px;
+  padding: 8px 9px;
+  background: transparent;
+  border-bottom: 1px solid var(--hair);
 }
 .pk-panel-foot {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 1px;
-  height: 26px;
-  padding: 0 4px;
-  background: var(--bg-2);
-  border-top: 1px solid var(--line);
+  gap: 2px;
+  height: 33px;
+  padding: 0 6px;
+  background: rgba(255, 255, 255, .022);
+  border-top: 1px solid var(--hair);
 }
 .pk-panel-foot .pk-spacer { flex: 1 1 auto; }
 
@@ -235,46 +301,75 @@
   min-height: 0;
   overflow: auto;
   position: relative;
+  padding: 4px;
 }
 .pk-panel-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   height: var(--row-h);
-  padding: 0 6px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
   cursor: default;
-  border-bottom: 1px solid rgba(0, 0, 0, .22);
+  transition: background .12s ease, color .12s ease;
 }
-.pk-panel-item:hover { background: var(--bg-3); }
-.pk-panel-item.selected { background: var(--accent-soft); color: var(--fg-bright); }
-.pk-panel-item.active { background: var(--accent); color: #fff; }
+.pk-panel-item:hover { background: var(--s3); }
+.pk-panel-item.selected { background: var(--accent-dim); color: var(--text-hi); }
+.pk-panel-item.active { background: var(--accent-dim); color: var(--text-hi); }
+.pk-panel-item.selected::before,
+.pk-panel-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
 
 .pk-panel-empty {
-  color: var(--fg-dim);
+  color: var(--text-faint);
   text-align: center;
-  padding: 22px 12px;
+  padding: 26px 14px;
   line-height: 1.6;
+  font-size: var(--fs-sm);
 }
 
 .pk-mini-btn {
-  height: 20px;
-  padding: 0 7px;
-  background: var(--bg-4);
-  border: 1px solid #4d4d4d;
-  border-radius: 3px;
+  height: 23px;
+  padding: 0 10px;
+  background: var(--s3);
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-sm);
+  box-shadow: var(--lift);
+  color: var(--text-hi);
+  font-size: var(--fs-sm);
   cursor: pointer;
   white-space: nowrap;
+  transition: background .12s ease, border-color .12s ease;
 }
-.pk-mini-btn:hover { background: #494949; }
-.pk-mini-btn:disabled { opacity: .4; cursor: default; }
+.pk-mini-btn:hover { background: var(--s4); border-color: var(--hair-3); }
+.pk-mini-btn:active { background: var(--s5); }
+.pk-mini-btn:disabled { opacity: .38; cursor: default; background: var(--s3); }
 
-input.pk-num-mini { width: 46px; height: 20px; text-align: right; padding: 0 3px; }
-input.pk-range-mini { height: 14px; min-width: 40px; }
+input.pk-num-mini {
+  width: 44px;
+  height: 22px;
+  text-align: right;
+  padding: 0 5px;
+  border-radius: var(--r-xs);
+  font-variant-numeric: tabular-nums;
+}
+input.pk-range-mini { height: 16px; min-width: 40px; }
 
 .pk-panel-thumb {
   flex: 0 0 auto;
-  border: 1px solid #111;
-  background-color: #202020;
+  border: none;
+  border-radius: var(--r-xs);
+  background-color: var(--s1);
+  box-shadow: 0 0 0 1px var(--hair-2);
   display: block;
 }
 
@@ -282,28 +377,42 @@ input.pk-range-mini { height: 14px; min-width: 40px; }
 
 .pk-lay { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
+/* Head: three rows on one grid — filter, blend + opacity, locks + fill.
+   The two amount groups share a fixed geometry so their numbers line up. */
 .pk-lay-head {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 4px 6px 5px;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
+  gap: 6px;
+  padding: 8px 9px 9px;
+  background: transparent;
+  border-bottom: 1px solid var(--hair);
 }
-.pk-lay-hrow { display: flex; align-items: center; gap: 5px; min-height: 22px; }
+.pk-lay-hrow { display: flex; align-items: center; gap: 5px; min-height: 25px; }
 .pk-lay-hrow > .pk-select { flex: 1 1 auto; min-width: 0; }
-.pk-lay-hlabel { color: var(--fg-dim); font-size: 11px; flex: 0 0 auto; }
+.pk-lay-hlabel {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+/* Both amount groups keep the same column geometry, so OPACITY and FILL read as
+   one grid rather than two independent rows. */
+.pk-lay-hrow > .pk-lay-hlabel { flex: 0 0 38px; }
 .pk-lay-hrow > .pk-lay-filter-text { flex: 1 1 auto; min-width: 0; }
-.pk-lay-hrow > .pk-lay-filter-kind { flex: 0 0 76px; min-width: 0; }
+.pk-lay-hrow > .pk-lay-filter-kind { flex: 0 0 78px; min-width: 0; }
 .pk-lay-hrow > .pk-lay-filter-toggle { flex: 0 0 auto; }
-.pk-lay-filter-toggle.off { opacity: .45; }
+.pk-lay-filter-toggle.off { opacity: .4; }
 
-.pk-lay-op { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
-.pk-lay-op .pk-range { min-width: 46px; width: 54px; flex: 0 0 auto; }
+.pk-lay-op { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.pk-lay-op > .pk-lay-hlabel { flex: 0 0 40px; }
+.pk-lay-op input.pk-num-mini { width: 43px; }
+.pk-lay-op .pk-range { min-width: 44px; width: 46px; flex: 0 0 auto; }
 
 .pk-lay-locks { display: flex; align-items: center; gap: 1px; flex: 0 0 auto; }
-.pk-lay-locks .pk-icon-btn { width: 21px; height: 21px; }
+.pk-lay-locks .pk-icon-btn { width: 21px; height: 21px; border-radius: var(--r-xs); }
 .pk-lay-locks .pk-icon-btn svg { width: 13px; height: 13px; }
 
 .pk-lay-list {
@@ -311,46 +420,72 @@ input.pk-range-mini { height: 14px; min-width: 40px; }
   min-height: 0;
   overflow: auto;
   position: relative;
-  background: var(--bg-2);
+  padding: 4px;
+  background: transparent;
 }
 .pk-lay-list.dragging { cursor: grabbing; }
 
-.pk-lay-row {
-  border-bottom: 1px solid rgba(0, 0, 0, .3);
-  background: var(--bg-2);
-}
-.pk-lay-row.selected { background: #3a3a3a; }
-.pk-lay-row.active { background: var(--accent-soft); }
-.pk-lay-row.dragged { opacity: .4; }
-.pk-lay-row.into > .pk-lay-main { box-shadow: inset 0 0 0 2px var(--accent); }
+/* One row = one chip. No rules between rows; the 44px rhythm and the inset
+   do the separating. */
+.pk-lay-row { background: transparent; border: none; }
+.pk-lay-row.dragged { opacity: .38; }
 
 .pk-lay-main {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 42px;
-  padding-right: 5px;
+  height: 44px;
+  padding-right: 7px;
+  border-radius: var(--r-md);
   cursor: default;
   min-width: 0;
+  transition: background .12s ease;
 }
-.pk-lay-row:hover > .pk-lay-main { background: rgba(255, 255, 255, .04); }
+.pk-lay-row:hover > .pk-lay-main { background: var(--s3); }
+
+/* Selection: a tinted chip with a small solid marker, not a colour block. The
+   active layer is the same chip a shade further up, so a multi-selection still
+   shows which row the tools will act on. */
+.pk-lay-row.selected > .pk-lay-main { background: rgba(255, 255, 255, .05); }
+.pk-lay-row.active > .pk-lay-main { background: var(--accent-dim); }
+.pk-lay-row.selected > .pk-lay-main::before,
+.pk-lay-row.active > .pk-lay-main::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
+.pk-lay-row.into > .pk-lay-main { box-shadow: inset 0 0 0 2px var(--accent); }
 
 .pk-lay-main .pk-lay-eye {
   flex: 0 0 22px;
   width: 22px; height: 22px;
-  margin-left: 2px;
+  margin-left: 4px;
+  border-radius: var(--r-xs);
 }
 .pk-lay-main .pk-lay-eye svg { width: 14px; height: 14px; }
-.pk-lay-main .pk-lay-eye.off { color: #5c5c5c; }
+.pk-lay-main .pk-lay-eye.off { color: var(--text-faint); opacity: .7; }
 
-.pk-lay-pad { flex: 0 0 auto; }
+/* Depth indent. Child rows get a hairline guide down the indent so the nesting
+   is unmistakable; a clipped row's extra offset must not draw one. */
+.pk-lay-pad { flex: 0 0 auto; align-self: stretch; }
+.pk-lay-row[data-depth]:not([data-depth="0"]) .pk-lay-pad {
+  background: linear-gradient(var(--hair-2), var(--hair-2)) no-repeat left center / 1px 58%;
+}
 
 .pk-lay-main .pk-lay-tri {
-  flex: 0 0 14px;
-  width: 14px; height: 18px;
-  color: var(--fg-dim);
+  flex: 0 0 15px;
+  width: 15px; height: 20px;
+  border-radius: var(--r-xs);
+  color: var(--text-faint);
 }
-.pk-lay-main .pk-lay-tri svg { width: 11px; height: 11px; transition: transform .1s ease; }
+.pk-lay-main .pk-lay-tri:hover { color: var(--text-hi); }
+.pk-lay-main .pk-lay-tri svg { width: 11px; height: 11px; transition: transform .12s ease; }
 .pk-lay-main .pk-lay-tri.closed svg { transform: rotate(-90deg); }
 .pk-lay-main .pk-lay-tri.hidden { visibility: hidden; }
 
@@ -358,7 +493,7 @@ input.pk-range-mini { height: 14px; min-width: 40px; }
   flex: 0 0 11px;
   display: inline-flex;
   align-items: center;
-  color: var(--fg-dim);
+  color: var(--text-faint);
   transform: rotate(90deg);
 }
 .pk-lay-clip[hidden] { display: none; }
@@ -366,37 +501,50 @@ input.pk-range-mini { height: 14px; min-width: 40px; }
 .pk-lay-thumbbox {
   flex: 0 0 auto;
   width: 36px; height: 36px;
-  border: 1px solid #101010;
+  border: none;
+  border-radius: var(--r-sm);
+  box-shadow: 0 0 0 1px var(--hair-2), var(--sh-1);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   background-size: 8px 8px;
   background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+  transition: box-shadow .12s ease;
 }
-.pk-lay-thumbbox.target { border-color: var(--fg-bright); box-shadow: 0 0 0 1px var(--fg-bright); }
-.pk-lay-thumbbox.mask { background: #2a2a2a; }
+/* Which of pixels / mask the brush would paint into. */
+.pk-lay-thumbbox.target { box-shadow: 0 0 0 2px var(--accent), var(--sh-1); }
+.pk-lay-thumbbox.mask { background: var(--s1); background-image: none; }
 .pk-lay-thumbbox[hidden] { display: none; }
-.pk-lay-thumbbox canvas { display: block; width: 34px; height: 34px; }
+.pk-lay-thumbbox canvas {
+  display: block;
+  width: 36px; height: 36px;
+  border-radius: var(--r-sm);
+}
 
 .pk-lay-groupico {
   flex: 0 0 auto;
   width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
-  color: #c8c8c8;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, .045);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  color: var(--text-dim);
 }
 .pk-lay-groupico[hidden] { display: none; }
-.pk-lay-groupico svg { width: 20px; height: 20px; }
+.pk-lay-groupico svg { width: 19px; height: 19px; }
 
 .pk-lay-masklink {
-  flex: 0 0 13px;
-  width: 13px; height: 22px;
+  flex: 0 0 14px;
+  width: 14px; height: 22px;
   background: none; border: none; padding: 0;
-  color: var(--fg-dim);
+  color: var(--text-faint);
   cursor: pointer;
+  transition: color .12s ease;
 }
+.pk-lay-masklink:hover { color: var(--text-hi); }
 .pk-lay-masklink[hidden] { display: none; }
-.pk-lay-masklink.off { color: #4a4a4a; }
+.pk-lay-masklink.off { color: var(--s5); }
 .pk-lay-masklink svg { width: 12px; height: 12px; }
 
 .pk-lay-name {
@@ -405,56 +553,74 @@ input.pk-range-mini { height: 14px; min-width: 40px; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-left: 3px;
+  padding-left: 4px;
+  color: var(--text-hi);
+  font-size: var(--fs);
 }
-.pk-lay-row.hiddenlayer .pk-lay-name { color: var(--fg-dim); }
+.pk-lay-row.hiddenlayer .pk-lay-name { color: var(--text-faint); }
+.pk-lay-row.active .pk-lay-name { font-weight: 500; }
 .pk-lay-name-input {
   width: 100%;
-  height: 19px;
-  background: var(--bg-0);
+  height: 22px;
+  background: var(--s0);
   border: 1px solid var(--accent);
-  border-radius: 2px;
-  padding: 0 3px;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+  padding: 0 5px;
+  color: var(--text-hi);
   outline: none;
 }
 
-.pk-lay-badges { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; color: var(--fg-dim); }
+.pk-lay-badges {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-faint);
+}
 .pk-lay-badges > * { display: inline-flex; }
 .pk-lay-badges [hidden] { display: none; }
-.pk-lay-badges .pk-lay-fxbadge { width: 18px; height: 18px; }
+.pk-lay-badges .pk-lay-fxbadge { width: 20px; height: 20px; border-radius: var(--r-xs); }
 .pk-lay-badges .pk-lay-fxbadge svg { width: 13px; height: 13px; }
+/* The layer's colour label: a small rounded pill on the trailing edge. */
 .pk-lay-colorbar {
-  flex: 0 0 4px;
-  width: 4px;
+  flex: 0 0 3px;
+  width: 3px;
   align-self: stretch;
-  margin-right: -4px;
+  margin: 9px -4px 9px 3px;
+  border-radius: var(--r-full);
 }
 
-.pk-lay-fxlist { padding: 0 0 3px 0; background: rgba(0, 0, 0, .16); }
+.pk-lay-fxlist { padding: 0 4px 5px 0; background: transparent; }
 .pk-lay-fxlist[hidden] { display: none; }
 .pk-lay-fxrow {
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: 20px;
-  padding-left: 26px;
-  color: var(--fg-dim);
-  font-size: 11px;
+  gap: 5px;
+  height: 22px;
+  padding-left: 34px;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  transition: background .12s ease;
 }
-.pk-lay-fxrow.head { color: var(--fg); }
-.pk-lay-fxrow .pk-icon-btn { width: 18px; height: 18px; }
+.pk-lay-fxrow:hover { background: rgba(255, 255, 255, .035); }
+.pk-lay-fxrow.head { color: var(--text); }
+.pk-lay-fxrow .pk-icon-btn { width: 19px; height: 19px; border-radius: var(--r-xs); }
 .pk-lay-fxrow .pk-icon-btn svg { width: 12px; height: 12px; }
-.pk-lay-fxrow .pk-icon-btn.off { color: #555; }
+.pk-lay-fxrow .pk-icon-btn.off { color: var(--s5); }
 .pk-lay-fxname { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.pk-lay-fxname:hover { color: var(--fg-bright); text-decoration: underline; }
+.pk-lay-fxname:hover { color: var(--text-hi); }
 
 .pk-lay-dropline {
   position: absolute;
   height: 2px;
   background: var(--accent);
+  border-radius: var(--r-full);
+  box-shadow: 0 0 0 2px var(--accent-dim);
   pointer-events: none;
   z-index: 5;
-  right: 0;
+  right: 4px;
 }
 .pk-lay-dropline[hidden] { display: none; }
 
@@ -462,12 +628,13 @@ input.pk-range-mini { height: 14px; min-width: 40px; }
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: space-around;
-  height: 27px;
-  background: var(--bg-2);
-  border-top: 1px solid var(--line);
+  justify-content: space-between;
+  height: 34px;
+  padding: 0 7px;
+  background: rgba(255, 255, 255, .022);
+  border-top: 1px solid var(--hair);
 }
-.pk-lay-foot .pk-icon-btn { width: 24px; height: 24px; }
+.pk-lay-foot .pk-icon-btn { width: 26px; height: 26px; }
 
 /* ----------------------------------------------------------- history panel */
 
@@ -477,40 +644,68 @@ input.pk-range-mini { height: 14px; min-width: 40px; }
   flex: 0 0 auto;
   max-height: 40%;
   overflow: auto;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
+  padding: 4px;
+  background: transparent;
+  border-bottom: 1px solid var(--hair);
 }
-.pk-hist-states { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--bg-2); }
+.pk-hist-states { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px; background: transparent; }
 
 .pk-hist-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 24px;
-  padding: 0 7px;
+  gap: 8px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
   cursor: default;
-  color: var(--fg);
+  color: var(--text);
+  transition: background .12s ease, color .12s ease;
 }
-.pk-hist-item:hover { background: var(--bg-3); }
-.pk-hist-item.current { background: var(--accent); color: #fff; }
-.pk-hist-item.future { color: #6d6d6d; }
-.pk-hist-item.future .pk-hist-ico { opacity: .4; }
-.pk-hist-ico { flex: 0 0 16px; display: inline-flex; color: inherit; }
+.pk-hist-item:hover { background: var(--s3); }
+/* The current state is marked, not flooded. */
+.pk-hist-item.current { background: var(--accent-dim); color: var(--text-hi); }
+.pk-hist-item.current::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
+.pk-hist-item.future { color: var(--text-faint); }
+.pk-hist-item.future .pk-hist-ico { opacity: .45; }
+.pk-hist-ico { flex: 0 0 16px; display: inline-flex; color: var(--text-faint); }
+.pk-hist-item.current .pk-hist-ico { color: var(--accent-hi); }
 .pk-hist-ico svg { width: 14px; height: 14px; }
 .pk-hist-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pk-hist-brush { flex: 0 0 auto; color: var(--fg-dim); display: inline-flex; }
-.pk-hist-item.current .pk-hist-brush { color: #fff; }
+.pk-hist-brush { flex: 0 0 auto; color: var(--text-faint); display: inline-flex; }
+.pk-hist-item.current .pk-hist-brush { color: var(--accent-hi); }
 .pk-hist-brush[hidden] { display: none; }
 
-.pk-hist-snap { height: 30px; }
+.pk-hist-snap { height: 32px; }
 .pk-hist-snap .pk-hist-thumb {
   flex: 0 0 auto;
   width: 26px; height: 22px;
-  border: 1px solid #111;
+  border: none;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 1px var(--hair-2);
   display: block;
   object-fit: contain;
 }
-.pk-hist-snap.selected { background: var(--accent-soft); }
+.pk-hist-snap.selected { background: var(--accent-dim); }
+.pk-hist-snap.selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
 
 .pk-hist-foot {
   flex: 0 0 auto;
@@ -518,32 +713,48 @@ input.pk-range-mini { height: 14px; min-width: 40px; }
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
-  height: 26px;
-  padding: 0 6px;
-  background: var(--bg-2);
-  border-top: 1px solid var(--line);
+  height: 33px;
+  padding: 0 7px;
+  background: rgba(255, 255, 255, .022);
+  border-top: 1px solid var(--hair);
 }
 
 /* -------------------------------------------------------- properties panel */
 
-.pk-prop { display: flex; flex-direction: column; gap: 8px; }
+.pk-prop { display: flex; flex-direction: column; gap: 10px; }
 .pk-prop-head {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding-bottom: 7px;
-  border-bottom: 1px solid var(--line-soft);
+  gap: 8px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--hair);
 }
-.pk-prop-head .pk-prop-ico { color: var(--fg-dim); display: inline-flex; }
-.pk-prop-head .pk-prop-name { font-weight: 600; color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pk-prop-head .pk-prop-kind { color: var(--fg-dim); font-size: 11px; margin-left: auto; flex: 0 0 auto; }
+.pk-prop-head .pk-prop-ico { color: var(--text-dim); display: inline-flex; }
+.pk-prop-head .pk-prop-name {
+  font-weight: 600;
+  font-size: var(--fs-md);
+  letter-spacing: -.01em;
+  color: var(--text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pk-prop-head .pk-prop-kind {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
 
-.pk-prop .pk-form { gap: 8px; }
+.pk-prop .pk-form { gap: 10px; }
 /* Curve/levels widgets are drawn at a fixed pixel width — scroll, never stretch
    the dock. */
 .pk-prop .pk-custom-body { max-width: 100%; overflow-x: auto; }
 .pk-prop textarea.pk-textarea { resize: vertical; }
-.pk-prop-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.pk-prop-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .pk-prop-actions .pk-mini-btn { flex: 1 1 auto; }
-.pk-prop-dims { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
-.pk-prop-swatch-row { display: flex; align-items: center; gap: 6px; }
+.pk-prop-dims { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 10px; }
+.pk-prop-swatch-row { display: flex; align-items: center; gap: 7px; }

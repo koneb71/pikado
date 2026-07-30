@@ -1,17 +1,25 @@
-/* Menu bar + dropdown menus (popups are appended to <body>). */
+/* The app bar: brand, menus, document identity. Dropdown popups are appended
+   to <body>, so they are styled here but positioned by menubar.js. */
 
 .pk-brand {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px 0 2px;
+  padding-right: 14px;
+  margin-right: 4px;
   flex: 0 0 auto;
+  position: relative;
 }
-.pk-brand-mark { display: flex; }
-.pk-brand-text {
-  font-weight: 600;
-  letter-spacing: .3px;
-  color: var(--fg-bright);
+/* A hairline instead of a border-right: it stops short of the bar edges, which
+   reads as a seam between regions rather than a frame around one. */
+.pk-brand::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 17px;
+  background: var(--hair-2);
 }
 
 .pk-menus {
@@ -22,75 +30,101 @@
 }
 
 .pk-menu-btn {
-  height: 22px;
-  padding: 0 9px;
+  height: 26px;
+  padding: 0 10px;
   background: transparent;
   border: none;
-  border-radius: 3px;
-  color: var(--fg);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
   cursor: default;
   white-space: nowrap;
+  font-weight: 500;
+  transition: background .12s ease, color .12s ease;
 }
-.pk-menu-btn:hover { background: var(--bg-3); }
-.pk-menu-btn.open { background: var(--accent); color: #fff; }
+.pk-menu-btn:hover { background: var(--s2); color: var(--text-hi); }
+/* An open menu reads as "lifted into the popover", not as a coloured chip —
+   the popover below it is what carries the emphasis. */
+.pk-menu-btn.open { background: var(--s3); color: var(--text-hi); }
 
+/* Document identity sits at the far right, quiet by default. */
 .pk-doc-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-left: 10px;
-  color: var(--fg-dim);
-  font-size: 11px;
+  gap: 9px;
+  padding-left: 12px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
   overflow: hidden;
   white-space: nowrap;
   flex: 0 1 auto;
 }
-.pk-doc-title .pk-doc-name { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis; }
-.pk-doc-title .pk-doc-name.empty { color: var(--fg-dim); }
-.pk-doc-title .pk-doc-meta { opacity: .7; }
-.pk-doc-title .pk-doc-dirty { color: var(--accent-hi); font-size: 9px; }
+.pk-doc-title .pk-doc-name {
+  color: var(--text-hi);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pk-doc-title .pk-doc-name.empty { color: var(--text-faint); font-weight: 400; }
+.pk-doc-title .pk-doc-meta { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+/* The dirty marker is a dot, not a glyph — the bullet character's baseline
+   shifts with the font and never sits centred. */
+.pk-doc-title .pk-doc-dirty {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  font-size: 0;
+  color: transparent;
+  flex: 0 0 auto;
+}
 
 /* ---------------------------------------------------------------- popup */
 
 .pk-menu {
   position: fixed;
   z-index: 9000;
-  min-width: 214px;
-  max-width: 380px;
-  max-height: calc(100vh - 44px);
+  min-width: 224px;
+  max-width: 400px;
+  max-height: calc(100vh - 56px);
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 4px 0;
-  background: var(--bg-2);
-  border: 1px solid #4c4c4c;
-  border-radius: 5px;
-  box-shadow: 0 14px 38px rgba(0, 0, 0, .55);
-  font-size: 12px;
-  animation: pk-menu-in .08s ease-out;
+  padding: 6px;
+  background: var(--s3);
+  border: 1px solid var(--hair-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-pop);
+  font-size: var(--fs);
+  animation: pk-menu-in .1s cubic-bezier(.2, .8, .3, 1);
 }
-@keyframes pk-menu-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+@keyframes pk-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.99); }
+  to { opacity: 1; transform: none; }
+}
 
 .pk-menu-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 23px;
-  padding: 0 8px 0 4px;
+  gap: 7px;
+  height: 27px;
+  padding: 0 8px 0 5px;
+  border-radius: var(--r-sm);
   cursor: default;
-  color: var(--fg);
+  color: var(--text);
 }
-.pk-menu-item.active { background: var(--accent); color: #fff; }
-.pk-menu-item.disabled { color: #6b6b6b; }
-.pk-menu-item.disabled.active { background: transparent; color: #6b6b6b; }
+/* Hover/keyboard focus tints the row instead of flooding it with accent. */
+.pk-menu-item.active { background: var(--s5); color: var(--text-hi); }
+.pk-menu-item.disabled { color: var(--text-faint); }
+.pk-menu-item.disabled.active { background: transparent; color: var(--text-faint); }
 
 .pk-menu-tick {
-  width: 15px;
-  flex: 0 0 15px;
+  width: 16px;
+  flex: 0 0 16px;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--accent-hi);
 }
-.pk-menu-tick svg { stroke: currentColor; fill: none; stroke-width: 1.8; }
+.pk-menu-tick svg { stroke: currentColor; fill: none; stroke-width: 2; }
 
 .pk-menu-label {
   flex: 1 1 auto;
@@ -101,24 +135,36 @@
 
 .pk-menu-accel {
   flex: 0 0 auto;
-  color: var(--fg-dim);
-  font-size: 11px;
-  padding-left: 18px;
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  padding-left: 20px;
+  font-variant-numeric: tabular-nums;
 }
-.pk-menu-item.active .pk-menu-accel { color: rgba(255, 255, 255, .8); }
+.pk-menu-item.active .pk-menu-accel { color: var(--text-dim); }
 
 .pk-menu-arrow {
-  width: 12px;
-  flex: 0 0 12px;
+  width: 13px;
+  flex: 0 0 13px;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--text-faint);
 }
 .pk-menu-arrow svg { stroke: currentColor; fill: none; }
-.pk-menu-item.has-sub .pk-menu-accel { padding-left: 10px; }
+.pk-menu-item.active .pk-menu-arrow { color: var(--text-dim); }
+.pk-menu-item.has-sub .pk-menu-accel { padding-left: 12px; }
 
 .pk-menu-sep {
   height: 1px;
-  margin: 4px 8px;
-  background: var(--line-soft);
+  margin: 5px 7px;
+  background: var(--hair);
+}
+
+.pk-menu-header {
+  padding: 8px 8px 4px 9px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }

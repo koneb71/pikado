@@ -3,6 +3,7 @@ import { app } from '../core/app.js';
 import { Selection } from '../core/selection.js';
 import { createCanvas, ctx2dRead, clamp } from '../core/util.js';
 import { sampleBilinear } from '../filters/registry.js';
+import { OVERLAY } from '../ui/brand.js';
 
 /**
  * Crop family: the rotating crop box, the perspective crop and the slice tool.
@@ -925,11 +926,11 @@ class SliceTool extends Tool {
       const w = Math.abs(b.x - a.x);
       const h = Math.abs(b.y - a.y);
       ctx.lineWidth = i === this.selected ? 2 : 1;
-      ctx.strokeStyle = i === this.selected ? '#ffd479' : '#37c1ff';
+      ctx.strokeStyle = i === this.selected ? '#ffd479' : OVERLAY.accent;
       ctx.strokeRect(x + 0.5, y + 0.5, w, h);
       const label = String(i + 1);
       const tw = ctx.measureText(label).width + 8;
-      ctx.fillStyle = i === this.selected ? '#ffd479' : '#37c1ff';
+      ctx.fillStyle = i === this.selected ? '#ffd479' : OVERLAY.accent;
       ctx.fillRect(x, y, tw, 13);
       ctx.fillStyle = '#08121c';
       ctx.fillText(label, x + 4, y + 2);

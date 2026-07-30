@@ -3,6 +3,7 @@ import { app } from '../../core/app.js';
 import { el, clamp255 } from '../../core/util.js';
 import { parseColor, toHex } from '../../core/color.js';
 import { Dialog, buildForm } from '../dialog.js';
+import { BRAND } from '../brand.js';
 
 /**
  * Preferences. Values persist in `localStorage["pikado.prefs"]` and are pushed
@@ -18,13 +19,18 @@ export const PREF_DEFAULTS = {
   recentLimit: 10,
   confirmBeforeClosing: true,
   resetColorsOnLaunch: false,
-  /* Interface */
-  accent: '#1473e6',
-  canvasBg: '#1a1a1a',
-  panelWidth: 300,
-  toolbarWidth: 46,
-  rowHeight: 26,
-  cornerRadius: 4,
+  /* Interface.
+     These are written straight onto the root as --accent / --bg-canvas /
+     --panel-w / --toolbar-w / --row-h / --radius by applyStoredPreferences(),
+     so they must start out equal to the design-system tokens in
+     src/styles.css — otherwise the stored defaults silently override the
+     palette on every launch. */
+  accent: BRAND.violet,
+  canvasBg: '#121212', // --void: strictly neutral, so it never biases the image
+  panelWidth: 304,
+  toolbarWidth: 50,
+  rowHeight: 28,
+  cornerRadius: 6, // --r-sm
   /* Tools */
   brushCursor: 'normal',
   showToolTips: true,

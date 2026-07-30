@@ -1,23 +1,59 @@
-.pki-body { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+/* Info: a read-only instrument panel. Every number is tabular so the readout
+   does not jitter as the pointer moves. */
 
-.pki-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
-.pki-block { display: flex; flex-direction: column; gap: 1px; }
+.pki-body { display: flex; flex-direction: column; gap: 10px; }
 
-.pki-row { display: flex; align-items: baseline; gap: 6px; font-size: 11px; line-height: 1.5; }
-.pki-k { width: 22px; flex: 0 0 auto; color: var(--fg-dim); text-align: right; }
-.pki-v { font-family: var(--mono); color: var(--fg-bright); }
-.pki-sub { font-size: 10px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 2px; }
+.pki-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 14px; }
+.pki-block { display: flex; flex-direction: column; gap: 2px; }
 
-.pki-doc { font-size: 11px; color: var(--fg-dim); border-top: 1px solid var(--line-soft); padding-top: 6px; }
+.pki-row { display: flex; align-items: baseline; gap: 7px; font-size: var(--fs-sm); line-height: 1.55; }
+.pki-k {
+  width: 24px; flex: 0 0 auto;
+  color: var(--text-faint);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.pki-v {
+  font-family: var(--mono);
+  color: var(--text-hi);
+  font-variant-numeric: tabular-nums;
+}
 
-.pki-samplers { display: flex; flex-direction: column; gap: 3px; }
-.pki-sampler { display: flex; align-items: center; gap: 6px; font-size: 11px; font-family: var(--mono); color: var(--fg); }
+.pki-sub {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 3px;
+}
+
+.pki-doc {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid var(--hair);
+  padding-top: 8px;
+}
+
+.pki-samplers { display: flex; flex-direction: column; gap: 4px; }
+.pki-sampler {
+  display: flex; align-items: center; gap: 7px;
+  font-size: var(--fs-sm); font-family: var(--mono);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
 .pki-sampler-chip {
-  width: 11px; height: 11px; flex: 0 0 auto;
-  border: 1px solid var(--line-soft); border-radius: 2px;
+  width: 12px; height: 12px; flex: 0 0 auto;
+  border: none;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 1px var(--hair-3);
 }
 
 .pki-hint {
-  font-size: 11px; color: var(--fg-dim); line-height: 1.5;
-  border-top: 1px solid var(--line-soft); padding-top: 6px;
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  line-height: 1.55;
+  border-top: 1px solid var(--hair);
+  padding-top: 8px;
 }

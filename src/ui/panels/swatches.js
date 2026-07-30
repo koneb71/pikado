@@ -100,7 +100,7 @@ registerPanel({
   icon: 'swatch',
   group: 'mid',
   order: 1,
-  defaultOpen: false,
+  defaultOpen: true,
   build(body) {
     body.classList.add('pksw-body');
     let selected = -1;

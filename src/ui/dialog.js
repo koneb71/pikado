@@ -1,5 +1,6 @@
 import { el } from '../core/util.js';
 import { toHex, parseColor } from '../core/color.js';
+import { OVERLAY } from './brand.js';
 
 /**
  * Dialog framework + automatic form generation.
@@ -99,11 +100,23 @@ export class Dialog {
     this.overlay.style.zIndex = String(++zTop);
     document.body.appendChild(this.overlay);
     window.addEventListener('keydown', this._keyHandler, true);
-    requestAnimationFrame(() => {
+
+    // The overlay starts at opacity 0 and transitions in once `.open` lands, so
+    // the class has to be added on a later tick or the transition never plays.
+    // requestAnimationFrame alone is not enough: a backgrounded tab never fires
+    // it, which leaves the dialog mounted but permanently invisible. Race it
+    // against a timer so the dialog always becomes visible.
+    let shown = false;
+    const reveal = () => {
+      if (shown) return;
+      shown = true;
       this.overlay.classList.add('open');
       const f = this.body.querySelector('input,select,textarea,button');
       if (f && f.type !== 'range') f.focus();
-    });
+    };
+    requestAnimationFrame(reveal);
+    setTimeout(reveal, 40);
+
     return new Promise((res) => { this._resolve = res; });
   }
 
@@ -389,7 +402,7 @@ function buildControl(p, state, onChange, controls) {
         c.lineWidth = 1;
         c.beginPath(); c.arc(23, 23, 19, 0, Math.PI * 2); c.stroke();
         const r = (-deg * Math.PI) / 180;
-        c.strokeStyle = '#7ab8ff';
+        c.strokeStyle = OVERLAY.accentHi;
         c.lineWidth = 2;
         c.beginPath(); c.moveTo(23, 23); c.lineTo(23 + Math.cos(r) * 17, 23 + Math.sin(r) * 17); c.stroke();
       };

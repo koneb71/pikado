@@ -245,7 +245,7 @@ registerPanel({
   icon: 'path',
   group: 'top',
   order: 2,
-  defaultOpen: false,
+  defaultOpen: true,
   build(body) {
     body.classList.add('pkp-body');
     const list = el('div.pkp-list.pk-scroll');

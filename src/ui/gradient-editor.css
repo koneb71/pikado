@@ -1,43 +1,59 @@
-/* Gradient stop editor (src/ui/gradient-editor.js) */
+/* ==========================================================================
+   Gradient stop editor (src/ui/gradient-editor.js)
+
+   The bar is the subject, so it gets the only strong edge on the widget. The
+   stop handles are pills that sit off the bar with a hairline and a shadow, so
+   they read as grabbable objects rather than painted-on marks.
+   ========================================================================== */
 
 .pk-grad {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
 }
+
+/* ---------------------------------------------------------------- presets */
 
 .pk-grad-presets {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
+  gap: 4px;
 }
 
 .pk-grad-preset {
-  width: 30px;
-  height: 16px;
+  width: 34px;
+  height: 18px;
   padding: 0;
-  border: 1px solid var(--line-soft);
-  border-radius: 2px;
+  border: 1px solid var(--hair-3);
+  border-radius: var(--r-xs);
+  box-shadow: var(--lift);
   cursor: pointer;
   background-color: transparent;
   background-size: 100% 100%;
+  transition: border-color .12s ease, box-shadow .12s ease;
 }
 
-.pk-grad-preset:hover { border-color: var(--accent); }
+.pk-grad-preset:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* ------------------------------------------------------------------ track */
 
 .pk-grad-track {
   position: relative;
   width: 100%;
-  padding: 13px 0;
+  padding: 16px 0;
 }
 
 .pk-grad-bar {
   display: block;
   width: 100%;
-  height: 26px;
-  border: 1px solid var(--line-soft);
-  border-radius: 2px;
+  height: 28px;
+  border: none;
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 0 0 1px var(--hair-2), var(--sh-1);
   cursor: copy;
 }
 
@@ -45,7 +61,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 13px;
+  height: 16px;
 }
 
 .pk-grad-row.opacity { top: 0; cursor: copy; }
@@ -53,87 +69,93 @@
 
 .pk-grad-stop {
   position: absolute;
-  width: 13px;
-  height: 13px;
-  margin-left: -6.5px;
+  width: 14px;
+  height: 16px;
+  margin-left: -7px;
   cursor: ew-resize;
 }
 
 .pk-grad-stop.opacity { top: 0; }
 .pk-grad-stop.color { bottom: 0; }
 
+/* The handle itself: a pill with a dark edge, a light hairline outside it and
+   a soft drop shadow, so it reads on light and dark gradients alike. */
 .pk-grad-chip {
   position: absolute;
   left: 1px;
-  width: 11px;
-  height: 8px;
-  border: 1px solid #0d0d0d;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+  width: 12px;
+  height: 11px;
+  border: 1px solid rgba(0, 0, 0, .55);
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 1px var(--hair-3), var(--sh-1);
   box-sizing: border-box;
+  transition: box-shadow .12s ease;
 }
 
 .pk-grad-stop.opacity .pk-grad-chip { top: 0; }
 .pk-grad-stop.color .pk-grad-chip { bottom: 0; }
 
-/* Little pointer triangle aimed at the bar. */
+/* A 1px stem tying the handle to the bar, in place of the old arrowhead. */
 .pk-grad-stop::after {
   content: '';
   position: absolute;
-  left: 3px;
-  width: 0;
-  height: 0;
-  border-left: 3.5px solid transparent;
-  border-right: 3.5px solid transparent;
+  left: 50%;
+  margin-left: -0.5px;
+  width: 1px;
+  height: 5px;
+  background: var(--text-faint);
+  transition: background .12s ease;
 }
 
-.pk-grad-stop.opacity::after {
-  bottom: 0;
-  border-top: 5px solid #d8d8d8;
-}
-
-.pk-grad-stop.color::after {
-  top: 0;
-  border-bottom: 5px solid #d8d8d8;
-}
+.pk-grad-stop.opacity::after { bottom: 0; }
+.pk-grad-stop.color::after { top: 0; }
 
 .pk-grad-stop.active .pk-grad-chip {
-  box-shadow: 0 0 0 1.5px var(--accent-hi);
+  box-shadow: 0 0 0 1.5px var(--accent-hi), var(--sh-1);
 }
 
-.pk-grad-stop.active::after {
-  border-top-color: var(--accent-hi);
-  border-bottom-color: var(--accent-hi);
-}
+.pk-grad-stop.active::after { background: var(--accent-hi); }
+
+/* ------------------------------------------------------------- stop editor */
 
 .pk-grad-edit {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .pk-grad-group {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .pk-grad-lbl {
-  color: var(--fg-dim);
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
 }
 
-.pk-grad-edit .pk-num { width: 52px; }
+.pk-grad-edit .pk-num { width: 54px; font-variant-numeric: tabular-nums; }
 .pk-grad-edit .pk-spacer { flex: 1 1 auto; }
 
-.pk-grad-swatch {
-  width: 30px;
-  height: 18px;
-  border: 1px solid var(--line-soft);
-  border-radius: 2px;
+/* The stop's colour swatch. Scoped so the options-bar gradient swatch in
+   src/tools/gradient.css — which shares the class name — cannot claim it. */
+.pk-color-swatch.pk-grad-swatch {
+  width: 34px;
+  height: 20px;
+  border: 1px solid var(--hair-3);
+  border-radius: var(--r-xs);
+  box-shadow: var(--lift);
   cursor: pointer;
   padding: 0;
+  background-image: none;
 }
+
+.pk-color-swatch.pk-grad-swatch:hover { border-color: var(--accent); }
 
 .pk-grad-edit.is-opacity .only-color { display: none; }
 .pk-grad-edit:not(.is-opacity) .only-opacity { display: none; }

@@ -21,6 +21,28 @@ const PCT_STEPS = [1, 2, 5, 10, 20, 25, 50, 100];
 let installed = false;
 
 /**
+ * The ruler strips are painted into a canvas, so their ink cannot come from a
+ * stylesheet. Resolve the design tokens once and keep the values here, so the
+ * ticks stay in step with the rest of the chrome instead of drifting into
+ * hardcoded greys.
+ */
+let ink = null;
+
+function rulerInk() {
+  if (ink) return ink;
+  const cs = getComputedStyle(document.documentElement);
+  const t = (name, fallback) => (cs.getPropertyValue(name) || '').trim() || fallback;
+  ink = {
+    surface: t('--s1', '#16161b'),
+    tick: t('--text-faint', '#61616e'),
+    label: t('--text-dim', '#8b8b98'),
+    cursor: t('--accent', '#7c6af6'),
+    font: t('--font', '-apple-system, "Segoe UI", Roboto, sans-serif'),
+  };
+  return ink;
+}
+
+/**
  * Attach the rulers to the canvas area element.
  * @param {HTMLElement} areaEl the `#canvas-area` container
  */
@@ -154,9 +176,11 @@ function drawRuler(s, axis) {
   const length = horizontal ? cssW : cssH;
   const thickness = horizontal ? cssH : cssW;
 
+  const c = rulerInk();
+
   ctx.setTransform(s.dpr, 0, 0, s.dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
-  ctx.fillStyle = '#2b2b2b';
+  ctx.fillStyle = c.surface;
   ctx.fillRect(0, 0, cssW, cssH);
 
   const vp = app.viewport;
@@ -190,11 +214,11 @@ function drawRuler(s, axis) {
   const count = Math.ceil((endUnit - firstMajor) / minor) + sub;
   if (!Number.isFinite(count) || count < 0 || count > 6000) return;
 
-  ctx.font = '9px -apple-system, "Segoe UI", Roboto, sans-serif';
+  ctx.font = `10px ${c.font}`;
   ctx.textBaseline = 'alphabetic';
 
   ctx.beginPath();
-  ctx.strokeStyle = '#6f6f6f';
+  ctx.strokeStyle = c.tick;
   ctx.lineWidth = 1;
 
   const labels = [];
@@ -205,7 +229,9 @@ function drawRuler(s, axis) {
     if (p < -2 || p > length + 2) continue;
     const isMajor = k % sub === 0;
     const isHalf = !isMajor && sub % 2 === 0 && k % (sub / 2) === 0;
-    const len = isMajor ? thickness : isHalf ? 7 : 4;
+    // Ticks rise from the outer edge and stop short of the labels, so the
+    // strip reads as a scale rather than a grid.
+    const len = isMajor ? Math.min(thickness, 9) : isHalf ? 6 : 3;
     if (horizontal) {
       ctx.moveTo(p, thickness - len);
       ctx.lineTo(p, thickness);
@@ -217,13 +243,13 @@ function drawRuler(s, axis) {
   }
   ctx.stroke();
 
-  ctx.fillStyle = '#b6b6b6';
+  ctx.fillStyle = c.label;
   for (const l of labels) {
     if (horizontal) {
-      ctx.fillText(l.text, l.p + 3, 9);
+      ctx.fillText(l.text, l.p + 4, 10);
     } else {
       ctx.save();
-      ctx.translate(9, l.p - 3);
+      ctx.translate(10, l.p - 4);
       ctx.rotate(-Math.PI / 2);
       ctx.fillText(l.text, 0, 0);
       ctx.restore();
@@ -234,15 +260,16 @@ function drawRuler(s, axis) {
   if (s.cursor) {
     const screen = horizontal ? s.cursor.x : s.cursor.y;
     const p = Math.round(screen - RULER_SIZE) + 0.5;
-    ctx.strokeStyle = '#e8e8e8';
+    ctx.strokeStyle = c.cursor;
     ctx.beginPath();
     if (horizontal) { ctx.moveTo(p, 0); ctx.lineTo(p, thickness); }
     else { ctx.moveTo(0, p); ctx.lineTo(thickness, p); }
     ctx.stroke();
   }
 
-  // Edge line.
-  ctx.strokeStyle = '#171717';
+  // Edge seam: a light hairline, matching the way the rest of the chrome
+  // separates surfaces.
+  ctx.strokeStyle = 'rgba(255,255,255,.07)';
   ctx.beginPath();
   if (horizontal) { ctx.moveTo(0, cssH - 0.5); ctx.lineTo(cssW, cssH - 0.5); }
   else { ctx.moveTo(cssW - 0.5, 0); ctx.lineTo(cssW - 0.5, cssH); }

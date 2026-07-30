@@ -5,7 +5,7 @@
 .pk-levels {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
 }
 
@@ -13,27 +13,54 @@
 .pk-levels-nums {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   width: 100%;
+  min-width: 0;
 }
+
+.pk-levels-nums { gap: 6px; }
 
 .pk-levels-head .pk-spacer,
 .pk-levels-nums .pk-spacer { flex: 1 1 auto; }
 
 .pk-levels-lbl {
-  color: var(--fg-dim);
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .pk-levels-chan { flex: 1 1 auto; min-width: 0; }
 
-.pk-levels-head .pk-btn { padding: 2px 8px; }
+.pk-levels-head .pk-btn { height: 22px; padding: 0 10px; font-size: var(--fs-sm); }
 
+/* The histogram plate: an inset --s0 surface with a hairline seam. */
 .pk-levels-canvas {
   display: block;
+  border-radius: var(--r-md);
+  background: var(--s0);
+  box-shadow: inset 0 0 0 1px var(--hair);
   touch-action: none;
   cursor: ew-resize;
 }
 
-.pk-levels-nums .pk-num { width: 52px; }
+/* Five 0-255 fields plus two captions have to share the dialog width, so they
+   flex instead of carrying a fixed width, and the spinners come off: at this
+   size they would eat the digits and the sliders above are the real control. */
+.pk-levels-nums .pk-num {
+  width: auto;
+  flex: 1 1 44px;
+  min-width: 0;
+  padding: 0 4px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+
+.pk-levels-nums .pk-num::-webkit-outer-spin-button,
+.pk-levels-nums .pk-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

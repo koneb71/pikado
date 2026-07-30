@@ -103,7 +103,7 @@ registerPanel({
   icon: 'text',
   group: 'bottom',
   order: 4,
-  defaultOpen: false,
+  defaultOpen: true,
   build(body) {
     body.classList.add('pkt-body');
     const controls = [];

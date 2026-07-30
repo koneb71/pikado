@@ -1,29 +1,73 @@
-.pkch-body { display: flex; flex-direction: column; min-height: 0; }
+/* Channels: the same row language as Layers, one size down. */
 
-.pkch-list { flex: 1 1 auto; min-height: 0; padding: 2px 0; }
-.pkch-row {
-  display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 6px;
-  cursor: pointer; user-select: none;
+/* The class lands on the panel node itself, so it opts out of the padded panel
+   box: the list scrolls and the footer strip reaches the card edges. */
+.pk-panel.pkch-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
 }
-.pkch-row:hover { background: var(--bg-3); }
-.pkch-row.is-selected { background: var(--accent-soft); }
+
+.pkch-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px; }
+
+.pkch-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s ease;
+}
+.pkch-row:hover { background: var(--s3); }
+.pkch-row.is-selected { background: var(--accent-dim); }
+.pkch-row.is-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
 
 .pkch-eye { width: 20px; flex: 0 0 auto; display: flex; justify-content: center; }
-.pkch-eyebtn { width: 20px; height: 20px; }
+.pkch-eyebtn { width: 21px; height: 21px; border-radius: var(--r-xs); }
 .pkch-eyebtn svg { width: 14px; height: 14px; }
 
 .pkch-thumb {
   width: 38px; height: 28px; flex: 0 0 auto;
-  border: 1px solid var(--line-soft); border-radius: 2px; overflow: hidden;
+  border: none;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 1px var(--hair-2);
+  background: var(--s1);
+  overflow: hidden;
   display: flex; align-items: center; justify-content: center;
 }
 .pkch-thumb canvas { display: block; width: 38px; height: 28px; }
 
-.pkch-name { flex: 1 1 auto; min-width: 0; font-size: 12px; }
+.pkch-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs);
+  color: var(--text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.pkch-empty { color: var(--fg-dim); font-size: 11px; padding: 10px 8px; }
+.pkch-empty { color: var(--text-faint); font-size: var(--fs-sm); padding: 14px 10px; line-height: 1.55; }
 
 .pkch-foot {
-  display: flex; align-items: center; gap: 2px; padding: 4px 6px;
-  border-top: 1px solid var(--line); flex: 0 0 auto;
+  display: flex; align-items: center; gap: 2px;
+  height: 33px; padding: 0 7px;
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, .022);
+  border-top: 1px solid var(--hair);
 }

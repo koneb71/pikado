@@ -16,7 +16,9 @@
   display: none;
 }
 
-/* Full screen: canvas only. */
+/* Full screen: canvas only. The surround stays the same neutral grey as the
+   normal artboard surround — a different black here would change how the
+   image reads, which is exactly what this mode must not do. */
 .pk-screen-full #menubar,
 .pk-screen-full #optionsbar,
 .pk-screen-full #tabbar,
@@ -26,5 +28,5 @@
   display: none;
 }
 .pk-screen-full #canvas-area {
-  background: #000;
+  background: var(--void);
 }

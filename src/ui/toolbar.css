@@ -1,45 +1,70 @@
-/* Tool strip, fly-outs, colour well. */
+/* Tool rail: group buttons, fly-outs, tooltips, colour well.
+
+   The rail itself is a floating card (see .pk-toolbar in styles.css). Everything
+   in here is what sits inside it: soft chips rather than bordered cells, so the
+   only saturated thing on the rail is the one active tool. */
 
 .pk-tool {
   position: relative;
-  width: 38px;
-  height: 32px;
+  width: 36px;
+  height: 34px;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: var(--radius);
-  color: var(--fg-dim);
+  border-radius: var(--r-md);
+  color: var(--text-dim);
   cursor: default;
   padding: 0;
+  transition: background .12s ease, color .12s ease, box-shadow .12s ease;
 }
-.pk-tool:hover { background: var(--bg-3); color: var(--fg-bright); }
-.pk-tool.active { background: var(--accent-soft); color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
-.pk-tool-ico { display: flex; }
-.pk-tool svg { stroke: currentColor; fill: none; }
+.pk-tool:hover { background: var(--s3); color: var(--text-hi); }
+.pk-tool:active { background: var(--s4); }
 
+/* The active tool reads as a softly tinted chip, never a filled accent block. */
+.pk-tool.active {
+  background: var(--accent-dim);
+  color: var(--accent-hi);
+  box-shadow: var(--lift);
+}
+/* One step above --accent-dim; the scale has no token for a tint this light. */
+.pk-tool.active:hover { background: rgba(124, 106, 246, .22); }
+
+.pk-tool-ico { display: flex; }
+.pk-tool svg {
+  width: 17px;
+  height: 17px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+}
+
+/* "This group holds more tools": a quiet corner nick, not a bright arrowhead. */
 .pk-tool-corner {
   position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 0;
-  height: 0;
-  border-left: 4px solid transparent;
-  border-bottom: 4px solid rgba(255, 255, 255, .45);
+  right: 4px;
+  bottom: 4px;
+  width: 5px;
+  height: 5px;
+  background: var(--text-faint);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  transition: background .12s ease;
 }
+.pk-tool:hover .pk-tool-corner { background: var(--text); }
+.pk-tool.active .pk-tool-corner { background: var(--accent-hi); }
 
 .pk-tool-sep {
-  width: 26px;
+  width: 22px;
   height: 1px;
   margin: 6px 0;
-  background: var(--line-soft);
+  background: var(--hair);
   flex: 0 0 auto;
 }
 
-.pk-tool-extras { display: flex; flex-direction: column; align-items: center; gap: 1px; }
-.pk-tool-extra { height: 30px; }
+.pk-tool-extras { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.pk-tool-extra { height: 32px; }
 
 /* ---------------------------------------------------------------- flyout */
 
@@ -47,37 +72,67 @@
   position: fixed;
   z-index: 9000;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: stretch;
-  gap: 2px;
-  padding: 4px;
-  background: var(--bg-2);
-  border: 1px solid #4c4c4c;
-  border-radius: 5px;
-  box-shadow: 0 12px 34px rgba(0, 0, 0, .55);
+  gap: 1px;
+  padding: 5px;
+  min-width: 178px;
+  background: var(--s3);
+  border: none;
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-pop);
   max-width: calc(100vw - 12px);
-  overflow-x: auto;
+  max-height: calc(100vh - 12px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  animation: pk-flyout-in .12s ease-out;
 }
+.pk-flyout::-webkit-scrollbar { display: none; }
+@keyframes pk-flyout-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
 
 .pk-flyout-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 8px;
+  gap: 9px;
+  height: 28px;
+  padding: 0 9px 0 10px;
   background: transparent;
   border: none;
-  border-radius: 3px;
-  color: var(--fg);
+  border-radius: var(--r-sm);
+  color: var(--text);
   cursor: default;
   white-space: nowrap;
+  text-align: left;
+  transition: background .12s ease, color .12s ease;
 }
-.pk-flyout-item:hover { background: var(--bg-4); }
-.pk-flyout-item.active { background: var(--accent); color: #fff; }
-.pk-flyout-ico { display: flex; color: inherit; }
-.pk-flyout-ico svg { stroke: currentColor; fill: none; }
-.pk-flyout-key { color: var(--fg-dim); font-size: 11px; }
-.pk-flyout-item.active .pk-flyout-key { color: rgba(255, 255, 255, .8); }
+.pk-flyout-item:hover { background: var(--s4); color: var(--text-hi); }
+.pk-flyout-item.active { background: var(--accent-dim); color: var(--accent-hi); }
+/* A small solid marker carries the selection; the surface only hints at it. */
+.pk-flyout-item.active::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
+.pk-flyout-ico { display: flex; flex: 0 0 auto; color: inherit; }
+.pk-flyout-ico svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+.pk-flyout-name { flex: 1 1 auto; }
+.pk-flyout-key {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.pk-flyout-item:hover .pk-flyout-key { color: var(--text-dim); }
+.pk-flyout-item.active .pk-flyout-key { color: var(--accent-hi); opacity: .75; }
 
 /* ---------------------------------------------------------------- tooltip */
 
@@ -85,28 +140,30 @@
   position: fixed;
   z-index: 9500;
   display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 8px;
-  background: #111;
-  border: 1px solid #4a4a4a;
-  border-radius: 4px;
-  color: var(--fg-bright);
-  font-size: 11px;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 9px;
+  background: var(--s4);
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--text-hi);
+  font-size: var(--fs-sm);
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .5);
+  box-shadow: var(--sh-2), 0 0 0 1px var(--hair);
 }
-.pk-tooltip-key { color: var(--fg-dim); }
+.pk-tooltip-key { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 
 /* ---------------------------------------------------------------- colours */
 
+/* Two overlapping chips over a checkerboard, with the swap and reset
+   affordances tucked into the corners the chips leave free. */
 .pk-colorwell {
   position: relative;
-  width: 40px;
-  height: 42px;
+  width: 44px;
+  height: 46px;
   flex: 0 0 auto;
-  margin: 2px 0 4px;
+  margin: 3px 0 5px;
 }
 
 .pk-swatch {
@@ -114,50 +171,69 @@
   width: 22px;
   height: 22px;
   padding: 0;
-  border: 1px solid #111;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .18);
-  border-radius: 2px;
+  border: none;
+  border-radius: var(--r-sm);
   cursor: default;
+  box-shadow: 0 0 0 1px var(--hair-3), var(--sh-1);
+  transition: box-shadow .12s ease;
 }
-.pk-swatch-fill { position: absolute; inset: 0; display: block; }
-.pk-swatch-fg { left: 2px; top: 4px; z-index: 2; }
-.pk-swatch-bg { left: 15px; top: 17px; z-index: 1; }
+.pk-swatch:hover { box-shadow: 0 0 0 1px var(--accent-ring), var(--sh-2); }
+.pk-swatch-fill { position: absolute; inset: 0; display: block; border-radius: inherit; }
+.pk-swatch-fg { left: 1px; top: 4px; z-index: 2; }
+/* The back chip gets a dark rim so the overlap reads as depth, not a seam. */
+.pk-swatch-bg {
+  left: 14px;
+  top: 18px;
+  z-index: 1;
+  box-shadow: 0 0 0 1px var(--hair-2), -1px -1px 0 1px var(--s1), var(--sh-1);
+}
+.pk-swatch-bg:hover { box-shadow: 0 0 0 1px var(--accent-ring), -1px -1px 0 1px var(--s1), var(--sh-2); }
 
 .pk-swatch-swap {
   position: absolute;
-  right: -1px;
+  right: 0;
   top: -1px;
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   background: none;
   border: none;
-  color: var(--fg-dim);
+  border-radius: var(--r-xs);
+  color: var(--text-dim);
   cursor: default;
+  transition: background .12s ease, color .12s ease;
 }
-.pk-swatch-swap:hover { color: var(--fg-bright); }
+.pk-swatch-swap:hover { background: var(--s3); color: var(--text-hi); }
 
 .pk-swatch-default {
   position: absolute;
   left: 0;
   bottom: 0;
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
   padding: 0;
   background: none;
   border: none;
+  border-radius: var(--r-xs);
   cursor: default;
+  transition: background .12s ease;
 }
+.pk-swatch-default:hover { background: var(--s3); }
 .pk-swatch-default-bg,
 .pk-swatch-default-fg {
   position: absolute;
-  width: 8px;
-  height: 8px;
-  border: 1px solid #111;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .2);
+  width: 9px;
+  height: 9px;
+  border: none;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px var(--hair-3);
 }
+/* These two are colour VALUES, not surfaces: the control resets the foreground
+   to black and the background to white, so it has to show exactly those. */
 .pk-swatch-default-bg { right: 0; bottom: 0; background: #fff; }
-.pk-swatch-default-fg { left: 0; top: 0; background: #000; z-index: 1; }
+.pk-swatch-default-fg { left: 0; top: 0; background: #000; z-index: 1; box-shadow: 0 0 0 1px var(--hair-2); }
+.pk-swatch-default:hover .pk-swatch-default-bg,
+.pk-swatch-default:hover .pk-swatch-default-fg { box-shadow: 0 0 0 1px var(--accent-ring); }
