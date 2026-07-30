@@ -496,3 +496,16 @@
 }
 
 .pkd-about li { margin: 2px 0; }
+
+/* ----------------------------------------------------- colour settings */
+
+/*
+ * A hint that follows the form rather than sitting inside a field needs more
+ * separation than the 3px the base class gives it — against a checkbox directly
+ * above, it otherwise reads as part of that checkbox's own label.
+ */
+.pk-dialog-body > .pk-form + .pk-hint {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--hair);
+}

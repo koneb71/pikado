@@ -342,10 +342,10 @@ nesting, blend modes and fill opacity — but see the limits below.
 
 Stated plainly so you don't find out by clicking:
 
-- **Raw decoding, the 3D workspace, and the video timeline.** Camera Raw is
-  present as a develop module (see below), but Pikado cannot *decode* a raw file —
-  CR2/NEF/ARW need per-sensor demosaicing and calibration data, and that is not
-  here. No 3D workspace and no video import/export either.
+- **Raw decoding, the 3D workspace, and video.** Camera Raw is present as a
+  develop module (above), but Pikado cannot *decode* a raw file — CR2/NEF/ARW need
+  per-sensor demosaicing and calibration data, and that is not here. No 3D
+  workspace, and no video import or export.
 - **A trained model behind Select Subject.** Photoshop's is a neural network;
   Pikado's is classical computer vision — histogram-contrast saliency to guess
   where the subject is, then GrabCut (iterated graph cuts over Gaussian mixture
@@ -356,10 +356,18 @@ Stated plainly so you don't find out by clicking:
   strokes in Select and Mask fix that, which is how GrabCut is designed to be
   used. It has no idea what a person or a cat is.
 - **CMYK and Lab as document modes, and 16-bit.** Colour management is present
-  for RGB and grey (see below), but everything is 8-bit internally, CMYK and Lab
-  exist as colour maths rather than modes, and 16-bit PSDs open by converting
-  down. LUT-based ICC profiles — which is what CMYK printer profiles are — are
-  recognised and declined with a reason rather than misread.
+  for RGB and grey (above), but everything is 8-bit internally, CMYK and Lab exist
+  as colour maths rather than as modes, and 16-bit PSDs open by converting down.
+  LUT-based ICC profiles — which is what a CMYK printer profile is — are
+  recognised and declined with a reason rather than misread. A convert into a much
+  larger space and back therefore costs a little precision that a 16-bit pipeline
+  would not (the test suite pins it under 2.2 mean absolute difference).
+- **Position in a frame animation.** The timeline animates visibility and opacity.
+  Layer buffers here are always document-sized with no per-layer offset, so there
+  is nowhere for a per-frame position to live and nothing in the compositor that
+  would honour one — a control that stored a number and moved nothing would be
+  worse than its absence. Duplicate the layer to move something, or animate
+  opacity to cross-fade.
 - **Face-aware Liquify.** Everything else in Liquify is there — Forward Warp,
   Reconstruct, Smooth, both Twirls, Pucker, Bloat, Push Left, and Freeze/Thaw
   masking, all ten tools with a live mesh preview — but there is no face

@@ -304,3 +304,53 @@ suite('core / canvas + image sizing', async (t) => {
   doc2.transformImage('cw');
   t.eq([doc2.width, doc2.height], [40, 80], 'rotating 90 degrees swaps width and height');
 });
+
+/* ------------------------------------------------------------------ */
+/* Command registry                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Keyboard shortcuts have to be unique.
+ *
+ * Two commands claiming the same accelerator is a silent bug of the worst kind:
+ * the shortcut still works, it just runs the wrong command, and the one that lost
+ * looks broken with no error anywhere. Nothing enforces uniqueness at
+ * registration time — commands are registered from several modules and any of
+ * them can pick a key another already took — so it is enforced here.
+ *
+ * Modifier-free single letters are the tool shortcuts and are deliberately
+ * excluded: tools live in their own keymap (`src/ui/shortcuts.js`) and a tool
+ * letter can legitimately match a command's own.
+ */
+suite('core / keyboard shortcuts are unique', async (t) => {
+  const { commands, accelBinding, buildBindingMap } = await import('/src/commands/registry.js');
+  const list = [...commands.values()];
+  t.gt(list.length, 150, `the registry is populated (${list.length} commands)`);
+
+  // Group by the binding string the *app* computes, not by the accel text, so
+  // "Shift+Ctrl+A" and "Ctrl+Shift+A" count as the same claim.
+  const byBinding = new Map();
+  for (const cmd of list) {
+    for (const accel of [cmd.accel, ...(cmd.altAccels || [])]) {
+      const binding = accelBinding(accel);
+      if (!binding) continue;
+      if (!byBinding.has(binding)) byBinding.set(binding, []);
+      byBinding.get(binding).push(cmd.id);
+    }
+  }
+  t.gt(byBinding.size, 60, `and plenty of commands carry a shortcut (${byBinding.size})`);
+
+  const collisions = [...byBinding.entries()]
+    .filter(([, ids]) => ids.length > 1)
+    .map(([binding, ids]) => `${binding} -> ${ids.join(', ')}`);
+  t.eq(collisions, [], 'no two commands claim the same keyboard shortcut');
+
+  // `buildBindingMap` keeps whichever command it saw first, so a collision does
+  // not error — the losing command's shortcut simply never fires. That is why the
+  // assertion above matters, and this is the proof that it is the failure mode.
+  t.eq(buildBindingMap().size, byBinding.size,
+    'and the binding map the shortcut handler uses holds every one of them');
+
+  const malformed = list.filter((c) => !c.id || !(c.label || c.dynamicLabel)).map((c) => c.id || '(no id)');
+  t.eq(malformed, [], 'every command has an id and a label');
+});
