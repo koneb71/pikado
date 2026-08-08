@@ -43,6 +43,11 @@ export const PREF_DEFAULTS = {
   memoryLimitMB: 512,
   maxDocPixels: 80,
   previewQuality: 'accurate',
+  /* AI.
+     Hosts the user has agreed may receive their images. A list of hostnames is
+     not a secret, so it belongs here — unlike the API key, which is deliberately
+     kept out of this blob and lives in IndexedDB (see src/ai/credentials.js). */
+  aiConsentHosts: [],
   /* Guides & Grid */
   showGuides: true,
   showRulers: true,

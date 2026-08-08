@@ -990,6 +990,62 @@ Everything is 8-bit internally: a convert into ProPhoto and back costs a little
 precision (the suite pins it under 2.2 mean absolute difference), which a 16-bit
 pipeline would not.
 
+## AI — `src/ai/`
+
+The only corner of Pikado that can make a network request, and the only one that
+can send a user's work off the machine. Everything about its shape follows from
+that, plus one fact that cannot be engineered around: **a static client-side app
+cannot hold a secret.** Anything in the bundle is readable in devtools, so the
+key is the user's, and Pikado ships none.
+
+```
+src/ai/
+  credentials.js       key handling. No raw getter — see below.
+  consent.js           per-host agreement to upload; enforced here, not in the UI
+  errors.js            GenerationError + mapHttpError/mapThrown/messageFor (pure)
+  geometry.js          planFrame / cropToRequest / requestMask / patchFromResult (pure)
+  generative-fill.js   composite → geometry → provider → new masked layer → commit
+  providers/
+    index.js           the registry and the ImageProvider contract
+    openai.js          first adapter
+    mock.js            procedural, no key, no network — how the UI is tested
+```
+
+**`credentials.js` exports no getter.** This is the load-bearing decision. The
+raw key leaves the module through exactly one door, `authorizeRequest(init)`,
+which writes it into a header and returns. Because nothing else can obtain the
+string, nothing else can put it in a log line, a URL, an `Error.message` that
+`runCommand` toasts on screen, or an object that gets serialised. A rule that
+would otherwise need a reviewer to notice is instead impossible to break.
+
+**The key is never a property of a `Document` or a `Layer`.** `savePKD` and
+`doc.captureState()` are field whitelists rather than object walkers, so that one
+rule closes `.pkd`, session autosave, history and PSD export at once, with no
+filtering code anywhere. `tests/suites/ai-credentials.test.js` byte-scans a canary
+key through each of those paths to keep it true.
+
+**Storage is memory-first.** Nothing is written to disk unless the user ticks
+"remember on this device", which uses IndexedDB under `ai.credential` —
+deliberately not the `pikado.prefs` localStorage blob, which is what people paste
+into bug reports. `hasCredential()` must stay synchronous: `isEnabled` does
+`return !!c.enabled()`, and a Promise is truthy, so an async version would
+silently enable every AI menu item with no key present.
+
+**Providers are isolated.** Nothing under `providers/` may import from
+`src/core/`, `src/ui/` or `src/render/`, except `src/core/util.js`.
+`generative-fill.js` is the only file in `src/ai/` that knows what a document is.
+That is what would let an on-device model — no key, no network — register as an
+ordinary peer rather than as a second architecture.
+
+**The geometry is where the feature is right or wrong.** `planFrame` grows the
+crop toward the request size wherever the document allows rather than upscaling a
+tight bounding box, slides it inside the document instead of shrinking at an
+edge, and stores its letterbox as *fractions* so a provider that answers at a
+different resolution still lands in the right document coordinates. The request
+mask is hardened and dilated where the layer mask is neither — the first because
+providers read greys inconsistently, the second because a boundary reproduced a
+pixel off would otherwise leave a halo along the seam.
+
 ## Frame animation — `src/core/animation.js`
 
 A frame is a **record of layer state**, not a copy of the picture: which layers
@@ -1233,6 +1289,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/core/smart.js`
 - `src/core/animation.js`, `src/ui/panels/timeline.js`
 - `src/color/{icc,manage}.js`
+- `src/ai/*` + `src/ui/dialogs/{ai-key,ai-consent,generative-fill}.js`
 - `src/select/{maxflow,grabcut,refine}.js`
 - `src/vector/path.js`, `src/text/text-render.js`
 

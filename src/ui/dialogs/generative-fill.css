@@ -1,0 +1,65 @@
+/* Generative Fill — the progress and status rows the shared dialog CSS has no
+   equivalent for. Everything else reuses .pk-field / .pk-hint / .pk-input. */
+
+/* `.pk-input` is sized for single-line fields, so a textarea inherits a height
+   that clips it to about one and a half lines and pushes the placeholder under
+   the next label. `rows` cannot win against that, so the height is set here. */
+.pk-genfill textarea.pk-input {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  line-height: 1.45;
+  resize: vertical;
+  font: inherit;
+}
+
+.pk-genfill-status {
+  min-height: 18px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim, #9a9aa6);
+  line-height: 1.45;
+}
+
+.pk-genfill-status.busy { color: var(--text, #e6e6ee); }
+
+.pk-genfill-status.error {
+  color: var(--danger, #ff6b6b);
+  /* An error here is actionable text, not a decoration — give it room to be read. */
+  white-space: normal;
+}
+
+.pk-genfill-bar {
+  height: 3px;
+  margin-top: 10px;
+  border-radius: 2px;
+  background: var(--bg-sunken, #1a1a20);
+  overflow: hidden;
+}
+
+/* Indeterminate on purpose. A provider gives no progress signal, and a fake
+   percentage that crawls to 90% and waits is a lie the user learns to distrust. */
+.pk-genfill-bar-fill {
+  width: 35%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent, #7c6af6);
+  animation: pk-genfill-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes pk-genfill-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+.pk-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-dim, #9a9aa6);
+  line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pk-genfill-bar-fill { animation: none; width: 100%; opacity: 0.5; }
+}

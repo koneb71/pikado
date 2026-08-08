@@ -114,6 +114,22 @@ async function openSelectAndMask(doc, opts = {}) {
   await showSelectAndMask(doc, opts);
 }
 
+/**
+ * Open Generative Fill.
+ *
+ * Loaded on demand, and for a stronger reason than bundle size: this is the only
+ * corner of Pikado that can make a network request, and the module that can do it
+ * is not even fetched until a user deliberately asks for the feature. The
+ * providers register themselves as a side effect of that import.
+ */
+async function openGenerativeFill(doc) {
+  if (!doc) return;
+  await import('../ai/providers/openai.js');
+  await import('../ai/providers/mock.js');
+  const { showGenerativeFillDialog } = await import('../ui/dialogs/generative-fill.js');
+  await showGenerativeFillDialog(doc);
+}
+
 /* ------------------------------------------------------------------ */
 /* File > Open Recent                                                  */
 /* ------------------------------------------------------------------ */
@@ -1288,6 +1304,20 @@ registerCommands([
     enabled: () => hasPixels() && hasSelection(),
     run: () => showContentAwareFillDialog(D()),
   },
+  {
+    /*
+     * Next to Content-Aware Fill because they are the same job — replace a
+     * selection with plausible pixels — one done locally and one by asking a
+     * model. Adjacency is what makes the choice legible.
+     *
+     * Deliberately enabled without a key. A greyed-out item whose reason is
+     * invisible is a dead end: nothing would tell the user that a key is what is
+     * missing, or where to put one. The dialog explains itself instead.
+     */
+    id: 'edit.generative-fill', label: 'Generative Fill…',
+    enabled: () => hasPixels() && hasSelection(),
+    run: () => openGenerativeFill(D()),
+  },
 
   {
     id: 'edit.free-transform', label: 'Free Transform', accel: 'Ctrl+T',
@@ -1313,6 +1343,17 @@ registerCommands([
   { id: 'edit.purge.all', label: 'All', enabled: () => app.docs.length > 0, run: () => purge('all') },
   { id: 'edit.keyboard-shortcuts', label: 'Keyboard Shortcuts…', accel: 'Alt+Shift+Ctrl+K', run: () => showKeyboardShortcutsDialog() },
   { id: 'edit.preferences', label: 'Preferences…', accel: 'Ctrl+K', run: () => showPreferencesDialog() },
+  {
+    // Next to Preferences rather than inside it: a credential should be
+    // clearable on its own, and resetting preferences must not silently keep one.
+    id: 'edit.ai-settings',
+    label: 'AI Settings…',
+    run: async () => {
+      await import('../ai/providers/openai.js');
+      const { showAiKeyDialog } = await import('../ui/dialogs/ai-key.js');
+      await showAiKeyDialog('openai');
+    },
+  },
 
   /* --- Image ------------------------------------------------------ */
   {
@@ -1870,6 +1911,7 @@ export const MENU_TREE = [
       'edit.fill',
       'edit.stroke',
       'edit.content-aware-fill',
+      'edit.generative-fill',
       '---',
       'edit.free-transform',
       {
@@ -1900,6 +1942,7 @@ export const MENU_TREE = [
       },
       '---',
       'edit.keyboard-shortcuts',
+      'edit.ai-settings',
       'edit.preferences',
     ],
   },

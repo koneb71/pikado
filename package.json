@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Free, open-source Photoshop alternative that runs in your browser. Layers, masks, PSD files, filters and adjustments — no install, no account, nothing uploaded.",
+  "description": "Free, open-source Photoshop alternative that runs in your browser. Layers, masks, PSD files, filters and adjustments \u2014 no install, no account, nothing uploaded except the optional Generative Fill you enable with your own API key.",
   "license": "MIT",
   "author": "Neiell Care L. Paradiang",
   "homepage": "https://github.com/koneb71/pikado#readme",

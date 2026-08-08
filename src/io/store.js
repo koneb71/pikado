@@ -231,6 +231,22 @@ export async function kvGet(key) {
   }
 }
 
+/**
+ * Remove a key entirely.
+ *
+ * A real delete rather than `kvSet(key, null)`, because the record itself is
+ * evidence: something that stores a credential needs a way to leave no trace of
+ * having done so, not a tombstone saying it once did.
+ */
+export async function kvDelete(key) {
+  try {
+    await withTx(['kv'], 'readwrite', (tx) => { tx.objectStore('kv').delete(key); });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Housekeeping                                                        */
 /* ------------------------------------------------------------------ */

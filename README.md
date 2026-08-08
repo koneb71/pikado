@@ -3,6 +3,11 @@
 A browser-based raster and vector image editor in the spirit of Photopea and
 Photoshop. Everything runs client-side — no server, no upload, no account.
 
+The one exception is Generative Fill, which is off until you supply your own API
+key, and which then sends the part of your image you selected to the provider you
+chose. It is the only feature in Pikado that touches the network, it asks before
+the first time, and everything else keeps working without it.
+
 ```bash
 git clone https://github.com/koneb71/pikado.git
 cd pikado
@@ -67,7 +72,9 @@ app that stores your work locally owes you a way to see it.
 ## Your work stays in this browser
 
 Pikado autosaves. Open documents survive a refresh, a crash, and a laptop lid.
-Nothing is uploaded anywhere; there is no server and no account.
+There is no server and no account, and nothing is uploaded — with the single,
+opt-in exception of [Generative Fill](#generative-fill), which needs your own API
+key and asks before it sends anything.
 
 - **Where.** IndexedDB, with the metadata and the payload in *separate* object
   stores: a small record per project (name, size, layer count, timestamp,
@@ -180,6 +187,46 @@ gone, and no slider can invent it. And Temperature is a relative −100…+100 s
 rather than a Kelvin reading, because a rendered sRGB image has no sensor white
 balance to set — the same choice Photoshop makes for this filter on a non-raw
 layer.
+
+## Generative Fill
+
+Select a region, describe what should be there, and the result arrives as a new
+layer masked to your selection — non-destructive, so you can generate three
+attempts and keep the one that works. It sits next to Content-Aware Fill in the
+Edit menu, because they are the same job done two ways.
+
+**This is the only part of Pikado that uses the network, and it is the only part
+that can send your work anywhere.** So it is built to be refused easily:
+
+- **You bring the key.** Pikado ships no API credentials — in a static
+  client-side app there is no such thing as a secret key, because anything in the
+  bundle is readable in devtools. The key is yours, and Pikado never sees a
+  server that could hold one on your behalf.
+- **The key is not stored unless you ask.** By default it lives in the tab's
+  memory and a refresh forgets it. "Remember on this device" puts it in
+  IndexedDB, in plain text, and the dialog says exactly that rather than implying
+  browser storage protects anything from a script running on the page.
+- **It cannot end up in your files.** The key is never a property of a document
+  or a layer, so it cannot reach a `.pkd`, an autosave, a history state or a PSD
+  export. The module exports no way to read the key back; the only thing it can
+  do is write itself into a request header, which is what stops it appearing in a
+  URL, a log line, or an error message on screen.
+- **Consent is separate from the key.** Pasting a key is not agreeing to upload a
+  picture, so the first send to any host asks again, names the host, and lists
+  what leaves and what does not.
+- **Nothing runs by accident.** With no key and no consent the operation refuses
+  before it builds a request, and that check lives in the AI layer rather than
+  the dialog, so calling the command directly cannot get around it.
+
+There is also a Mock (offline) provider that generates a hatched placeholder with
+no key and no network. It exists so the whole path — setup, consent, progress,
+cancellation and every error — can be exercised in the test suite and by hand.
+
+What actually gets sent is the selection plus the pixels around it, squared off
+and scaled to the provider's size. Where the document allows, the crop grows to
+the full request size rather than upscaling a tight bounding box, so a small
+selection in a large image is sent at native resolution with real context around
+it instead of a blurry enlargement.
 
 ## Frame animation
 
@@ -362,6 +409,12 @@ nesting, blend modes and fill opacity — but see the limits below.
 
 Stated plainly so you don't find out by clicking:
 
+- **On-device AI.** Generative Fill (above) works by asking a cloud provider with
+  your own key. Nothing in Pikado runs a model locally yet, so every AI feature
+  needs a network and an account somewhere else. Subject selection, upscaling and
+  denoising are all things a browser could genuinely run on-device with a small
+  ONNX model, and none of them are here — which means Select Subject stays
+  classical, below, and there is no key-free AI at all.
 - **Raw decoding, the 3D workspace, and video.** Camera Raw is present as a
   develop module (above), but Pikado cannot *decode* a raw file — CR2/NEF/ARW need
   per-sensor demosaicing and calibration data, and that is not here. No 3D

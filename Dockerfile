@@ -40,7 +40,7 @@ COPY --from=build /app/dist /usr/share/nginx/html
 
 # Metadata for anyone who pulls the image without the repository.
 LABEL org.opencontainers.image.title="Pikado" \
-      org.opencontainers.image.description="Free, open-source Photoshop alternative that runs in your browser." \
+      org.opencontainers.image.description="Free, open-source Photoshop alternative that runs in your browser. Fully client-side apart from an optional, bring-your-own-key Generative Fill." \
       org.opencontainers.image.source="https://github.com/koneb71/pikado" \
       org.opencontainers.image.licenses="MIT"
 
