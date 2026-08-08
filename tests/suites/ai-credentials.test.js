@@ -1,11 +1,13 @@
 import { suite } from '../harness.js';
 import {
-  setCredential, forgetCredential, hasCredential, credentialScope,
-  redactedCredential, redact, scrubSecrets, authorizeRequest, loadCredential,
+  setCredential, forgetCredential, forgetAllCredentials, hasCredential, credentialScope,
+  redactedCredential, redact, scrubSecrets, authorizeRequest, loadCredentials,
+  configuredProviders,
 } from '/src/ai/credentials.js';
 import { kvGet, kvSet, kvDelete, putDoc, getDocData } from '/src/io/store.js';
 import { savePKD } from '/src/io/pkd.js';
 import { buildRequest } from '/src/ai/providers/openai.js';
+import { buildRequest as buildGeminiRequest } from '/src/ai/providers/gemini.js';
 
 /**
  * The API key must not leak.
@@ -35,14 +37,14 @@ async function blobText(blob) {
 
 /** Run `fn` with the canary held, then always put the world back. */
 async function withCanary(fn, opts = {}) {
-  const prior = await kvGet('ai.credential');
+  const prior = await kvGet('ai.credentials');
   try {
-    await setCredential(CANARY, opts);
+    await setCredential('openai', CANARY, opts);
     return await fn();
   } finally {
-    await forgetCredential();
-    if (prior) await kvSet('ai.credential', prior);
-    else await kvDelete('ai.credential');
+    await forgetAllCredentials();
+    if (prior) await kvSet('ai.credentials', prior);
+    else await kvDelete('ai.credentials');
   }
 }
 
@@ -82,12 +84,12 @@ suite('ai credentials / nothing is written to disk by default', async (t) => {
    * must come away with nothing. Verified to fail by flipping the default in
    * setCredential to persist.
    */
-  const prior = await kvGet('ai.credential');
+  const prior = await kvGet('ai.credentials');
   try {
-    await forgetCredential();
-    await setCredential(CANARY);
-    t.ok(hasCredential(), 'the key works for this session');
-    t.eq(credentialScope(), 'memory', 'and is held in memory');
+    await forgetAllCredentials();
+    await setCredential('openai', CANARY);
+    t.ok(hasCredential('openai'), 'the key works for this session');
+    t.eq(credentialScope('openai'), 'memory', 'and is held in memory');
 
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
@@ -97,11 +99,11 @@ suite('ai credentials / nothing is written to disk by default', async (t) => {
       const k = sessionStorage.key(i);
       t.notOk(String(sessionStorage.getItem(k)).includes(CANARY), `sessionStorage[${k}] is clean`);
     }
-    const rec = await kvGet('ai.credential');
+    const rec = await kvGet('ai.credentials');
     t.notOk(rec, 'and IndexedDB holds nothing at all');
   } finally {
-    await forgetCredential();
-    if (prior) await kvSet('ai.credential', prior);
+    await forgetAllCredentials();
+    if (prior) await kvSet('ai.credentials', prior);
   }
 });
 
@@ -112,21 +114,21 @@ suite('ai credentials / forgetting actually forgets', async (t) => {
    * because the user believes it is gone. Verified to fail by removing the
    * kvDelete call from forgetCredential.
    */
-  const prior = await kvGet('ai.credential');
+  const prior = await kvGet('ai.credentials');
   try {
-    await setCredential(CANARY, { remember: true });
-    t.eq(credentialScope(), 'device', 'remembering says so');
-    t.ok(await kvGet('ai.credential'), 'and writes to IndexedDB');
+    await setCredential('openai', CANARY, { remember: true });
+    t.eq(credentialScope('openai'), 'device', 'remembering says so');
+    t.ok(await kvGet('ai.credentials'), 'and writes to IndexedDB');
 
-    await forgetCredential();
-    t.notOk(hasCredential(), 'forgetting clears memory');
-    t.eq(await kvGet('ai.credential'), null, 'and removes the record entirely');
+    await forgetAllCredentials();
+    t.notOk(hasCredential('openai'), 'forgetting clears memory');
+    t.eq(await kvGet('ai.credentials'), null, 'and removes the record entirely');
 
-    t.notOk(await loadCredential(), 'so a fresh boot finds nothing');
-    t.notOk(hasCredential(), 'and comes up with no key');
+    t.notOk(await loadCredentials(), 'so a fresh boot finds nothing');
+    t.notOk(hasCredential('openai'), 'and comes up with no key');
   } finally {
-    await forgetCredential();
-    if (prior) await kvSet('ai.credential', prior);
+    await forgetAllCredentials();
+    if (prior) await kvSet('ai.credentials', prior);
   }
 });
 
@@ -148,8 +150,8 @@ suite('ai credentials / redaction never reveals the key', async (t) => {
   }
 
   await withCanary(() => {
-    t.eq(redactedCredential(), redact(CANARY), 'the display form is the redacted form');
-    t.notOk(redactedCredential().includes('0000'), 'and shows none of the body');
+    t.eq(redactedCredential('openai'), redact(CANARY), 'the display form is the redacted form');
+    t.notOk(redactedCredential('openai').includes('0000'), 'and shows none of the body');
   });
 });
 
@@ -232,8 +234,8 @@ suite('ai credentials / authorizeRequest is the only way out', async (t) => {
   });
 
   let threw = false;
-  await forgetCredential();
-  try { authorizeRequest({ method: 'POST' }); } catch { threw = true; }
+  await forgetAllCredentials();
+  try { authorizeRequest('openai', { method: 'POST' }); } catch { threw = true; }
   t.ok(threw, 'and with no key it refuses to build a request rather than sending an empty one');
 });
 
@@ -244,10 +246,102 @@ suite('ai credentials / hasCredential stays synchronous', async (t) => {
    * hasCredential would silently enable every AI menu item with no key present.
    * Verified to fail by adding `async` to it.
    */
-  await forgetCredential();
-  t.eq(typeof hasCredential(), 'boolean', 'it returns a boolean, not a Promise');
-  t.eq(hasCredential(), false, 'false when there is no key');
+  await forgetAllCredentials();
+  t.eq(typeof hasCredential('openai'), 'boolean', 'it returns a boolean, not a Promise');
+  t.eq(hasCredential('openai'), false, 'false when there is no key');
   await withCanary(() => {
-    t.eq(hasCredential(), true, 'and true when there is one');
+    t.eq(hasCredential('openai'), true, 'and true when there is one');
   });
+});
+
+suite('ai credentials / one provider\'s key never reaches another', async (t) => {
+  /*
+   * The bug that made keys per-provider in the first place. An earlier version
+   * held a single key with a label saying whose it was, and the "is a key set?"
+   * check ignored the label — so configuring OpenAI and then switching to Gemini
+   * would have sent an OpenAI key to Google's endpoint.
+   *
+   * Verified to fail by making hasCredential ignore its argument, or by giving
+   * authorizeRequest one shared key: the Gemini request comes back carrying the
+   * OpenAI canary.
+   */
+  const prior = await kvGet('ai.credentials');
+  const OPENAI_KEY = 'sk-canary-OPENAI-0000-0000-1111';
+  const GEMINI_KEY = 'AIzaCANARYgemini00000000000002222';
+  try {
+    await forgetAllCredentials();
+    await setCredential('openai', OPENAI_KEY);
+
+    t.ok(hasCredential('openai'), 'the OpenAI key is set');
+    t.notOk(hasCredential('gemini'), 'and that does NOT count as a Gemini key');
+    t.eq(configuredProviders().join(), 'openai', 'only one provider is configured');
+
+    // Building a Gemini request with no Gemini key must refuse outright rather
+    // than fall back to whatever key happens to be lying around.
+    let threw = false;
+    try { buildGeminiRequest({ prompt: 'x', imageBase64: 'AAAA' }); } catch { threw = true; }
+    t.ok(threw, 'a Gemini request cannot be built from an OpenAI key');
+
+    await setCredential('gemini', GEMINI_KEY);
+    t.ok(hasCredential('gemini'), 'both keys can be held at once');
+
+    const gem = buildGeminiRequest({ prompt: 'x', imageBase64: 'AAAA' });
+    const gemHeaders = JSON.stringify(gem.init.headers);
+    t.ok(gemHeaders.includes(GEMINI_KEY), 'the Gemini request carries the Gemini key');
+    t.notOk(gemHeaders.includes(OPENAI_KEY), 'and never the OpenAI one');
+
+    const oa = buildRequest({
+      prompt: 'x',
+      imageBlob: new Blob([new Uint8Array([1])], { type: 'image/png' }),
+      maskBlob: new Blob([new Uint8Array([1])], { type: 'image/png' }),
+      size: 1024,
+    });
+    const oaHeaders = JSON.stringify(oa.init.headers);
+    t.ok(oaHeaders.includes(OPENAI_KEY), 'and the OpenAI request carries the OpenAI key');
+    t.notOk(oaHeaders.includes(GEMINI_KEY), 'and never the Gemini one');
+
+    // Forgetting one must leave the other alone.
+    await forgetCredential('openai');
+    t.notOk(hasCredential('openai'), 'forgetting one provider clears it');
+    t.ok(hasCredential('gemini'), 'and leaves the other in place');
+  } finally {
+    await forgetAllCredentials();
+    if (prior) await kvSet('ai.credentials', prior);
+  }
+});
+
+suite('ai credentials / Gemini authenticates by header, not query string', async (t) => {
+  /*
+   * Google's own documentation offers `?key=…` as the convenient option, and it
+   * is the worst possible place for a credential: query strings land in proxy
+   * access logs, browser history and Referer headers. Verified to fail by
+   * appending the key to the URL the way the quickstart does.
+   */
+  const prior = await kvGet('ai.credentials');
+  const KEY = 'AIzaCANARYgemini00000000000003333';
+  try {
+    await forgetAllCredentials();
+    await setCredential('gemini', KEY);
+    const { url, init } = buildGeminiRequest({ prompt: 'a blue vase', imageBase64: 'AAAA' });
+
+    const parsed = new URL(url);
+    t.eq(parsed.search, '', 'the URL carries no query string at all');
+    t.notOk(url.includes(KEY), 'and no key');
+    t.eq(parsed.host, 'generativelanguage.googleapis.com', 'it goes to Google and nowhere else');
+    t.ne(parsed.origin, location.origin, 'cross-origin, so the service worker never sees it');
+    t.eq(init.method, 'POST', 'and a POST, which the service worker ignores outright');
+
+    const carrying = Object.entries(init.headers).filter(([, v]) => String(v).includes(KEY));
+    t.eq(carrying.length, 1, 'exactly one header carries the key');
+    t.eq(carrying[0][0], 'x-goog-api-key', 'and it is the header Google expects');
+    t.eq(carrying[0][1], KEY, 'sent bare, with no Bearer scheme Google would reject');
+
+    t.notOk(String(init.body).includes(KEY), 'the JSON body does not repeat the key');
+    t.ok(String(init.body).includes('inline_data'), 'and does carry the image inline');
+    t.eq(init.referrerPolicy, 'no-referrer', 'Google is not told where the request came from');
+    t.eq(init.credentials, 'omit', 'and no cookies ride along');
+  } finally {
+    await forgetAllCredentials();
+    if (prior) await kvSet('ai.credentials', prior);
+  }
 });

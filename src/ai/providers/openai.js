@@ -64,7 +64,7 @@ export function buildRequest({ prompt, imageBlob, maskBlob, size, model = 'gpt-i
   form.append('mask', maskBlob, 'mask.png');
   // authorizeRequest is the only thing that can see the key, and it writes it
   // into a header. Nothing above ever holds the string.
-  return { url: ENDPOINT, init: authorizeRequest({ method: 'POST', body: form }) };
+  return { url: ENDPOINT, init: authorizeRequest('openai', { method: 'POST', body: form }) };
 }
 
 registerProvider({

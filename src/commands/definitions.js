@@ -125,6 +125,7 @@ async function openSelectAndMask(doc, opts = {}) {
 async function openGenerativeFill(doc) {
   if (!doc) return;
   await import('../ai/providers/openai.js');
+  await import('../ai/providers/gemini.js');
   await import('../ai/providers/mock.js');
   const { showGenerativeFillDialog } = await import('../ui/dialogs/generative-fill.js');
   await showGenerativeFillDialog(doc);
@@ -1350,6 +1351,7 @@ registerCommands([
     label: 'AI Settings…',
     run: async () => {
       await import('../ai/providers/openai.js');
+      await import('../ai/providers/gemini.js');
       const { showAiKeyDialog } = await import('../ui/dialogs/ai-key.js');
       await showAiKeyDialog('openai');
     },

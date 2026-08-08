@@ -7,7 +7,7 @@ import { getProvider, registerProvider, listProviders } from '/src/ai/providers/
 import { MOCK_DELAY, MOCK_FAILURE } from '/src/ai/providers/mock.js';
 import { extractImage, buildRequest } from '/src/ai/providers/openai.js';
 import { GEN_ERRORS, GenerationError, mapHttpError, mapThrown, messageFor } from '/src/ai/errors.js';
-import { setCredential, forgetCredential } from '/src/ai/credentials.js';
+import { setCredential, forgetAllCredentials } from '/src/ai/credentials.js';
 import { grantConsent, revokeConsent, hasConsent, hostOf } from '/src/ai/consent.js';
 import { getComposite } from '/src/render/compositor.js';
 import { createCanvas, ctx2d } from '/src/core/util.js';
@@ -339,13 +339,13 @@ suite('ai / nothing is sent without a key and without consent', async (t) => {
   });
   const host = hostOf(cloud.endpoint);
   revokeConsent(host);
-  await forgetCredential();
+  await forgetAllCredentials();
 
   let code = null;
   try { await runGenerativeFill(doc, { provider: cloud, prompt: 'x' }); } catch (e) { code = e.code; }
   t.eq(code, GEN_ERRORS.NO_KEY, 'with no key it refuses before touching the network');
 
-  await setCredential('sk-test-0000000000000000', { remember: false });
+  await setCredential(cloud.id, 'sk-test-0000000000000000', { remember: false });
   code = null;
   try { await runGenerativeFill(doc, { provider: cloud, prompt: 'x' }); } catch (e) { code = e.code; }
   t.eq(code, GEN_ERRORS.NO_CONSENT, 'and with a key but no consent it still refuses');
@@ -354,7 +354,7 @@ suite('ai / nothing is sent without a key and without consent', async (t) => {
   grantConsent(host);
   t.ok(hasConsent(host), 'granting consent is what opens the gate');
   revokeConsent(host);
-  await forgetCredential();
+  await forgetAllCredentials();
   t.eq(doc.layers.length, 1, 'and no attempt added a layer');
 });
 

@@ -1007,7 +1007,9 @@ src/ai/
   generative-fill.js   composite → geometry → provider → new masked layer → commit
   providers/
     index.js           the registry and the ImageProvider contract
-    openai.js          first adapter
+    openai.js          first adapter — real mask parameter
+    gemini.js          second adapter — no mask parameter, so the hole is punched
+                       into the image and the layer mask confines the result
     mock.js            procedural, no key, no network — how the UI is tested
 ```
 
@@ -1023,6 +1025,12 @@ would otherwise need a reviewer to notice is instead impossible to break.
 rule closes `.pkd`, session autosave, history and PSD export at once, with no
 filtering code anywhere. `tests/suites/ai-credentials.test.js` byte-scans a canary
 key through each of those paths to keep it true.
+
+**Keys are per provider.** An earlier version held one key with a label naming
+its owner, which was fine with one provider and a real bug with two: the "is a key
+set?" check ignored the label, so configuring OpenAI and then switching to Gemini
+would have sent the OpenAI key to Google. Every entry point now names the provider
+it means. Consent is per host for the same reason.
 
 **Storage is memory-first.** Nothing is written to disk unless the user ticks
 "remember on this device", which uses IndexedDB under `ai.credential` —

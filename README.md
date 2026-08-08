@@ -201,7 +201,9 @@ that can send your work anywhere.** So it is built to be refused easily:
 - **You bring the key.** Pikado ships no API credentials — in a static
   client-side app there is no such thing as a secret key, because anything in the
   bundle is readable in devtools. The key is yours, and Pikado never sees a
-  server that could hold one on your behalf.
+  server that could hold one on your behalf. **OpenAI** and **Gemini** are both
+  supported; keys are held per provider, so switching between them cannot send
+  one vendor's key to the other's endpoint.
 - **The key is not stored unless you ask.** By default it lives in the tab's
   memory and a refresh forgets it. "Remember on this device" puts it in
   IndexedDB, in plain text, and the dialog says exactly that rather than implying
@@ -213,10 +215,22 @@ that can send your work anywhere.** So it is built to be refused easily:
   URL, a log line, or an error message on screen.
 - **Consent is separate from the key.** Pasting a key is not agreeing to upload a
   picture, so the first send to any host asks again, names the host, and lists
-  what leaves and what does not.
+  what leaves and what does not. Consent is per host, so agreeing to send to one
+  provider says nothing about the other.
+- **The key travels in a header, never a URL.** That is worth stating because
+  Google's own quickstart puts the key in a query string, and query strings end
+  up in proxy access logs, browser history and `Referer` headers. Pikado uses
+  `x-goog-api-key`, and a test asserts the URL has no query string at all.
 - **Nothing runs by accident.** With no key and no consent the operation refuses
   before it builds a request, and that check lives in the AI layer rather than
   the dialog, so calling the command directly cannot get around it.
+
+One difference between the two is worth knowing: OpenAI's edit endpoint takes a
+real mask, and Gemini's does not — so for Gemini the selected region is knocked
+out of the image before sending and the prompt asks for it back. Gemini may
+return a whole new frame rather than only the missing piece, which is why the
+result is composited through the layer mask either way: anything it repaints
+outside your selection is masked off rather than silently replacing your picture.
 
 There is also a Mock (offline) provider that generates a hatched placeholder with
 no key and no network. It exists so the whole path — setup, consent, progress,

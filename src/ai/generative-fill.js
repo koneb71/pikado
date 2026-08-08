@@ -91,7 +91,7 @@ export function applyGeneratedFill(doc, patch, coverage, opts) {
 export async function runGenerativeFill(doc, opts) {
   const { provider, prompt, signal } = opts;
   if (!provider) throw new GenerationError(GEN_ERRORS.UNKNOWN, 'no provider selected');
-  if (provider.needsKey && !hasCredential()) {
+  if (provider.needsKey && !hasCredential(provider.id)) {
     throw new GenerationError(GEN_ERRORS.NO_KEY, '', { provider: provider.name });
   }
   if (provider.endpoint && !hasConsent(hostOf(provider.endpoint))) {

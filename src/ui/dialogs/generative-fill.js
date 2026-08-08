@@ -73,7 +73,7 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
     const frame = planFrame(bounds, doc.width, doc.height, { size });
     const region = Math.max(frame.crop.width, frame.crop.height);
     const bits = [];
-    if (p && p.needsKey && !hasCredential()) bits.push('No API key set yet — you will be asked for one.');
+    if (p && p.needsKey && !hasCredential(p.id)) bits.push(`No ${p.name} key set yet — you will be asked for one.`);
     if (frame.scale < 1) {
       bits.push(`Generating at ${size}x${size} for a ${region}px region, so the fill will be softer than the rest of the image.`);
     }
@@ -116,9 +116,9 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
     lastPrompt = text;
     lastProviderId = provider.id;
 
-    if (provider.needsKey && !hasCredential()) {
+    if (provider.needsKey && !hasCredential(provider.id)) {
       const saved = await showAiKeyDialog(provider.id);
-      if (!saved || !hasCredential()) return;
+      if (!saved || !hasCredential(provider.id)) return;
       syncNote();
     }
     if (provider.endpoint && !hasConsent(hostOf(provider.endpoint))) {
