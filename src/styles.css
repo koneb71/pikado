@@ -451,10 +451,28 @@ input[type="number"].pk-num { width: 54px; text-align: right; font-variant-numer
 
 /* ---------------------------------------------------------------- dialog */
 
+/*
+ * No scrim and no blur over the canvas, which is not a style choice.
+ *
+ * Nearly every dialog here previews onto the canvas live — filters, adjustments,
+ * Camera Raw, Levels, Curves — and the whole point of those is judging the
+ * result. Dimming the backdrop by 62% and blurring it by 3px meant judging a
+ * picture that was 62% darker and slightly out of focus, which is the one thing
+ * an image editor must never do to you. Photoshop leaves the canvas alone under
+ * its dialogs for the same reason.
+ *
+ * The overlay still exists and still spans the viewport, so modality is intact:
+ * it swallows clicks meant for the editor and closes on a click outside. What it
+ * no longer does is repaint what you are trying to look at. The dialog reads as
+ * floating on its own border and shadow instead.
+ *
+ * The blur was also costing real frames. `backdrop-filter` on a full-viewport
+ * element forces the compositor to re-blur everything beneath it on every frame,
+ * and beneath it is a canvas being re-rendered on every slider drag.
+ */
 .pk-dialog-overlay {
   position: fixed; inset: 0;
-  background: rgba(6, 6, 8, 0.62);
-  backdrop-filter: blur(3px);
+  background: transparent;
   display: flex; align-items: center; justify-content: center;
   opacity: 0; transition: opacity .14s ease;
 }
@@ -528,9 +546,14 @@ input[type="number"].pk-num { width: 54px; text-align: right; font-variant-numer
 
 /* ---------------------------------------------------------------- busy */
 
+/*
+ * A scrim here but still no blur. Busy genuinely means "do not touch", so
+ * dimming earns its place — but a full-viewport `backdrop-filter` is at its most
+ * expensive during exactly the heavy operation this overlay is covering, and it
+ * was blurring the very progress the user is waiting on.
+ */
 .pk-busy {
-  position: fixed; inset: 0; background: rgba(6, 6, 8, .5);
-  backdrop-filter: blur(2px);
+  position: fixed; inset: 0; background: rgba(6, 6, 8, .38);
   display: flex; align-items: center; justify-content: center; z-index: 6000;
 }
 .pk-busy[hidden] { display: none; }
