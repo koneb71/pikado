@@ -699,3 +699,131 @@ suite('io / PSD write -> read -> write is byte-identical', async (t) => {
   t.close(warp.h, -0.2, 1e-9, 'its horizontal distortion');
   t.close(warp.v, 0.1, 1e-9, 'and its vertical distortion');
 });
+
+/* ------------------------------------------------------------------ */
+/* PSD import cost                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What a PSD costs to open.
+ *
+ * Pikado keeps every layer buffer at document size, so a file's memory cost has
+ * almost nothing to do with its size on disk and everything to do with layer
+ * count times canvas area. Measured before this was addressed: a 0.3 MB file
+ * with 24 small layers on a 1600x1200 canvas allocated 176 MB, and 40 layers
+ * with no pixels at all — 8 bytes each in the file — allocated 165 MB of
+ * provably transparent canvas.
+ */
+suite('io / a PSD full of empty layers does not allocate a canvas for each', async (t) => {
+  const { writePSD } = await import('/src/io/psd-write.js');
+  const { readPSD, projectedLayerBytes } = await import('/src/io/psd-read.js');
+  const { createRasterLayer } = await import('/src/core/layer.js');
+
+  const W = 400, H = 300, N = 16;
+  const src = t.doc(W, H, '#ffffff', 'empties');
+  for (let i = 0; i < N; i += 1) src.layers.unshift(createRasterLayer(W, H, `empty ${i}`));
+
+  const buf = await (await writePSD(src)).arrayBuffer();
+  const doc = await readPSD(buf);
+
+  const layers = doc.flatLayers();
+  const distinct = new Set(layers.map((l) => l.canvas).filter(Boolean));
+  t.gt(layers.length, N, 'every layer came back');
+  /*
+   * The pixel-less layers share one blank canvas. Safe because Layer.beginEdit()
+   * clones unconditionally before any write, so a layer stops sharing the moment
+   * it is painted on. Verified to fail by restoring
+   * `canvas || createCanvas(doc.width, doc.height)`: distinct rises to 17.
+   */
+  t.lt(distinct.size, 4, `pixel-less layers share a blank (${distinct.size} distinct canvases for ${layers.length} layers)`);
+  t.lt(doc.memoryUse(), projectedLayerBytes(N, W, H) / 3,
+    'so the document costs a fraction of the naive per-layer figure');
+});
+
+suite('io / sharing a blank canvas cannot leak one layer\'s paint into another', async (t) => {
+  const { writePSD } = await import('/src/io/psd-write.js');
+  const { readPSD } = await import('/src/io/psd-read.js');
+  const { createRasterLayer } = await import('/src/core/layer.js');
+
+  const W = 200, H = 150;
+  const src = t.doc(W, H, '#ffffff', 'share');
+  for (let i = 0; i < 3; i += 1) src.layers.unshift(createRasterLayer(W, H, `empty ${i}`));
+  const doc = await readPSD(await (await writePSD(src)).arrayBuffer());
+
+  const empties = doc.flatLayers().filter((l) => /^empty/.test(l.name));
+  t.gt(empties.length, 1, 'there are several empty layers to share between');
+  const before = empties[0].canvas;
+  t.is(empties[1].canvas, before, 'they do start out sharing one buffer');
+
+  // Painting on one must not touch the others — this is the whole safety
+  // argument for sharing. Verified to fail by removing the cloneCanvas from
+  // Layer.beginEdit(): the fill shows up on every empty layer at once.
+  doc.beginEdit(empties[0]);
+  const c = empties[0].canvas.getContext('2d');
+  c.fillStyle = '#ff0000';
+  c.fillRect(0, 0, W, H);
+  doc.commit('paint one');
+
+  t.ok(empties[0].canvas !== empties[1].canvas, 'editing one gives it a private buffer');
+  t.pixel(empties[1].canvas, 10, 10, '0,0,0,0', 'and leaves its neighbour untouched');
+});
+
+suite('io / an oversized PSD is offered flattened rather than opened blindly', async (t) => {
+  const { writePSD } = await import('/src/io/psd-write.js');
+  const { readPSD, projectedLayerBytes } = await import('/src/io/psd-read.js');
+  const { createRasterLayer } = await import('/src/core/layer.js');
+
+  const W = 300, H = 200, N = 8;
+  const src = t.doc(W, H, '#ffffff', 'big');
+  for (let i = 0; i < N; i += 1) {
+    const l = createRasterLayer(W, H, `l${i}`);
+    const c = l.canvas.getContext('2d');
+    c.fillStyle = `hsl(${i * 40} 70% 50%)`;
+    c.fillRect(i * 20, i * 12, 60, 60);
+    src.layers.unshift(l);
+  }
+  const buf = await (await writePSD(src)).arrayBuffer();
+
+  t.gt(projectedLayerBytes(N, W, H), N * W * H * 4, 'the projection includes a mask allowance');
+
+  // With no handler the import proceeds exactly as it always did, which is what
+  // keeps every existing caller and every other test in this file honest.
+  const asBefore = await readPSD(buf);
+  t.gt(asBefore.flatLayers().length, N, 'no handler means no change in behaviour');
+
+  // A handler that says "flatten" gets one layer and the picture intact.
+  let asked = null;
+  const flat = await readPSD(buf, {
+    budgetBytes: 1,
+    onOversize: (info) => { asked = info; return 'flatten'; },
+  });
+  t.ok(asked, 'the handler was consulted');
+  t.gt(asked.layers, N - 1, `and told how many layers there are (${asked.layers})`);
+  t.gt(asked.projectedBytes, asked.budgetBytes, 'and by how much the budget is blown');
+  t.eq(flat.flatLayers().length, 1, 'flattening gives exactly one layer');
+  t.gt(t.inked(flat.layers[0].canvas), 0, 'and it is not blank — the picture survived');
+
+  // Cancelling must not half-open anything.
+  let threw = false;
+  try { await readPSD(buf, { budgetBytes: 1, onOversize: () => 'cancel' }); } catch { threw = true; }
+  t.ok(threw, 'cancelling refuses rather than returning a broken document');
+});
+
+suite('io / memoryUse counts what is really held', async (t) => {
+  /*
+   * Counted per distinct buffer, not per layer. Sharing means the per-layer sum
+   * overstates: a 41-layer import reported 300 MB when 161 MB was held.
+   * Verified to fail by summing per layer again.
+   */
+  const { createRasterLayer } = await import('/src/core/layer.js');
+  const doc = t.doc(100, 100, '#ffffff', 'mem');
+  const base = doc.memoryUse();
+
+  const a = createRasterLayer(100, 100, 'a');
+  const b = createRasterLayer(100, 100, 'b');
+  b.canvas = a.canvas;                      // deliberately sharing
+  doc.layers.unshift(a);
+  doc.layers.unshift(b);
+
+  t.eq(doc.memoryUse(), base + 100 * 100 * 4, 'a shared buffer is counted once, not twice');
+});

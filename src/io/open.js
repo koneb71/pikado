@@ -9,6 +9,48 @@ import { importSVG } from './svg.js';
 import { loadPKD } from './pkd.js';
 
 /**
+ * Ask before opening a PSD that would not fit.
+ *
+ * The number is worth showing because it is nowhere near the file size and the
+ * user has no way to guess it: Pikado holds every layer buffer at document size,
+ * so a 0.76 MB file with 70 layers on a 2000x1500 canvas needs about 900 MB. The
+ * dialog quotes the real figure rather than saying "large", because "large" gives
+ * nobody anything to decide with.
+ *
+ * Flattening is genuinely cheap — every PSD carries a flattened composite for
+ * compatibility, so it costs one document-sized canvas instead of N — and it is
+ * offered first for that reason.
+ *
+ * @returns {Promise<'flatten'|'proceed'|'cancel'>}
+ */
+async function askAboutOversizePSD(info) {
+  const mb = Math.round(info.projectedBytes / 1048576);
+  const budgetMb = Math.round(info.budgetBytes / 1048576);
+  const { Dialog } = await import('../ui/dialog.js');
+  const dialog = new Dialog({ title: 'This PSD is bigger than it looks', width: 500 });
+  dialog.setBody(
+    el('div.pk-msg', {
+      text: `It has ${info.layers} layers on a ${info.width} x ${info.height} canvas. `
+        + `Pikado keeps every layer at full canvas size, so opening them all needs about `
+        + `${mb} MB — well past the ${budgetMb} MB budget in Preferences. That is usually `
+        + `enough to make the tab unresponsive or close it outright.`,
+    }),
+    el('div.pk-hint', {
+      text: 'Opening it flattened uses the composite Photoshop already stored in the file. '
+        + 'You get the picture, at one layer, immediately. Opening every layer may still '
+        + 'work if you have the memory to spare — it is your call, not a refusal.',
+    }),
+  );
+  dialog.setButtons([
+    { label: 'Cancel', value: 'cancel', subtle: true },
+    { label: 'Open all layers anyway', value: 'proceed' },
+    { label: 'Open flattened', value: 'flatten', primary: true },
+  ]);
+  const choice = await dialog.open();
+  return choice || 'cancel';
+}
+
+/**
  * Opening files: the file input, drag-and-drop and paste.
  *
  * Every entry point funnels through `openFile`, which dispatches on extension
@@ -223,7 +265,10 @@ export async function openFile(file, opts = {}) {
 
   let doc = null;
   if (ext === 'psd' || ext === 'psb' || type === 'image/vnd.adobe.photoshop') {
-    doc = await readPSD(await readFileAsArrayBuffer(file));
+    doc = await readPSD(await readFileAsArrayBuffer(file), {
+      budgetBytes: (app.memoryLimitMB || 512) * 1048576,
+      onOversize: askAboutOversizePSD,
+    });
     doc.name = stemOf(name);
   } else if (ext === 'pkd' || type === 'application/x-pikado') {
     doc = await loadPKD(await readFileAsArrayBuffer(file));

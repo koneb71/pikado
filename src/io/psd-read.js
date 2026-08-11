@@ -269,7 +269,36 @@ const LAYER_COLOR_LABELS = ['none', 'red', 'orange', 'yellow', 'green', 'blue', 
  * @param {ArrayBuffer} arrayBuffer
  * @returns {Promise<PikaDocument>}
  */
-export async function readPSD(arrayBuffer) {
+/**
+ * How much memory a layered import will actually cost, in bytes.
+ *
+ * Pikado stores every layer buffer at document size (golden rule 3), so a PSD's
+ * cost here has almost nothing to do with its file size and everything to do
+ * with layer count times document area. A 0.3 MB file with 24 small layers on a
+ * 1600x1200 canvas needs 176 MB — measured, not estimated. The masks are counted
+ * at a third of a full buffer because only some layers carry one.
+ *
+ * Exported so the open path and the tests can ask the same question the importer
+ * asks itself.
+ *
+ * @param {number} layerCount
+ * @param {number} width
+ * @param {number} height
+ * @returns {number} bytes
+ */
+export function projectedLayerBytes(layerCount, width, height) {
+  return Math.round(layerCount * width * height * 4 * 1.33);
+}
+
+/**
+ * @param {ArrayBuffer} arrayBuffer
+ * @param {{budgetBytes?: number, onOversize?: (info: object) => Promise<string>|string}} [opts]
+ *   `onOversize` is asked what to do when the projected cost exceeds the budget,
+ *   and answers 'flatten', 'proceed' or 'cancel'. With no handler the import
+ *   proceeds, which keeps every existing caller and every test behaving exactly
+ *   as before.
+ */
+export async function readPSD(arrayBuffer, opts = {}) {
   if (!arrayBuffer || arrayBuffer.byteLength < 26) throw new Error('The file is too small to be a PSD');
   const r = new ByteReader(arrayBuffer);
 
@@ -342,6 +371,37 @@ export async function readPSD(arrayBuffer) {
 
   let built = [];
   if (parsed && parsed.records.length) {
+    /*
+     * Ask before allocating a gigabyte.
+     *
+     * This is the check the importer never had: line 297 bounds the *document*,
+     * but the thing that kills the tab is layer count times document area, and
+     * that cost is invisible from the file size. Canvas backing store also lives
+     * outside the JS heap, so nothing in the app — not `performance.memory`, not
+     * `doc.memoryUse()` after the fact — notices before the browser does.
+     *
+     * The fallback is free: every PSD already carries a flattened composite for
+     * compatibility, and the branch below reaches for it whenever `built` is
+     * empty. So "open it flattened" costs one document-sized canvas instead of
+     * N, and needs no new decoding path.
+     */
+    const projected = projectedLayerBytes(parsed.records.length, width, height);
+    const budget = opts.budgetBytes || Infinity;
+    if (projected > budget && typeof opts.onOversize === 'function') {
+      const choice = await opts.onOversize({
+        layers: parsed.records.length, width, height, projectedBytes: projected, budgetBytes: budget,
+      });
+      if (choice === 'cancel') throw new Error('Import cancelled');
+      if (choice === 'flatten') {
+        ctx.warnings.push(
+          `This file's ${parsed.records.length} layers would need about `
+          + `${Math.round(projected / 1048576)} MB, so it was opened flattened.`,
+        );
+        parsed = null;
+      }
+    }
+  }
+  if (parsed && parsed.records.length) {
     try {
       built = await buildLayers(parsed.records, doc, ctx);
     } catch (err) {
@@ -361,6 +421,14 @@ export async function readPSD(arrayBuffer) {
   } else {
     // Fall back to the flattened composite stored at the end of the file.
     const canvas = await readCompositeImage(arrayBuffer, mergedStart, ctx);
+    if (!canvas) {
+      throw new Error(
+        'This PSD has no flattened copy inside it — it was saved with '
+        + '"Maximize Compatibility" turned off — and its layers could not be '
+        + 'rebuilt, so there is nothing to open. Re-saving it from Photoshop with '
+        + 'that option on will fix it.',
+      );
+    }
     const bg = new Layer({ type: LayerType.RASTER, name: 'Background', canvas });
     bg.isBackground = true;
     bg.locked = { ...bg.locked, position: true };
@@ -832,14 +900,70 @@ function padTo(bytes, total) {
 /* Layer reconstruction                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Hand the event loop back for one turn.
+ *
+ * `await` on an already-resolved value only queues a *microtask*, which never
+ * lets the browser paint or deliver input — and every await under buildLayers is
+ * that kind on the raw and RLE paths, which is what Photoshop writes for 8-bit
+ * files. Measured: a 4 ms interval fired zero times across a 349 ms import, so
+ * the whole thing was one uninterrupted task and the busy spinner was a still
+ * frame.
+ *
+ * `setTimeout`, and specifically not the clever alternatives, because this was
+ * measured rather than assumed. Burning 12 ms twelve times over while a 4 ms
+ * interval ran alongside:
+ *
+ *   microtask only      0 other tasks ran
+ *   MessageChannel      0 other tasks ran
+ *   setTimeout(0)       7 other tasks ran
+ *
+ * MessageChannel is the usual recommendation for a "fast macrotask", and it is
+ * genuinely a macrotask — but the browser drains the whole message queue before
+ * it gets back to timers, so it starves exactly the work we are yielding for.
+ * `requestAnimationFrame` and `scheduler.yield()` are both worse here for a
+ * different reason: neither is dependable in a hidden tab, and an import that
+ * stops making progress when the user switches tabs is a far worse bug than a
+ * slow one. setTimeout's 4 ms clamp is the price, and it is worth paying.
+ */
+let lastYieldAt = 0;
+
+/**
+ * Yield only when it would buy something, and only when it is cheap.
+ *
+ * Two refinements over yielding on a fixed layer count, both measured:
+ *
+ * **On a time budget, not a counter.** A yield every N layers makes a small file
+ * pay for a problem it does not have. Yielding only once ~16 ms of work has piled
+ * up means a quick import barely yields at all while a heavy one hands the
+ * browser roughly a frame's worth of breathing room, which is all it needs.
+ *
+ * **Not at all when the tab is hidden.** `setTimeout` is throttled to about once
+ * a second in a background tab: a 41-layer import that took 172 ms visible took
+ * 5.0 s hidden, purely in yields. But a hidden tab has nothing to paint and no
+ * input to deliver, so the yield was buying nothing in exchange — the right move
+ * is to run flat out and let it finish sooner. Switching tabs mid-import now
+ * makes it faster rather than thirty times slower.
+ */
+function maybeYield() {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return null;
+  const now = performance.now();
+  if (now - lastYieldAt < 16) return null;
+  lastYieldAt = now;
+  return new Promise((resolve) => { setTimeout(resolve, 0); });
+}
+
 async function buildLayers(records, doc, ctx) {
   // The file stores layers bottom-first. Section dividers arrive as a closing
   // marker (type 3) before the children and the folder itself (type 1/2) after
   // them, so a simple stack rebuilds the tree in one pass.
   const stack = [];
   let current = [];
+  lastYieldAt = performance.now();
 
   for (const rec of records) {
+    const breather = maybeYield();
+    if (breather) await breather;
     const info = interpretBlocks(rec, ctx);
     const divider = info.sectionType;
 
@@ -901,6 +1025,28 @@ function isBlankCanvas(canvas) {
  * we cannot load, a geometry we cannot rebuild) the stored raster is kept and
  * the user is told, rather than the layer silently disappearing.
  */
+/**
+ * One blank canvas, shared by every layer in this file that has no pixels.
+ *
+ * Photoshop writes an unpainted layer as a zero-size rect with four empty
+ * channels — eight bytes — and every fill layer (solid, gradient, pattern) is
+ * stored the same way, as an empty pixel rect plus a descriptor. Pikado was
+ * answering each of those with its own document-sized canvas: measured, 40 such
+ * layers at 1200x900 cost 164.8 MB, and at 4000x3000 each one is 48 MB of
+ * provably transparent pixels for 8 bytes of file.
+ *
+ * Sharing is safe because `Layer.beginEdit()` clones `this.canvas`
+ * unconditionally before any write (src/core/layer.js:124), so a layer stops
+ * sharing the moment anyone paints on it. Only the layers nobody touches keep
+ * pointing at the one blank, which is exactly the set worth not paying for.
+ */
+function blankFor(doc, ctx) {
+  const b = ctx.blank;
+  if (b && b.width === doc.width && b.height === doc.height) return b;
+  ctx.blank = createCanvas(doc.width, doc.height);
+  return ctx.blank;
+}
+
 function revive(layer, stored, render, ctx, label) {
   const out = render();
   if (isBlankCanvas(out) && stored && !isBlankCanvas(stored)) {
@@ -1044,6 +1190,15 @@ async function buildLeafLayer(rec, info, doc, ctx) {
       tile.getContext('2d').putImageData(img, 0, 0);
       canvas = createCanvas(doc.width, doc.height);
       ctx2d(canvas).drawImage(tile, rec.left, rec.top);
+      /*
+       * Release the tile now rather than waiting for GC. Its backing store lives
+       * outside the JS heap, so the collector has a poor view of how much it
+       * costs, and on a file with a hundred layers the tiles alone can keep a
+       * few hundred megabytes alive long after the only copy that matters has
+       * been drawn. Zeroing the dimensions frees it immediately.
+       */
+      tile.width = 0;
+      tile.height = 0;
     }
   }
 
@@ -1051,20 +1206,20 @@ async function buildLeafLayer(rec, info, doc, ctx) {
   if (info.adjustment) {
     layer = new Layer({ type: LayerType.ADJUSTMENT, name: label, adjustment: info.adjustment });
   } else if (info.text) {
-    layer = new Layer({ type: LayerType.TEXT, name: label, canvas: canvas || createCanvas(doc.width, doc.height) });
+    layer = new Layer({ type: LayerType.TEXT, name: label, canvas: canvas || blankFor(doc, ctx) });
     layer.text = info.text;
     revive(layer, canvas, () => rasterizeTextLayer(layer, doc), ctx, label);
   } else if (info.shape || info.vectorMask) {
-    layer = new Layer({ type: LayerType.SHAPE, name: label, canvas: canvas || createCanvas(doc.width, doc.height) });
+    layer = new Layer({ type: LayerType.SHAPE, name: label, canvas: canvas || blankFor(doc, ctx) });
     layer.shape = info.shape ? restorePrivateShape(info.shape) : vectorShapeOf(info, doc);
     revive(layer, canvas, () => rasterizeShapeLayer(layer, doc), ctx, label);
   } else if (info.fill) {
-    layer = new Layer({ type: LayerType.SHAPE, name: label, canvas: canvas || createCanvas(doc.width, doc.height) });
+    layer = new Layer({ type: LayerType.SHAPE, name: label, canvas: canvas || blankFor(doc, ctx) });
     // Fill layers cover the whole canvas; giving them explicit geometry keeps
     // them re-rasterisable if the user edits the fill later.
     layer.shape = { ...info.fill, subpaths: rectSubpaths(0, 0, doc.width, doc.height) };
   } else {
-    layer = new Layer({ type: LayerType.RASTER, name: label, canvas: canvas || createCanvas(doc.width, doc.height) });
+    layer = new Layer({ type: LayerType.RASTER, name: label, canvas: canvas || blankFor(doc, ctx) });
   }
 
   applyCommon(layer, rec, info);
@@ -2384,6 +2539,16 @@ async function readCompositeImage(buf, offset, ctx) {
   const B = gray ? planes[0] : planes[2];
   const alphaIndex = gray ? 1 : 3;
   const A = ctx.mergedHasAlpha ? planes[alphaIndex] : null;
+
+  /*
+   * No merged data at all means this file was saved with "Maximize
+   * Compatibility" off, and there is no flattened composite to fall back to.
+   * Returning the blank canvas here would hand back an empty document that looks
+   * like a successful open — and now that an oversized file can be *routed* into
+   * this path deliberately, a silent blank is the worst possible answer. Say so
+   * instead, and let the caller decide.
+   */
+  if (!R && !G && !B) return null;
 
   const img = new ImageData(width, height);
   const d = img.data;

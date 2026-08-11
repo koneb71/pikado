@@ -516,12 +516,31 @@ export class PikaDocument extends Emitter {
   /* ------------------------------------------------------------------ */
 
   /** Estimated memory footprint, for the status bar. */
+  /**
+   * Bytes of pixel buffer this document actually holds.
+   *
+   * Counted per distinct canvas, not per layer. Two layers can share one buffer
+   * — the PSD importer hands every pixel-less layer the same blank, and
+   * copy-on-write means a snapshot shares until something is written — so
+   * counting per layer reported a 41-layer import at 300 MB when the real figure
+   * was 161 MB. A memory readout that overstates by 2x is not a memory readout.
+   *
+   * Alpha channels are counted too. They are full document-sized canvases held
+   * on the document, and omitting them understated a channel-heavy file badly.
+   */
   memoryUse() {
+    const seen = new Set();
     let n = 0;
+    const add = (cv) => {
+      if (!cv || seen.has(cv)) return;
+      seen.add(cv);
+      n += cv.width * cv.height * 4;
+    };
     for (const l of this.flatLayers()) {
-      if (l.canvas) n += l.canvas.width * l.canvas.height * 4;
-      if (l.mask) n += l.mask.width * l.mask.height * 4;
+      add(l.canvas);
+      add(l.mask);
     }
+    for (const c of this.alphaChannels || []) add(c.canvas);
     return n;
   }
 }

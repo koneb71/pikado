@@ -19,17 +19,23 @@ are relative and **must include the `.js` extension**.
    record the undo step, or `doc.touch()` for a live preview with no history.
 3. **Layer buffers are always document-sized** (`doc.width × doc.height`).
    There are no per-layer offsets; moving a layer moves its pixels.
-4. **If you transform a layer's pixels, transform its authored geometry too.**
+4. **A layer's canvas may be SHARED with another layer.** `beginEdit()` clones
+   before any write, which is what makes sharing safe — the PSD importer hands
+   every pixel-less layer one blank canvas rather than allocating a
+   document-sized buffer each. So never write to `layer.canvas` without
+   `doc.beginEdit(layer)`, and never assume two layers with different pixels have
+   different buffers. Anything counting memory must count distinct buffers.
+5. **If you transform a layer's pixels, transform its authored geometry too.**
    Text and shape layers can be re-rendered from `layer.text` and
    `layer.shape` at any moment, so those parameters have to describe where the
    pixels actually are. Use `mapLayerGeometry` / `translateLayerGeometry` from
    `src/core/layer.js`. Skip this and nothing looks wrong until something
    re-renders, at which point the layer jumps back to where it was authored.
-5. Masks are stored as **greyscale RGBA canvases** (white = visible). Use
+6. Masks are stored as **greyscale RGBA canvases** (white = visible). Use
    `layer.maskAlphaCanvas()` when you need an alpha-only clip source.
-6. Every module **self-registers on import** — `src/main.js` imports it purely
+7. Every module **self-registers on import** — `src/main.js` imports it purely
    for the side effect. Do not export a `register()` that main must call.
-7. Long loops over pixels: get a `willReadFrequently` context via
+8. Long loops over pixels: get a `willReadFrequently` context via
    `ctx2dRead(canvas)` from `src/core/util.js`.
 
 ---

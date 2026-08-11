@@ -435,6 +435,14 @@ Stated plainly so you don't find out by clicking:
   denoising are all things a browser could genuinely run on-device with a small
   ONNX model, and none of them are here — which means Select Subject stays
   classical, below, and there is no key-free AI at all.
+- **Layer buffers sized to the layer.** Every layer holds a full
+  canvas-sized buffer, so what a PSD costs to open depends on layer count times
+  canvas area and not much on its file size — a 0.76 MB file with 70 layers on a
+  2000x1500 canvas needs about 900 MB. Empty and fill layers now share a single
+  blank buffer, and a file projected to blow your memory budget offers to open
+  flattened instead of taking the tab down with it, but a genuinely dense
+  60-layer 4000x3000 PSD still cannot be opened with every layer live. Per-layer
+  bounds are the real fix and are not done.
 - **Raw decoding, the 3D workspace, and video.** Camera Raw is present as a
   develop module (above), but Pikado cannot *decode* a raw file — CR2/NEF/ARW need
   per-sensor demosaicing and calibration data, and that is not here. No 3D
