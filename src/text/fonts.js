@@ -73,6 +73,16 @@ export const FONT_FAMILY_OPTIONS = FONT_FAMILIES.map((f) => ({ value: f.id, labe
  * @param {{id:string,name:string}[]} [installed] downloaded families
  * @returns {{value:string,label:string}[]}
  */
+/**
+ * The value a picker uses to mean "open the font browser".
+ *
+ * A row in the list rather than a button beside it: the question "which font?"
+ * and the question "is there another font?" are the same question, and a user
+ * who scrolls to the bottom of a short list looking for something is exactly
+ * the person who needs the catalogue.
+ */
+export const BROWSE_FONTS = '\u0000browse';
+
 export function fontFamilyOptions(current = '', installed = []) {
   const out = [...FONT_FAMILY_OPTIONS];
   for (const f of installed) {
@@ -82,6 +92,7 @@ export function fontFamilyOptions(current = '', installed = []) {
   if (key && !out.some((o) => o.value === key)) {
     out.unshift({ value: key, label: googleFamilyOf(key) || String(key) });
   }
+  out.push({ value: BROWSE_FONTS, label: 'Browse Google Fonts…' });
   return out;
 }
 

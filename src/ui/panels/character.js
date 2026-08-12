@@ -5,7 +5,8 @@ import { LayerType } from '../../core/layer.js';
 import { parseColor, toHex } from '../../core/color.js';
 import { iconEl } from '../icons.js';
 import { colorSwatchButton } from '../color-picker.js';
-import { fontFamilyOptions, normalizeFontId } from '../../text/fonts.js';
+import { normalizeFontId, BROWSE_FONTS } from '../../text/fonts.js';
+import { fontOptions, resolveFontChoice } from '../font-field.js';
 import './panels.css';
 import './character.css';
 
@@ -197,10 +198,16 @@ registerPanel({
      */
     const fontField = () => {
       const sel = el('select.pk-select.pkt-select');
-      sel.addEventListener('change', () => set('fontFamily', sel.value, false));
+      sel.addEventListener('change', async () => {
+        const previous = normalizeFontId(get('fontFamily'));
+        // The last row opens the catalogue rather than naming a font.
+        const picked = await resolveFontChoice(sel.value, previous);
+        if (!picked) { sel.value = previous; return; }
+        set('fontFamily', picked, false);
+      });
       controls.push(() => {
         const current = normalizeFontId(get('fontFamily'));
-        const opts = fontFamilyOptions(current);
+        const opts = fontOptions(current);
         const same = sel.options.length === opts.length
           && opts.every((o, i) => sel.options[i] && sel.options[i].value === o.value);
         if (!same) sel.replaceChildren(...opts.map((o) => el('option', { value: o.value, text: o.label })));

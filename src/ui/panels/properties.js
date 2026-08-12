@@ -9,7 +9,8 @@ import { boxBlurMask } from '../../core/selection.js';
 import { getAdjustment, defaultParams } from '../../adjustments/registry.js';
 import { buildForm } from '../dialog.js';
 import { toHex, parseColor } from '../../core/color.js';
-import { fontFamilyOptions, FONT_WEIGHTS, ensureFont } from '../../text/fonts.js';
+import { FONT_WEIGHTS, ensureFont, BROWSE_FONTS } from '../../text/fonts.js';
+import { fontOptions, resolveFontChoice } from '../font-field.js';
 import * as ops from '../../layers/ops.js';
 import {
   isSmartLayer, getSmartTransform, getSmartFilters, decomposeMatrix, composeMatrix,
@@ -474,8 +475,8 @@ function textSection(doc, layer) {
   if (t.letterSpacing == null) t.letterSpacing = 0;
 
   // Shared builder — it already prepends a family the list does not have, which
-  // is what the ad-hoc code here used to do.
-  const families = fontFamilyOptions(t.font);
+  // is what the ad-hoc code here used to do, and ends with the catalogue.
+  const families = fontOptions(t.font);
 
   const state = {
     content: String(t.content),
@@ -496,6 +497,16 @@ function textSection(doc, layer) {
   let token = 0;
 
   const apply = async () => {
+    /*
+     * The catalogue row is not a font. Swap it for whatever the browser
+     * returned before any of this writes it onto the layer.
+     */
+    if (state.font === BROWSE_FONTS) {
+      const picked = await resolveFontChoice(BROWSE_FONTS, t.font);
+      state.font = picked || t.font;
+      if (form && form.refresh) form.refresh();
+      if (!picked) return;
+    }
     t.content = state.content;
     t.font = state.font;
     t.size = state.size;

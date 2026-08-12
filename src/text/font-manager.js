@@ -8,6 +8,7 @@ import {
 } from '../io/store.js';
 import { getPref } from '../ui/dialogs/preferences.js';
 import { setCapabilityProvider, fontsUsedBy, tableEntry } from './font-table.js';
+import { setInstalledProvider } from '../ui/font-field.js';
 
 /**
  * Downloaded fonts: fetching, storing, and registering them with the browser.
@@ -42,6 +43,8 @@ setCapabilityProvider((id) => {
   const e = findFamily(googleNameFor(id));
   return e ? { weights: e.weights, italics: e.italic ? e.weights : [], category: e.category } : null;
 });
+
+setInstalledProvider(() => installedFamilies());
 
 /** family name -> {family, category, weights, italics, bytes} */
 const installed = new Map();

@@ -221,6 +221,7 @@ export async function showFontsDialog(opts = {}) {
     }
     pool.style.transform = `translateY(${first * ROW_H}px)`;
     spacer.style.height = `${rows.length * ROW_H}px`;
+    paintCount();
 
     // Only families with no local face need a specimen fetched.
     const wanted = visibleRows().filter((e) => !e.builtin && !isInstalled(e.id));
@@ -228,8 +229,23 @@ export async function showFontsDialog(opts = {}) {
     syncStrip();
   }
 
+  /*
+   * Counted on every render rather than on rebuild, because a download changes
+   * the number and must not rebuild — rebuilding resets the scroll position out
+   * from under whoever just pressed Get.
+   */
+  function paintCount() {
+    // The pool is the catalogue plus the built-ins, so "of N" only means
+    // anything against that total, and only while something is filtering.
+    const total = catalogSize() + FONT_FAMILIES.length;
+    const filtered = query || category || scope !== 'all';
+    footer.textContent = (filtered
+      ? `${rows.length.toLocaleString()} of ${total.toLocaleString()} families`
+      : `${rows.length.toLocaleString()} families`)
+      + ` · ${installedFamilies().length} downloaded`;
+  }
+
   function rebuild() {
-    const installedIds = new Set(installedFamilies().map((f) => f.id));
     const docIds = app.activeDoc ? fontsUsedBy(app.activeDoc) : new Set();
 
     let list;
@@ -265,14 +281,6 @@ export async function showFontsDialog(opts = {}) {
         onclick: () => { query = ''; category = ''; scope = 'all'; search.value = ''; paintChips(); rebuild(); },
       }),
     );
-    // The pool is the catalogue plus the built-ins, so "of N" only makes sense
-    // against that total — and only when something is actually filtering.
-    const total = catalogSize() + FONT_FAMILIES.length;
-    const filtered = query || category || scope !== 'all';
-    footer.textContent = (filtered
-      ? `${rows.length.toLocaleString()} of ${total.toLocaleString()} families`
-      : `${rows.length.toLocaleString()} families`)
-      + ` · ${installedIds.size} downloaded`;
     scroller.scrollTop = 0;
     render();
     syncPrimary();

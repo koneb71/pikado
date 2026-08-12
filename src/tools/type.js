@@ -21,7 +21,9 @@ import { toHex, parseColor, toCss } from '../core/color.js';
 import { paramDialog } from '../ui/dialog.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
 import { formatAccel } from '../commands/registry.js';
-import { fontFamilyOptions, FONT_WEIGHTS, fontStack, ensureFont, invalidateFontMetrics } from '../text/fonts.js';
+import { FONT_WEIGHTS, fontStack, ensureFont, invalidateFontMetrics } from '../text/fonts.js';
+import { fontOptions, resolveFontChoice } from '../ui/font-field.js';
+import { BROWSE_FONTS } from '../text/fonts.js';
 import {
   WARP_STYLES, defaultTextProps, layoutText, textOrigin, wrapWidthFor,
   measureTextLayer, rasterizeTextLayer, textLayerToMask, resolveTextProps,
@@ -466,7 +468,7 @@ class TypeToolBase extends Tool {
       groupOrder: 15,
       ...opts,
       options: [
-        { key: 'font', label: 'Font', type: 'select', options: () => fontFamilyOptions(), default: 'system' },
+        { key: 'font', label: 'Font', type: 'select', options: () => fontOptions(app.tool && app.tool.state ? app.tool.state.font : ''), default: 'system' },
         { key: 'size', label: 'Size', type: 'number', min: 1, max: 1600, step: 1, default: 48, unit: 'px' },
         { key: 'weight', label: 'Weight', type: 'select', options: FONT_WEIGHTS, default: 400 },
         { key: 'italic', label: 'Italic', type: 'checkbox', default: false },
@@ -566,6 +568,22 @@ class TypeToolBase extends Tool {
 
   onOptionChange(key, value) {
     if (key === 'color') this.colorPinned = true;
+    /*
+     * The last row of the font list is the catalogue, not a font. Resolve it
+     * before anything else looks at the value — otherwise the sentinel reaches
+     * `t.font` and the layer's family becomes the words "Browse Google Fonts".
+     */
+    if (key === 'font' && value === BROWSE_FONTS) {
+      const previous = this.state.font;
+      this.state.font = previous;
+      resolveFontChoice(value, previous).then((picked) => {
+        if (!picked) { app.emit('tool-options', this); return; }
+        this.state.font = picked;
+        this.onOptionChange('font', picked);
+        app.emit('tool-options', this);
+      });
+      return;
+    }
     if (key === 'font' || key === 'weight' || key === 'italic') this.warmFont();
 
     const doc = this.doc;
