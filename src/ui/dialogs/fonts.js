@@ -265,7 +265,13 @@ export async function showFontsDialog(opts = {}) {
         onclick: () => { query = ''; category = ''; scope = 'all'; search.value = ''; paintChips(); rebuild(); },
       }),
     );
-    footer.textContent = `${rows.length.toLocaleString()} of ${catalogSize().toLocaleString()} families`
+    // The pool is the catalogue plus the built-ins, so "of N" only makes sense
+    // against that total — and only when something is actually filtering.
+    const total = catalogSize() + FONT_FAMILIES.length;
+    const filtered = query || category || scope !== 'all';
+    footer.textContent = (filtered
+      ? `${rows.length.toLocaleString()} of ${total.toLocaleString()} families`
+      : `${rows.length.toLocaleString()} families`)
       + ` · ${installedIds.size} downloaded`;
     scroller.scrollTop = 0;
     render();

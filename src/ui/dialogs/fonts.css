@@ -18,6 +18,12 @@
 .pkf-search { flex: 2 1 0; }
 .pkf-sample { flex: 1 1 0; }
 
+/*
+ * `display` beats the `hidden` attribute, so anything laid out with flex has to
+ * opt back out explicitly or it shows through every time it is "hidden".
+ */
+.pkf-strip[hidden], .pkf-empty[hidden], .pkf-row[hidden] { display: none; }
+
 .pkf-strip {
   display: flex;
   align-items: center;

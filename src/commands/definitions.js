@@ -1876,6 +1876,35 @@ registerCommands([
   { id: 'window.workspace.photography', label: 'Photography', run: () => applyWorkspace('photography') },
   { id: 'window.workspace.reset', label: 'Reset Workspace', run: resetWorkspace },
 
+  {
+    id: 'type.fonts',
+    label: 'Manage Fonts…',
+    run: async () => {
+      const { showFontsDialog } = await import('../ui/dialogs/fonts.js');
+      const id = await showFontsDialog({ initial: app.tool && app.tool.state ? app.tool.state.font : '' });
+      if (!id) return;
+      // Applied to the selected text layers when there are any, and otherwise
+      // left as the Type tool's next-layer default — the same rule the options
+      // bar already follows.
+      const doc = D();
+      const layers = doc ? doc.selectedLayers().filter((l) => l.text) : [];
+      if (layers.length) {
+        const { rasterizeTextLayer } = await import('../text/text-render.js');
+        doc.beginEdit(layers);
+        for (const l of layers) {
+          l.text.font = id;
+          delete l.text.fontFamily;
+          const cv = await rasterizeTextLayer(l, doc);
+          if (cv) l.canvas = cv;
+        }
+        doc.commit('Change Font');
+      } else if (app.tool && app.tool.state && 'font' in app.tool.state) {
+        app.tool.state.font = id;
+        app.emit('tool-options', app.tool);
+      }
+    },
+  },
+
   /* --- Help ------------------------------------------------------- */
   {
     /*
@@ -2116,6 +2145,8 @@ export const MENU_TREE = [
   {
     label: 'Type',
     items: [
+      'type.fonts',
+      '---',
       {
         label: 'Anti-Alias',
         items: ['type.antialias.none', 'type.antialias.sharp', 'type.antialias.crisp', 'type.antialias.strong', 'type.antialias.smooth'],
