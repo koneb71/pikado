@@ -316,6 +316,32 @@ and enabled state come from one place and cannot disagree with the menu bar.
 Items that cannot apply right now are dropped rather than shown greyed, and the
 separators around them close up.
 
+## Things line up
+
+Drag a layer, pull out a selection, draw a shape, slide a crop box or move a
+transform box, and it catches on what is near it: the guides you placed, the
+document's own edges and centre, the grid, and the edges and centres of the
+other layers. When two candidates are equally close a guide beats a document
+edge beats a neighbouring layer beats the grid — otherwise a guide sitting one
+unit off a grid line would be unreachable. Hold <kbd>Ctrl</kbd> to place
+something exactly where you dropped it, or turn the whole thing off with
+<kbd>Shift</kbd>+<kbd>Ctrl</kbd>+<kbd>;</kbd>.
+
+Magenta lines show what the drag is currently lined up with, and if it lines up
+with three things at once you see all three. They are drawn from what the
+solver reports it aligned, so they cannot claim an alignment that did not
+happen.
+
+The tolerance is six *screen* pixels, converted to document units by the
+caller. That distinction is the whole feature: a fixed document-space tolerance
+is an invisible twitch at 800% zoom and a sixty-unit leap at 10%.
+
+Each drag snaps the thing it is actually moving — a corner being pulled out
+snaps as a point, a box being slid snaps as a rectangle, so its far edge
+catches a guide as readily as its near one. A rotated crop box and a rotated or
+skewed transform deliberately do not snap: they work in their own space, and a
+guide is a line in the document's.
+
 ## Architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full API contract. The short
@@ -324,7 +350,7 @@ version:
 ```
 src/
   core/        document, layer, selection, history, colour, blend modes,
-               smart objects, app singleton
+               smart objects, snapping, app singleton
   render/      compositor, viewport, GPU blend shader, GPU blur
   paint/       brush engine, patterns, gradients
   tools/       one module per toolbar group

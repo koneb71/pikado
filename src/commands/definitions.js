@@ -1174,16 +1174,19 @@ const DONE = [
   'Type layers with warping, vector paths and live shape layers',
   'Free transform with scale, rotate, skew, distort, perspective and warp',
   'Snapshot undo history, guides, grid, rulers and quick mask',
+  'Snapping and smart guides across every drag, with Ctrl to override',
+  'Select Subject and the Select and Mask workspace, on a GrabCut segmenter',
+  'Camera Raw develop controls and a frame-animation timeline',
+  'Colour management with soft proofing and gamut warning',
+  'Slices and notes',
   'Open and save .pkd projects; import/export PSD, PNG, JPG, WebP, GIF and SVG',
   'Non-destructive smart objects: embedded contents, re-editable smart filters and transforms',
 ];
 
 const NOT_DONE = [
-  'CMYK, Lab, Indexed and Duotone colour modes; 16- and 32-bit depth',
-  'Colour management, soft proofing and gamut warning',
-  'Select Subject and Select and Mask (no bundled segmentation model)',
-  'Slices, notes, smart guides and layer-edge overlays',
-  'Timeline/animation, Camera Raw, 3D and panorama merging',
+  'CMYK, Lab, Indexed and Duotone document modes; 16- and 32-bit depth',
+  'A standing layer-edge overlay (edges show while dragging, not at rest)',
+  '3D and panorama merging',
   'Cloud documents, plug-ins and scripting',
 ];
 

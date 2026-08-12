@@ -26,9 +26,12 @@ are relative and **must include the `.js` extension**.
    be.** A layer can hold a compact `tile` instead: its pixels at their natural
    size plus where they sit. Reading `.canvas` materialises the tile and gives up
    the compact form, so anything on a hot path — `snapshot()`, `thumbnail()`,
-   `contentBounds()`, `memoryUse()`, the compositor's fast path — must go through
-   `layer.tile` instead, or the whole document expands on the first commit or the
-   first frame. A 60-layer 4000×3000 PSD opens in 99 MB compact and 3.6 GB
+   `contentBounds()`, `memoryUse()`, hit testing, the compositor's fast path —
+   must go through `layer.tile` instead, or the whole document expands on the
+   first commit or the first frame. Caches keyed on a layer's pixels must key on
+   `layer.pixelKey()`, never on `layer.canvas`: reading the key would otherwise
+   be what expands the layer. Snapping measures every layer in the document on
+   every drag, so this is not hypothetical. A 60-layer 4000×3000 PSD opens in 99 MB compact and 3.6 GB
    expanded, so this is the difference between the file opening and not.
 4. **A layer's canvas may be SHARED with another layer.** `beginEdit()` clones
    before any write, which is what makes sharing safe — the PSD importer hands
@@ -237,6 +240,54 @@ thresholded at 127, so every output byte is 0 or 255. (It used to set
 `imageSmoothingEnabled`, which has no effect on the path rasteriser at all — the
 option silently did nothing. Marquee/lasso "Anti-alias" off is now real.)
 `rectMask` and `ellipseMask` do not forward opts; they are always antialiased.
+
+## Snapping — `src/core/snap.js`, `snapping.js`, `layer-bounds.js`
+
+Three modules, in order of how much they know.
+
+**`snap.js` is pure.** A rectangle and a bag of candidate lines in, an
+adjustment out. No DOM, no `app`, no viewport.
+
+```
+solveSnap(rect, targets, opts) -> {dx, dy, lines}
+snapPosition(pos, 'h'|'v', targets, threshold) -> {pos, lines}
+snapThreshold(scale, screenPixels = 6) -> number
+targets: {guides, gridSize, docWidth, docHeight, rects}
+opts:    {threshold, axes: 'both'|'x'|'y'}      // threshold in DOCUMENT units
+lines:   [{axis: 'h'|'v', pos, kind: 'guide'|'document'|'layer'|'grid'}]
+```
+
+It checks the leading edge, centre and trailing edge on each axis. Distance
+decides first; ties go to the lower `KIND_PRIORITY` — guide, document, layer,
+grid — so a guide one unit off a grid line stays reachable. The returned
+`lines` are every candidate the winning correction *exactly* aligns, which is
+what the overlay draws.
+
+**The threshold is in document units and the caller converts.** That is not a
+detail. Six document units is an invisible twitch at 800% zoom and a
+sixty-unit leap at 10%. Callers pass `snapThreshold(app.viewport.scale)`.
+
+**`snapping.js` binds it to the editor.** Gathers a document's targets and
+applies the two rules every call site shares: `View > Snap` off means nothing
+snaps, and Ctrl/Cmd suspends snapping for a drag.
+
+```
+snapRect(rect, doc, opts) -> {dx, dy, lines}      // a box being carried
+snapPoint(x, y, doc, opts) -> {x, y}              // a corner being pulled out
+snapGuidePos(pos, axis, doc, opts) -> number      // a guide being dragged
+snapTargets(doc, opts) snapSuspended(event)
+snapLines() clearSnapLines()
+opts: {exclude, excludeGuide, layers, event, axes}
+```
+
+`exclude` and `excludeGuide` matter: the thing being dragged must not be among
+its own candidates, or it offers its current position as the nearest target and
+the drag sticks. Every solve records its lines for the canvas overlay, so a
+tool only has to call `clearSnapLines()` when its drag ends.
+
+**`layer-bounds.js`** is the cache behind all of it — `layerBounds(layer)`,
+`peekBounds(layer)`, `cacheShiftedBounds(...)`, `layersBounds(layers)` — keyed
+on `layer.pixelKey()`, per golden rule 3.
 
 ## Segmentation and edge refinement — `src/select/`
 
@@ -1312,6 +1363,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/render/{fast-blur,gpu-blend}.js`
 - `src/ui/{welcome,canvas-menu,brand,curve-editor,gradient-editor}.js`
 - `src/core/smart.js`
+- `src/core/{snap,snapping,layer-bounds}.js`
 - `src/core/animation.js`, `src/ui/panels/timeline.js`
 - `src/color/{icc,manage}.js`
 - `src/ai/*` + `src/ui/dialogs/{ai-key,ai-consent,generative-fill}.js`
