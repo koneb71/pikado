@@ -1,6 +1,7 @@
 import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { Selection } from '../core/selection.js';
+import { snapPoint, snapRect, clearSnapLines } from '../core/snapping.js';
 import { createCanvas, ctx2dRead, clamp } from '../core/util.js';
 import { sampleBilinear } from '../filters/registry.js';
 import { OVERLAY } from '../ui/brand.js';
@@ -370,13 +371,21 @@ class CropTool extends Tool {
 
   onPointerMove(e) {
     if (!this.mode) return;
+    /*
+     * Each mode snaps the thing it is actually moving. Pulling a corner out
+     * snaps that corner; sliding the whole box snaps the box, so its far edge
+     * catches a guide as readily as its near one. Rotating snaps nothing —
+     * there is no straight edge to catch.
+     */
     if (this.mode === 'new') this.dragNew(e);
     else if (this.mode === 'move') {
-      this.rect = {
+      const moved = {
         ...this.startRect,
         x: this.startRect.x + (e.x - this.startPt.x),
         y: this.startRect.y + (e.y - this.startPt.y),
       };
+      const snap = snapRect(moved, this.doc, { event: e });
+      this.rect = { ...moved, x: moved.x + snap.dx, y: moved.y + snap.dy };
     } else if (this.mode === 'rotate') {
       const a = Math.atan2(e.y - this.rotCenter.y, e.x - this.rotCenter.x);
       const lim = (MAX_STRAIGHTEN * Math.PI) / 180;
@@ -390,8 +399,9 @@ class CropTool extends Tool {
   dragNew(e) {
     const x0 = this.startPt.x;
     const y0 = this.startPt.y;
-    let dx = e.x - x0;
-    let dy = e.y - y0;
+    const p = snapPoint(e.x, e.y, this.doc, { event: e });
+    let dx = p.x - x0;
+    let dy = p.y - y0;
     let ratio = this.ratioValue();
     if (!ratio && e.shiftKey) ratio = 1;
     if (ratio) {
@@ -409,7 +419,14 @@ class CropTool extends Tool {
 
   resizeTo(e) {
     const sr = this.startRect;
-    const l0 = this.toLocal(e.x, e.y, sr);
+    /*
+     * Only while the box is square to the document. `toLocal` works in the
+     * box's rotated space, and a guide is a line in document space — snapping
+     * the cursor first and rotating it afterwards would put the edge somewhere
+     * near the guide rather than on it, which is worse than not snapping.
+     */
+    const p = this.angle ? e : snapPoint(e.x, e.y, this.doc, { event: e });
+    const l0 = this.toLocal(p.x, p.y, sr);
     let l = -sr.width / 2;
     let r = sr.width / 2;
     let t = -sr.height / 2;
@@ -451,6 +468,7 @@ class CropTool extends Tool {
 
   onPointerUp() {
     if (!this.mode) return;
+    clearSnapLines();
     if (this.mode === 'new' && (this.rect.width < 2 || this.rect.height < 2)) {
       this.rect = { ...this.startRect };
     }
@@ -481,6 +499,7 @@ class CropTool extends Tool {
   }
 
   cancel() {
+    clearSnapLines();
     this.syncDoc(true);
     this.app.requestRender();
   }

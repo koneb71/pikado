@@ -6,6 +6,7 @@ import {
 } from '../core/smart.js';
 import { createCanvas, cloneCanvas, clamp, deg2rad, rad2deg } from '../core/util.js';
 import { LayerType } from '../core/layer.js';
+import { snapRect, snapPoint, clearSnapLines } from '../core/snapping.js';
 import { OVERLAY } from '../ui/brand.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
 
@@ -801,17 +802,53 @@ export function transformPointerUp() {
   const s = app.transformSession;
   if (!s || !s.drag) return false;
   s.drag = null;
+  clearSnapLines();
   app.emit('tool-options', app.tool);
   return true;
 }
 
 /* --- individual drag behaviours ----------------------------------- */
 
+/**
+ * Is the transform still square to the document?
+ *
+ * A guide is a line in document space. Once the box is rotated or skewed its
+ * edges are not, so snapping the cursor and rotating the result afterwards
+ * lands the edge somewhere near the guide instead of on it — worse than
+ * leaving it alone. Freeform and warp move points individually and never have
+ * a straight edge to offer.
+ */
+function squareToDoc(s) {
+  const p = s.params || {};
+  return !s.warp && !s.freeform && !p.angle && !p.skewX && !p.skewY;
+}
+
+/**
+ * The document-space rectangle the box currently covers, given a translation
+ * on top of the drag's starting parameters.
+ */
+function movedFrame(s, params, dx, dy) {
+  const m = matrixFrom(s, { ...params, tx: params.tx + dx, ty: params.ty + dy }, s.drag.pivotRel);
+  const pts = cornersOfRect(s.bounds).map((c) => applyM(m, c));
+  const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+  const x = Math.min(...xs), y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
 function dragMove(s, e) {
   const d = s.drag;
   let dx = e.x - d.startDoc.x, dy = e.y - d.startDoc.y;
   if (e.shiftKey) {
     if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0;
+  }
+  if (squareToDoc(s)) {
+    // Snap the box, not the cursor: sliding it left should let its right edge
+    // catch a guide just as readily as its left one.
+    const snap = snapRect(movedFrame(s, d.params, dx, dy), app.activeDoc, {
+      exclude: s.layers, event: e, axes: e.shiftKey ? (dx ? 'x' : 'y') : 'both',
+    });
+    dx += snap.dx;
+    dy += snap.dy;
   }
   if (s.warp) {
     const grids = warpGrids(s);
@@ -869,7 +906,14 @@ function dragScale(s, e, isCorner) {
   const d = s.drag;
   const p = pivotFor(s, d.pivotRel);
   const inv = frameInverse(s, d.params, d.pivotRel);
-  const q = inv.transformPoint(new DOMPoint(e.x, e.y));
+  /*
+   * The handle you are pulling is what snaps. Ctrl is not the escape hatch
+   * here the way it is elsewhere — mid-transform it already means distort, so
+   * it never reaches this function. View > Snap is the way out, which is also
+   * how Photoshop behaves during a transform.
+   */
+  const at = squareToDoc(s) ? snapPoint(e.x, e.y, app.activeDoc, { exclude: s.layers }) : e;
+  const q = inv.transformPoint(new DOMPoint(at.x, at.y));
   const src = isCorner ? cornersOfRect(s.bounds)[d.index] : edgeMidsOfRect(s.bounds)[d.index];
   const r0x = src.x - p.x, r0y = src.y - p.y;
 

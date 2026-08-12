@@ -1,6 +1,7 @@
 import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { Selection } from '../core/selection.js';
+import { snapPoint, clearSnapLines } from '../core/snapping.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
 
 /**
@@ -262,8 +263,10 @@ class MarqueeShapeTool extends SelectionTool {
     this.square = false;
     this.fromCenter = false;
     this.dragMode = this.modeFor(e);
-    this.start = { x: e.x, y: e.y };
-    this.cur = { x: e.x, y: e.y };
+    // Both corners snap. Anchoring the first one on a guide is half the reason
+    // you placed the guide.
+    this.start = snapPoint(e.x, e.y, this.doc, { event: e });
+    this.cur = { ...this.start };
     if (this.state.style === 'size') this.preview();
   }
 
@@ -273,7 +276,12 @@ class MarqueeShapeTool extends SelectionTool {
     // "from centre" rather than the boolean mode picked at pointer-down.
     this.square = e.shiftKey;
     this.fromCenter = e.altKey;
-    this.cur = { x: e.x, y: e.y };
+    /*
+     * Snap the cursor, then let the constraints run on the snapped point.
+     * The other way round, "square" would square a rectangle that snapping
+     * then pulled back out of square.
+     */
+    this.cur = snapPoint(e.x, e.y, this.doc, { event: e });
     if (Math.abs(e.x - this.start.x) > 0.5 || Math.abs(e.y - this.start.y) > 0.5) this.moved = true;
     this.preview();
   }
@@ -281,6 +289,7 @@ class MarqueeShapeTool extends SelectionTool {
   onPointerUp() {
     if (!this.dragging) return;
     this.dragging = false;
+    if (clearSnapLines()) app.requestRender();
     const doc = this.doc;
     if (!doc) return;
     const rect = this.currentRect();
@@ -298,6 +307,7 @@ class MarqueeShapeTool extends SelectionTool {
   cancel() {
     if (!this.dragging) return;
     this.dragging = false;
+    clearSnapLines();
     this.start = this.cur = null;
     this.preview();
   }

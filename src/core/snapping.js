@@ -114,6 +114,21 @@ export function snapRect(rect, doc, opts = {}) {
 }
 
 /**
+ * Snap the point under the cursor.
+ *
+ * What the tools that drag a rectangle *out* need — marquee, shape, crop, and
+ * the transform handles. There the thing being positioned is one corner or one
+ * edge, not a box being carried around, so snapping the cursor is both simpler
+ * and what you actually want: the edge you are pulling lands on the guide.
+ *
+ * @returns {{x:number, y:number}}
+ */
+export function snapPoint(x, y, doc, opts = {}) {
+  const r = snapRect({ x, y, width: 0, height: 0 }, doc, opts);
+  return { x: x + r.dx, y: y + r.dy };
+}
+
+/**
  * Snap a single position on one axis — what dragging a guide needs, as opposed
  * to a whole rectangle.
  *

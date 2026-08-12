@@ -12,6 +12,7 @@
 import { app } from '../core/app.js';
 import { registerTool } from './base.js';
 import { LayerType } from '../core/layer.js';
+import { snapPoint, clearSnapLines } from '../core/snapping.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
 import { getCommand, labelOf, formatAccel, runCommand } from '../commands/registry.js';
 import { drawPathOverlay, smoothSubpath, findShapeAt } from '../vector/path.js';
@@ -210,8 +211,8 @@ class ShapeToolBase extends VectorTool {
 
   onPointerDown(e) {
     if (!this.doc) return;
-    this.start = { x: e.x, y: e.y };
-    this.cur = { x: e.x, y: e.y };
+    this.start = snapPoint(e.x, e.y, this.doc, { event: e });
+    this.cur = { ...this.start };
     this.last = { x: e.x, y: e.y };
     this.mods = { shiftKey: e.shiftKey, altKey: e.altKey };
     this.dragging = true;
@@ -226,7 +227,9 @@ class ShapeToolBase extends VectorTool {
       this.start.y += e.y - this.last.y;
     }
     this.last = { x: e.x, y: e.y };
-    this.cur = { x: e.x, y: e.y };
+    // Snap first, constrain after — Shift should square the snapped corner,
+    // not have snapping pull a squared one back out of true.
+    this.cur = snapPoint(e.x, e.y, this.doc, { event: e });
     this.mods = { shiftKey: e.shiftKey, altKey: e.altKey };
     this.preview = this.buildSubpaths();
     app.requestRender();
@@ -236,6 +239,7 @@ class ShapeToolBase extends VectorTool {
     if (!this.dragging) return;
     this.dragging = false;
     this.spaceDown = false;
+    clearSnapLines();
     const subs = this.preview;
     this.preview = null;
     if (subs && subs.length) this.outputSubpaths(subs, this.label, this.shapeMeta());
@@ -269,6 +273,7 @@ class ShapeToolBase extends VectorTool {
   cancel() {
     this.dragging = false;
     this.spaceDown = false;
+    clearSnapLines();
     this.preview = null;
     this.start = null;
     this.cur = null;

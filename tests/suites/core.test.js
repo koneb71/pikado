@@ -879,3 +879,103 @@ suite('core / dragging a guide snaps it to the document, not to itself', async (
     app.gridSize = was.grid;
   }
 });
+
+suite('core / the other drag tools snap too', async (t) => {
+  const { app } = await import('/src/core/app.js');
+  await import('/src/tools/marquee.js');
+  await import('/src/tools/crop.js');
+  await import('/src/tools/shape.js');
+  const { startTransform, transformPointerDown, transformPointerMove, transformPointerUp, cancelTransform } =
+    await import('/src/tools/transform.js');
+  const { createRasterLayer } = await import('/src/core/layer.js');
+
+  const was = { snap: app.snap, grid: app.gridSize, tool: app.tool && app.tool.id };
+  const base = { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, button: 0 };
+  const drag = (from, to, mods = {}) => {
+    const a = { ...base, ...mods, x: from[0], y: from[1] };
+    const b = { ...base, ...mods, x: to[0], y: to[1] };
+    app.tool.onPointerDown(a);
+    app.tool.onPointerMove(b);
+    return b;
+  };
+
+  try {
+    app.snap = true;
+    app.gridSize = 0;   // guides only, so a stray grid line cannot explain a pass
+
+    // --- rectangular marquee: the corner you drag out ------------------
+    let doc = t.doc(600, 400, '#ffffff', 'snap-marquee');
+    doc.guides = [{ axis: 'v', pos: 300 }];
+    app.setTool('marquee-rect');
+    let up = drag([100, 100], [297, 200]);
+    app.tool.onPointerUp(up);
+    const sel = doc.selection.bounds();
+    /*
+     * Verified to fail by dropping the snapPoint call in
+     * MarqueeShapeTool.onPointerMove: the selection ends at 297.
+     */
+    t.eq(sel && sel.x + sel.width, 300, 'a marquee ends on the guide');
+
+    // --- crop: the whole box ------------------------------------------
+    // The crop box starts covering the document, so a drag inside it slides
+    // the box rather than pulling a new one out — which is the branch worth
+    // pinning, since it snaps as a rectangle rather than as a cursor.
+    doc = t.doc(600, 400, '#ffffff', 'snap-crop');
+    doc.guides = [{ axis: 'v', pos: 305 }];
+    app.setTool('crop');
+    drag([300, 200], [310, 200]);
+    /*
+     * Slid right by 10 its centre sits at 310, and the guide at 305 is nearer
+     * than any document edge — 5 away rather than 10. Verified to fail by
+     * dropping the snapRect call from the 'move' branch of
+     * CropTool.onPointerMove: the box stops at 10.
+     */
+    t.eq(Math.round(app.tool.rect.x), 5, 'so does a crop box being slid across');
+    app.tool.cancel();
+
+    // --- shape: the corner you drag out -------------------------------
+    doc = t.doc(600, 400, '#ffffff', 'snap-shape');
+    doc.guides = [{ axis: 'v', pos: 300 }];
+    app.setTool('rectangle');
+    up = drag([100, 100], [297, 200]);
+    app.tool.onPointerUp(up);
+    const drawn = doc.layers[0];
+    const b = drawn.contentBounds();
+    t.ok(b && Math.abs(b.x + b.width - 300) <= 1, `a shape is drawn to the guide (right edge ${b && Math.round(b.x + b.width)})`);
+
+    // --- free transform: the whole box --------------------------------
+    doc = t.doc(600, 400, '#ffffff', 'snap-transform');
+    doc.guides = [{ axis: 'v', pos: 300 }];
+    const l = createRasterLayer(600, 400, 'block');
+    const c = l.canvas.getContext('2d');
+    c.fillStyle = '#ff0000';
+    c.fillRect(100, 100, 80, 80);
+    doc.addLayer(l, { above: doc.layers[0] });
+    doc.selectedLayerIds = [l.id];
+    doc.activeLayerId = l.id;
+    app.setTool('move');
+    t.ok(startTransform(doc, { mode: 'free' }), 'a transform session starts');
+    const view = app.viewport;
+    // hitTest works in screen space, so the event has to carry real screen
+    // coordinates or the grab reads as "outside the box" and rotates instead.
+    const ev = (x, y) => { const p = view.toScreen(x, y); return { ...base, x, y, sx: p.x, sy: p.y }; };
+    // Off the exact centre — the pivot marker lives there and claims the grab.
+    // Sliding right by 118 would leave the trailing edge on 298, two short.
+    transformPointerDown(ev(120, 160), view);
+    t.eq(app.transformSession.drag.kind, 'move', 'grabbing the middle of the box reads as a move');
+    transformPointerMove(ev(238, 160), view);
+    const q = app.transformSession.quad;
+    const right = Math.max(...q.map((p) => p.x));
+    /*
+     * Verified to fail by removing the squareToDoc branch from dragMove: the
+     * box stops at 298.
+     */
+    t.eq(Math.round(right), 300, 'and a transform box lands its far edge on the guide');
+    transformPointerUp();
+    cancelTransform();
+  } finally {
+    app.snap = was.snap;
+    app.gridSize = was.grid;
+    if (was.tool) app.setTool(was.tool);
+  }
+});
