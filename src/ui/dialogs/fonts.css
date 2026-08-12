@@ -1,0 +1,133 @@
+/*
+ * The font browser.
+ *
+ * The list is windowed, which is what the fixed row height is in aid of: rows
+ * are recycled nodes positioned by transform, so any height that depends on
+ * content would need measuring per row and defeat the whole approach.
+ */
+
+.pkf-dialog .pk-dialog-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;   /* only the list scrolls */
+  gap: 8px;
+}
+
+.pkf-tools { display: flex; flex-direction: column; gap: 6px; }
+.pkf-tools-row { display: flex; gap: 6px; }
+.pkf-search { flex: 2 1 0; }
+.pkf-sample { flex: 1 1 0; }
+
+.pkf-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+  background: var(--s1);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+/* --- the list ------------------------------------------------------ */
+
+.pkf-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 240px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+  background: var(--s1);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.pkf-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Holds the scroll height; the rows themselves are moved on top of it. */
+.pkf-spacer { width: 1px; }
+
+.pkf-pool {
+  position: absolute;
+  inset: 0 0 auto 0;
+  will-change: transform;
+}
+
+.pkf-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--hair-soft, rgba(255, 255, 255, .04));
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pkf-row:hover { background: var(--s2); }
+.pkf-row.active { background: var(--accent-soft, var(--accent)); color: #fff; }
+.pkf-row.active .pkf-spec { color: inherit; }
+
+.pkf-name { flex: 0 0 190px; font-size: var(--fs-sm); }
+
+.pkf-spec {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 21px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+
+/*
+ * A specimen still loading keeps its text rather than going blank, so the row
+ * never changes height and the eye has something to track while the face swaps
+ * in underneath it.
+ */
+.pkf-spec.waiting { opacity: .35; }
+.pkf-spec.unavailable { opacity: .35; font-style: italic; font-size: var(--fs-sm); }
+
+.pkf-action {
+  flex: 0 0 96px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.pkf-tag { font-size: 11px; color: var(--text-faint); }
+.pkf-tag.ok { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* The Get button and the bin stay out of the way until the row is reached. */
+.pkf-get, .pkf-trash { opacity: 0; }
+.pkf-row:hover .pkf-get,
+.pkf-row:hover .pkf-trash,
+.pkf-row.active .pkf-get,
+.pkf-row.active .pkf-trash,
+.pkf-get:focus-visible, .pkf-trash:focus-visible,
+.pkf-get:disabled { opacity: 1; }
+
+.pkf-get { padding: 2px 10px; font-size: 11px; min-width: 54px; }
+
+.pkf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 0;
+  color: var(--text-dim);
+}
+.pkf-empty p { margin: 0; }
+
+.pkf-count {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
