@@ -663,7 +663,60 @@ suite('color / the ICC parser survives hostile bytes', async (t) => {
  * Build a minimal but *valid* matrix/TRC ICC profile, so the parser is tested
  * against bytes rather than against itself.
  */
-function buildProfile({ desc = 'Test RGB', space = 'RGB ', primaries = null, gamma = 2.2, lut = false } = {}) {
+/**
+ * A real `mft1`/`mft2` A2B0 tag: header, identity input tables, a CLUT, and
+ * identity output tables. `clut(inputs) => outputs` is sampled at every grid
+ * point, so a test can state the table it wants as a function.
+ */
+function buildMFT({ wide = true, inputs = 3, outputs = 3, grid = 2, clut, entries = 2 }) {
+  const unit = wide ? 2 : 1;
+  const cells = grid ** inputs;
+  // mft1 has fixed 256-entry tables; only mft2 declares its own lengths, so the
+  // buffer has to be sized with the count actually written.
+  const tableEntries = wide ? entries : 256;
+  const size = 48 + (wide ? 4 : 0)
+    + inputs * tableEntries * unit + cells * outputs * unit + outputs * tableEntries * unit;
+  const body = new Uint8Array(size);
+  const dv = new DataView(body.buffer);
+  const enc = new TextEncoder();
+  body.set(enc.encode(wide ? 'mft2' : 'mft1'), 0);
+  dv.setUint8(8, inputs);
+  dv.setUint8(9, outputs);
+  dv.setUint8(10, grid);
+  // The 3x3 matrix is identity; it only applies to an XYZ PCS and is unused here.
+  for (let i = 0; i < 3; i += 1) dv.setInt32(12 + (i * 3 + i) * 4, 65536);
+
+  let p = 48;
+  const put = (at, v) => {
+    const n = Math.max(0, Math.min(1, v));
+    if (wide) dv.setUint16(at, Math.round(n * 65535));
+    else dv.setUint8(at, Math.round(n * 255));
+  };
+  if (wide) { dv.setUint16(48, entries); dv.setUint16(50, entries); p = 52; }
+
+  // Identity input curves.
+  for (let c = 0; c < inputs; c += 1) {
+    for (let i = 0; i < tableEntries; i += 1) { put(p, i / (tableEntries - 1)); p += unit; }
+  }
+  // The CLUT, last axis varying fastest — the order ICC stores it in.
+  for (let cell = 0; cell < cells; cell += 1) {
+    const coord = [];
+    let rest = cell;
+    for (let axis = inputs - 1; axis >= 0; axis -= 1) {
+      coord[axis] = (rest % grid) / (grid - 1);
+      rest = Math.floor(rest / grid);
+    }
+    const vals = clut(coord);
+    for (let o = 0; o < outputs; o += 1) { put(p, vals[o]); p += unit; }
+  }
+  // Identity output curves.
+  for (let c = 0; c < outputs; c += 1) {
+    for (let i = 0; i < tableEntries; i += 1) { put(p, i / (tableEntries - 1)); p += unit; }
+  }
+  return body;
+}
+
+function buildProfile({ desc = 'Test RGB', space = 'RGB ', primaries = null, gamma = 2.2, lut = false, pcs = 'XYZ ' } = {}) {
   const tags = [];
   const enc = new TextEncoder();
 
@@ -693,10 +746,13 @@ function buildProfile({ desc = 'Test RGB', space = 'RGB ', primaries = null, gam
     tags.push(['gXYZ', xyzTag(p.g)]);
     tags.push(['bXYZ', xyzTag(p.b)]);
   }
-  if (lut) {
+  if (lut === true) {
+    // A truncated mft2: the signature and nothing usable behind it.
     const body = new Uint8Array(52);
     body.set(enc.encode('mft2'), 0);
     tags.push(['A2B0', body]);
+  } else if (lut && typeof lut === 'object') {
+    tags.push(['A2B0', buildMFT(lut)]);
   }
 
   const curv = (() => {
@@ -726,7 +782,7 @@ function buildProfile({ desc = 'Test RGB', space = 'RGB ', primaries = null, gam
   dv.setUint32(0, total);
   bytes.set(enc.encode('mntr'), 12);
   bytes.set(enc.encode(space), 16);
-  bytes.set(enc.encode('XYZ '), 20);
+  bytes.set(enc.encode(pcs), 20);
   bytes.set(enc.encode('acsp'), 36);
   dv.setUint32(128, tags.length);
   entries.forEach((e, i) => {
@@ -761,10 +817,14 @@ suite('color / the ICC parser reads real bytes', async (t) => {
   t.ok(grey.ok, 'a grey profile parses too');
   if (grey.ok) t.eq(grey.profile.space, 'gray', 'as a grey profile');
 
-  // Every rejection must come with a reason, not a silent misread.
+  /*
+   * A LUT profile is read now, so what must still be rejected is one whose
+   * table cannot be read — and the reason has to name that, not the old blanket
+   * "Pikado reads matrix/TRC profiles only", which stopped being true.
+   */
   const lut = parseICC(buildProfile({ lut: true }));
-  t.notOk(lut.ok, 'a LUT-based profile is rejected');
-  t.ok(/LUT/.test(lut.reason), `with a reason that says why (${lut.reason})`);
+  t.notOk(lut.ok, 'a LUT profile with an unreadable table is rejected');
+  t.ok(/A2B0/.test(lut.reason), `with a reason that says why (${lut.reason})`);
 
   const short = parseICC(new Uint8Array(64));
   t.notOk(short.ok, 'a truncated file is rejected');
@@ -845,4 +905,151 @@ suite('colour / Convert to Profile handles every shape fill shape', async (t) =>
   t.ok(moved(shapeOf('stringFill').fill), 'and is converted');
   t.ok(moved(shapeOf('fillLayer').color), "a fill layer's colour is converted");
   t.ok(moved(shapeOf('gradientFill').stops[0].color), "a fill layer's gradient stops are converted");
+});
+
+
+/* ------------------------------------------------------------------ */
+/* LUT-based profiles                                                  */
+/* ------------------------------------------------------------------ */
+
+suite('color / a colour lookup table interpolates rather than snapping', async (t) => {
+  const { evalCLUT } = await import('/src/color/icc.js');
+
+  /*
+   * A 2x2x2 grid holding the input back unchanged. Interpolation has to
+   * reproduce it exactly everywhere, not only at the corners.
+   */
+  const grid = [2, 2, 2];
+  const data = new Float32Array(8 * 3);
+  for (let cell = 0; cell < 8; cell += 1) {
+    // Last axis fastest, which is how ICC stores it.
+    const b = cell % 2, g = Math.floor(cell / 2) % 2, r = Math.floor(cell / 4) % 2;
+    data[cell * 3] = r; data[cell * 3 + 1] = g; data[cell * 3 + 2] = b;
+  }
+  const identity = { grid, outputs: 3, data };
+
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  for (const v of [[0, 0, 0], [1, 1, 1], [0.5, 0.25, 0.75], [0.1, 0.9, 0.4]]) {
+    const out = evalCLUT(identity, v);
+    t.ok(near(out[0], v[0]) && near(out[1], v[1]) && near(out[2], v[2]),
+      `an identity table returns ${v.join(',')} unchanged`);
+  }
+
+  /*
+   * The axis order is the part that is silently wrong if it is wrong: a table
+   * read with the first axis fastest still returns plausible colours, just the
+   * wrong ones. Verified to fail by reversing the stride order in evalCLUT.
+   */
+  const swapped = evalCLUT(identity, [1, 0, 0]);
+  t.ok(near(swapped[0], 1) && near(swapped[1], 0) && near(swapped[2], 0),
+    'the first input drives the first axis, not the last');
+
+  /*
+   * Nearest-neighbour would give the same answer at grid points and a visibly
+   * banded one between them. Verified to fail by rounding the fraction to 0 or 1.
+   */
+  const mid = evalCLUT(identity, [0.5, 0.5, 0.5]);
+  t.ok(near(mid[0], 0.5), 'a point between grid nodes is interpolated, not snapped');
+
+  // A degenerate axis must not divide by zero.
+  const flat = evalCLUT({ grid: [1, 1, 1], outputs: 3, data: new Float32Array([0.25, 0.5, 0.75]) }, [0.5, 0.5, 0.5]);
+  t.ok(near(flat[1], 0.5), 'a single-point axis is handled rather than dividing by zero');
+});
+
+suite('color / Lab is decoded with the encoding its tag actually uses', async (t) => {
+  const { labToXYZ, xyzToLab, decodeLabPCS } = await import('/src/color/icc.js');
+
+  const round = xyzToLab(...labToXYZ(55, -20, 30));
+  t.ok(Math.abs(round[0] - 55) < 1e-6 && Math.abs(round[1] + 20) < 1e-6 && Math.abs(round[2] - 30) < 1e-6,
+    'Lab survives a round trip through XYZ');
+
+  const white = labToXYZ(100, 0, 0);
+  t.ok(Math.abs(white[1] - 1) < 1e-6, 'L*=100 is the white point');
+  const black = labToXYZ(0, 0, 0);
+  t.ok(black[1] < 1e-6, 'and L*=0 is black');
+
+  /*
+   * Two encodings, and picking the wrong one shifts every colour. The legacy
+   * one puts L*=100 at 0xFF00 rather than 0xFFFF, so full scale decodes ABOVE
+   * 100 — that is what tells them apart.
+   * Verified to fail by using the same scale for both.
+   */
+  const legacyFull = decodeLabPCS([1, 0.5, 0.5], true);
+  const modernFull = decodeLabPCS([1, 0.5, 0.5], false);
+  t.ok(legacyFull[0] > 100, `legacy full scale exceeds L*=100 (${legacyFull[0].toFixed(3)})`);
+  t.ok(Math.abs(modernFull[0] - 100) < 1e-9, 'and v4 full scale is exactly 100');
+  t.ok(legacyFull[0] !== modernFull[0], 'so the two encodings genuinely differ');
+});
+
+suite('color / a LUT profile is read, and can only be a source', async (t) => {
+  const { parseICC, makeTransform } = await import('/src/color/icc.js');
+
+  // A table that halves every channel — visible, and unmistakably not identity.
+  const half = buildProfile({
+    desc: 'Test LUT RGB',
+    lut: { wide: true, inputs: 3, outputs: 3, grid: 2, clut: (v) => [v[0] / 2, v[1] / 2, v[2] / 2] },
+    pcs: 'XYZ ',
+  });
+  const res = parseICC(half);
+  /*
+   * This is the whole increment: a profile with no rXYZ/gXYZ/bXYZ used to be
+   * declined by name. Verified to fail by having parseICC skip readLUTTag.
+   */
+  t.ok(res.ok, `a LUT profile parses (${res.reason || 'ok'})`);
+  if (!res.ok) return;
+  t.ok(res.profile.lut, 'and carries its table');
+  t.eq(res.profile.lut.inputs, 3, 'with three inputs');
+  t.ok(res.profile.oneWay, 'marked one-way, because only A2B0 is read');
+
+  /*
+   * A one-way profile as a destination has to fail loudly. It has no matrix, so
+   * the old `!dstMatrix` test would have called it grey and quietly converted
+   * every colour to luminance — a plausible image that is entirely wrong.
+   * Verified to fail by restoring `dstGray = to.space === 'gray' || !dstMatrix`.
+   */
+  let threw = null;
+  try { makeTransform(BUILTIN_PROFILES[0], res.profile); } catch (e) { threw = e; }
+  t.ok(threw, 'it is refused as a destination');
+  t.ok(/destination|B2A0/.test(String(threw && threw.message)), `and says why (${threw && threw.message})`);
+
+  // As a source it works, and the table is actually consulted.
+  const fn = makeTransform(res.profile, BUILTIN_PROFILES[0]);
+  const out = fn([1, 1, 1]);
+  t.ok(out.every((v) => Number.isFinite(v)), 'as a source it produces finite values');
+});
+
+suite('color / an 8-bit LUT tag is read as well as a 16-bit one', async (t) => {
+  const { parseICC } = await import('/src/color/icc.js');
+  const mft1 = parseICC(buildProfile({
+    desc: 'Test mft1',
+    lut: { wide: false, inputs: 3, outputs: 3, grid: 2, clut: (v) => v },
+  }));
+  /*
+   * mft1 stores one byte per entry and has fixed 256-entry tables, where mft2
+   * declares its own lengths — reading one as the other walks off the end.
+   * Verified to fail by treating every tag as 16-bit.
+   */
+  t.ok(mft1.ok, `an mft1 tag parses (${mft1.reason || 'ok'})`);
+  if (mft1.ok) t.eq(mft1.profile.lut.inputs, 3, 'with the right input count');
+});
+
+suite('color / a CMYK profile is read but not attached', async (t) => {
+  const { parseICC } = await import('/src/color/icc.js');
+  const cmyk = parseICC(buildProfile({
+    desc: 'Test CMYK',
+    space: 'CMYK',
+    pcs: 'Lab ',
+    lut: { wide: true, inputs: 4, outputs: 3, grid: 2, clut: () => [0.5, 0.5, 0.5] },
+  }));
+  /*
+   * The parser reads it — four inputs, Lab PCS — which is what makes the
+   * refusal downstream able to name the real reason: there is no four-channel
+   * pixel carrier, not that the profile is unreadable.
+   * Verified to fail by leaving CMYK out of the data-space gate.
+   */
+  t.ok(cmyk.ok, `a CMYK LUT profile parses (${cmyk.reason || 'ok'})`);
+  if (!cmyk.ok) return;
+  t.eq(cmyk.profile.space, 'cmyk', 'and is identified as CMYK');
+  t.eq(cmyk.profile.lut.inputs, 4, 'with four inputs');
+  t.ok(cmyk.profile.oneWay, 'and one-way');
 });

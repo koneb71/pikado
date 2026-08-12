@@ -29,12 +29,24 @@ import {
  * numbers.
  */
 
-/** Profiles the UI offers, embedded first when the document carries one. */
+/**
+ * Profiles the UI offers as a *destination*, embedded first when the document
+ * carries one.
+ *
+ * A one-way profile is left out. Only its A→B table is read — device to
+ * connection space — so it can be converted out of but never into; offering it
+ * as a destination would be offering a conversion that cannot be performed.
+ */
 export function availableProfiles(doc) {
   const current = doc && doc.profile;
   const list = [...BUILTIN_PROFILES];
-  if (current && current.embedded) list.unshift(current);
+  if (current && current.embedded && !current.oneWay) list.unshift(current);
   return list;
+}
+
+/** Whether a profile can be converted *into*, not merely out of. */
+export function canBeDestination(profile) {
+  return !!profile && !profile.oneWay;
 }
 
 /**
@@ -424,6 +436,20 @@ export async function adoptEmbeddedProfile(doc, fileBytes, { quiet = false } = {
   const result = parseICC(raw);
   if (!result.ok) {
     console.info(`[color] embedded profile ignored: ${result.reason}`);
+    return null;
+  }
+  /*
+   * A CMYK profile now *parses* — its A2B0 table is read like any other — but
+   * it cannot be attached, because a document has no four-channel pixel
+   * carrier to attach it to. Saying so is the point: "CMYK profiles are not
+   * supported" was true of the parser and is no longer, and a user whose file
+   * carries one deserves the actual reason rather than a stale one.
+   */
+  if (result.profile && result.profile.space === 'cmyk') {
+    console.info('[color] embedded CMYK profile read but not attached: Pikado has no CMYK document mode');
+    if (!quiet) {
+      app.toast(`${result.profile.name} is a CMYK profile — Pikado has no CMYK document mode yet, so the image is treated as RGB.`, 'warn', 6000);
+    }
     return null;
   }
   doc.profile = result.profile;

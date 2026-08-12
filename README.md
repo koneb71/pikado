@@ -550,13 +550,28 @@ Stated plainly so you don't find out by clicking:
   background and honestly not well on one that shares its palette. A few brush
   strokes in Select and Mask fix that, which is how GrabCut is designed to be
   used. It has no idea what a person or a cat is.
-- **CMYK and Lab as document modes, and 16-bit.** Colour management is present
-  for RGB and grey (above), but everything is 8-bit internally, CMYK and Lab exist
-  as colour maths rather than as modes, and 16-bit PSDs open by converting down.
-  LUT-based ICC profiles — which is what a CMYK printer profile is — are
-  recognised and declined with a reason rather than misread. A convert into a much
-  larger space and back therefore costs a little precision that a 16-bit pipeline
-  would not (the test suite pins it under 2.2 mean absolute difference).
+- **CMYK and Lab as document modes, and 16-bit.** Everything is 8-bit
+  internally, so a convert into a much larger space and back costs a little
+  precision a 16-bit pipeline would not (the suite pins it under 2.2 mean
+  absolute difference), and a 16-bit PSD opens by converting down.
+
+  The reason this is one bullet rather than three is that they share a blocker:
+  every pixel buffer in Pikado is an `HTMLCanvasElement`, and a canvas backing
+  store is 8-bit RGBA with no option. So depth, CMYK and Lab all wait on the
+  same thing — a second pixel carrier — and 17 of the 27 blend modes are
+  currently the browser's own `globalCompositeOperation`, which has no 16-bit
+  form, as does `ctx.filter` blur (~1 ms against ~1400 ms for the JS equivalent
+  on a 12-megapixel image). None of that is unsolvable; it is just much larger
+  than it looks, and a half-migrated pipeline would be worse than none.
+
+  What *is* done is the part that needed no storage work: **LUT-based ICC
+  profiles are read** — `A2B0` tables in `mft1`/`mft2` form, Lab or XYZ
+  connection space, multilinear interpolation over the grid. Scanner and press
+  profiles now convert correctly instead of being dropped to sRGB. Only that
+  direction: `B2A0` is the inverse table and is not read, so such a profile is
+  a source and never a destination, and the UI does not offer it as one. A CMYK
+  profile parses but cannot be attached, because there is no four-channel pixel
+  carrier — and the message says exactly that rather than blaming the profile.
 - **Position in a frame animation.** The timeline animates visibility and opacity.
   Layer buffers here are always document-sized with no per-layer offset, so there
   is nowhere for a per-frame position to live and nothing in the compositor that

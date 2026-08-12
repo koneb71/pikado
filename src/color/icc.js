@@ -8,13 +8,20 @@
  * primaries sit in XYZ, what its white point is, and what tone curve its encoded
  * values follow. That is enough to convert between any two of them exactly.
  *
- * **What is not.** LUT-based profiles (`A2B0`/`B2A0` tables) are parsed far
- * enough to be *recognised and rejected with a reason*, not silently
- * misinterpreted. That rules out CMYK printer profiles and the "perceptual"
- * rendering intent, both of which live entirely in those tables. A matrix profile
- * has no perceptual table to consult, so Perceptual and Saturation are mapped to
- * Relative Colorimetric and say so — every serious CMM does the same thing when
- * handed a matrix profile, and pretending otherwise would mean inventing a gamut
+ * **LUT profiles, one way.** A profile with no primaries describes itself with
+ * a table instead — device values in, connection-space values out, interpolated
+ * between grid points. `A2B0` is read (`mft1` and `mft2`), which covers scanner
+ * profiles, presses and most v4 profiles. Only that direction: `B2A0` is the
+ * inverse table, so such a profile can be converted *out of* and never *into*,
+ * which is what `oneWay` marks and what `makeTransform` refuses by name. A v4
+ * `mAB ` tag is not read yet and is declined with a reason.
+ *
+ * **What is not.** A CMYK profile now parses, but cannot be attached to a
+ * document — there is no four-channel pixel carrier — and the refusal says that
+ * rather than blaming the profile. The "perceptual" rendering intent still lives
+ * in tables this does not consult, so Perceptual and Saturation are mapped to
+ * Relative Colorimetric and say so — every serious CMM does the same when handed
+ * a matrix profile, and pretending otherwise would mean inventing a gamut
  * compression Adobe's tables do not contain.
  *
  * **Where the numbers live.** `doc.profile` is the document's colour space; it
@@ -285,6 +292,219 @@ const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
  *
  * @returns {(rgb:number[]) => number[]} 0..1 in, 0..1 out
  */
+/* ------------------------------------------------------------------ */
+/* LUT-based profiles (A2B0)                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A matrix/TRC profile describes a device with three primaries and a tone
+ * curve. Plenty of real profiles are not that shape — a scanner, a press, most
+ * v4 perceptual profiles — and describe themselves with a *table* instead:
+ * device values in, connection-space values out, interpolated between grid
+ * points. Those used to be recognised and declined by name; this reads them.
+ *
+ * Only the A→B direction (`A2B0`, device → PCS). B2A0 is the inverse table and
+ * is what you would need to convert *into* such a profile; a profile that can
+ * only be converted out of is still worth having, because that is exactly what
+ * an embedded profile is for, but it means a LUT profile cannot be a
+ * destination. `oneWay` says so and the callers refuse it by name.
+ */
+
+/** D50, the connection-space white every ICC profile is defined against. */
+const D50_XYZ = [0.9642, 1.0, 0.8249];
+
+/**
+ * CIE Lab -> XYZ at D50.
+ *
+ * The cube-root curve is linear below the ~0.008856 threshold, which is not a
+ * nicety: without the linear toe the slope goes to infinity at zero and dark
+ * values come back with visible noise.
+ */
+export function labToXYZ(L, a, b) {
+  const fy = (L + 16) / 116;
+  const fx = fy + a / 500;
+  const fz = fy - b / 200;
+  const inv = (t) => (t > 6 / 29 ? t * t * t : 3 * (6 / 29) * (6 / 29) * (t - 4 / 29));
+  return [inv(fx) * D50_XYZ[0], inv(fy) * D50_XYZ[1], inv(fz) * D50_XYZ[2]];
+}
+
+/** XYZ -> CIE Lab at D50. */
+export function xyzToLab(X, Y, Z) {
+  const f = (t) => (t > (6 / 29) ** 3 ? Math.cbrt(t) : t / (3 * (6 / 29) ** 2) + 4 / 29);
+  const fx = f(X / D50_XYZ[0]), fy = f(Y / D50_XYZ[1]), fz = f(Z / D50_XYZ[2]);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+/**
+ * Decode the Lab encoding a LUT tag uses.
+ *
+ * There are two, and picking the wrong one shifts every colour. The legacy
+ * 16-bit encoding in `mft2` puts L*=100 at 0xFF00 rather than 0xFFFF — a
+ * deliberate choice so that 0x8000 is exactly a*=0 — while v4 tags use the full
+ * range. The tag signature decides it, not the profile version, because a v4
+ * profile may still carry an `mft2`.
+ *
+ * @param {number[]} v three channels, already normalised 0..1
+ * @param {boolean} legacy true for mft1/mft2
+ */
+export function decodeLabPCS(v, legacy) {
+  const scale = legacy ? 65535 / 65280 : 1;
+  return [
+    v[0] * scale * 100,
+    (v[1] * scale) * 255 - 128,
+    (v[2] * scale) * 255 - 128,
+  ];
+}
+
+/**
+ * Multilinear interpolation in an n-dimensional colour lookup table.
+ *
+ * Interpolated rather than nearest-neighbour because these grids are coarse —
+ * 9 or 17 points per axis is normal — and nearest-neighbour on a 9-point grid
+ * is visible banding, which is the whole reason a profile is being honoured at
+ * all.
+ *
+ * @param {{grid:number[], outputs:number, data:Float32Array}} clut
+ *   `grid` holds the number of points along each input axis.
+ * @param {number[]} input one value per axis, 0..1
+ * @returns {number[]} `outputs` values, 0..1
+ */
+export function evalCLUT(clut, input) {
+  const { grid, outputs, data } = clut;
+  const n = grid.length;
+  const base = new Array(n);
+  const frac = new Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const g = grid[i];
+    const x = Math.min(Math.max(input[i] || 0, 0), 1) * (g - 1);
+    const b = Math.min(g - 2, Math.floor(x));
+    // A one-point axis has no interval to interpolate across.
+    base[i] = g > 1 ? Math.max(0, b) : 0;
+    frac[i] = g > 1 ? x - base[i] : 0;
+  }
+
+  const out = new Array(outputs).fill(0);
+  // Every corner of the n-cube, weighted by its distance along each axis.
+  for (let corner = 0; corner < (1 << n); corner += 1) {
+    let weight = 1;
+    let offset = 0;
+    let stride = 1;
+    for (let i = n - 1; i >= 0; i -= 1) {
+      const hi = (corner >> i) & 1;
+      weight *= hi ? frac[i] : 1 - frac[i];
+      if (weight === 0) break;
+      const idx = Math.min(grid[i] - 1, base[i] + hi);
+      offset += idx * stride;
+      stride *= grid[i];
+    }
+    if (weight === 0) continue;
+    // `offset` was accumulated with the LAST axis varying fastest, which is the
+    // order ICC stores a CLUT in.
+    const at = offset * outputs;
+    for (let o = 0; o < outputs; o += 1) out[o] += weight * (data[at + o] || 0);
+  }
+  return out;
+}
+
+/** Sample a 1-D table with linear interpolation. `table` is 0..1. */
+function evalCurveTable(table, x) {
+  const n = table.length;
+  if (!n) return x;
+  if (n === 1) return table[0];
+  const t = Math.min(Math.max(x, 0), 1) * (n - 1);
+  const i = Math.min(n - 2, Math.floor(t));
+  const f = t - i;
+  return table[i] + (table[i + 1] - table[i]) * f;
+}
+
+/**
+ * Read an `mft1` or `mft2` A2B tag.
+ *
+ * Both have a fixed header — input and output channel counts, the CLUT grid
+ * size, and a 3x3 matrix that is only meaningful for an XYZ PCS — followed by
+ * the input tables, the CLUT and the output tables laid end to end. `mft1`
+ * stores every entry as one byte with 256-entry tables; `mft2` uses 16-bit
+ * entries and declares its table lengths.
+ *
+ * Everything is bounds-checked against the tag's own extent rather than the
+ * file's: a tag that claims a grid larger than it carries is the ordinary shape
+ * of a corrupt or hostile profile, and reading past it would either throw
+ * somewhere unhelpful or silently read a neighbouring tag as colour data.
+ *
+ * @returns {{inputs:number, outputs:number, eval:(v:number[])=>number[]}|null}
+ */
+export function readLUTTag(dv, tag) {
+  if (!tag || tag.size < 48) return null;
+  const sig = String.fromCharCode(
+    dv.getUint8(tag.offset), dv.getUint8(tag.offset + 1),
+    dv.getUint8(tag.offset + 2), dv.getUint8(tag.offset + 3),
+  );
+  const wide = sig === 'mft2';
+  if (sig !== 'mft1' && !wide) return null;
+
+  const end = tag.offset + tag.size;
+  const inputs = dv.getUint8(tag.offset + 8);
+  const outputs = dv.getUint8(tag.offset + 9);
+  const gridPoints = dv.getUint8(tag.offset + 10);
+  if (inputs < 1 || inputs > 8 || outputs < 1 || outputs > 8 || gridPoints < 2) return null;
+
+  let p = tag.offset + 12 + 9 * 4;   // header + the 3x3 s15Fixed16 matrix
+  let inEntries = 256;
+  let outEntries = 256;
+  if (wide) {
+    if (p + 4 > end) return null;
+    inEntries = dv.getUint16(p);
+    outEntries = dv.getUint16(p + 2);
+    p += 4;
+    if (inEntries < 2 || outEntries < 2) return null;
+  }
+
+  const unit = wide ? 2 : 1;
+  const readOne = (at) => (wide ? dv.getUint16(at) / 65535 : dv.getUint8(at) / 255);
+
+  const inTables = [];
+  for (let c = 0; c < inputs; c += 1) {
+    if (p + inEntries * unit > end) return null;
+    const t = new Float32Array(inEntries);
+    for (let i = 0; i < inEntries; i += 1) t[i] = readOne(p + i * unit);
+    inTables.push(t);
+    p += inEntries * unit;
+  }
+
+  const cells = gridPoints ** inputs;
+  const clutValues = cells * outputs;
+  if (p + clutValues * unit > end) return null;
+  const data = new Float32Array(clutValues);
+  for (let i = 0; i < clutValues; i += 1) data[i] = readOne(p + i * unit);
+  p += clutValues * unit;
+
+  const outTables = [];
+  for (let c = 0; c < outputs; c += 1) {
+    if (p + outEntries * unit > end) return null;
+    const t = new Float32Array(outEntries);
+    for (let i = 0; i < outEntries; i += 1) t[i] = readOne(p + i * unit);
+    outTables.push(t);
+    p += outEntries * unit;
+  }
+
+  const grid = new Array(inputs).fill(gridPoints);
+  const clut = { grid, outputs, data };
+
+  return {
+    inputs,
+    outputs,
+    legacy: true,
+    eval(v) {
+      const shaped = new Array(inputs);
+      for (let i = 0; i < inputs; i += 1) shaped[i] = evalCurveTable(inTables[i], v[i] || 0);
+      const mid = evalCLUT(clut, shaped);
+      const out = new Array(outputs);
+      for (let o = 0; o < outputs; o += 1) out[o] = evalCurveTable(outTables[o], mid[o]);
+      return out;
+    },
+  };
+}
+
 export function makeTransform(from, to, opts = {}) {
   const { intent = 'relative', blackPoint = true } = opts;
   const srcMatrix = matrixOf(from);
@@ -292,9 +512,26 @@ export function makeTransform(from, to, opts = {}) {
   const srcTRC = from.trc || TRC.srgb;
   const dstTRC = to.trc || TRC.srgb;
 
+  /*
+   * A LUT source replaces the TRC-and-matrix front end entirely: the table
+   * takes device values straight to the connection space, so there is nothing
+   * left for a tone curve or a primaries matrix to do.
+   */
+  const srcLUT = from.lut && typeof from.lut.eval === 'function' ? from.lut : null;
+
   // Grey profiles have no primaries: treat their single channel as luminance.
-  const srcGray = from.space === 'gray' || !srcMatrix;
-  const dstGray = to.space === 'gray' || !dstMatrix;
+  const srcGray = !srcLUT && (from.space === 'gray' || !srcMatrix);
+  /*
+   * Only a real grey profile, not merely one with no matrix. A LUT destination
+   * has no matrix either, and treating it as grey would silently convert every
+   * colour to luminance — a plausible-looking image that is quietly wrong.
+   * Callers refuse a one-way profile as a destination, so reaching here with
+   * one is a programming error and says so.
+   */
+  if (to.lut || to.oneWay) {
+    throw new Error('a LUT-based profile cannot be a conversion destination (no B2A0 table is read)');
+  }
+  const dstGray = to.space === 'gray';
 
   /*
    * The white-point adaptation applies to ANY conversion that passes through XYZ,
@@ -336,9 +573,27 @@ export function makeTransform(from, to, opts = {}) {
     if (srcGray && dstGray) {
       out = lin;
     } else {
-      let xyz = srcGray
-        ? [lin[0] * (from.white || WHITE_POINTS.D65)[0], lin[0], lin[0] * (from.white || WHITE_POINTS.D65)[2]]
-        : mul3(srcMatrix, lin);
+      let xyz;
+      if (srcLUT) {
+        /*
+         * Fed the *device* values, not the linearised ones — the table's own
+         * input curves are the linearisation, so running the TRC first would
+         * apply it twice.
+         *
+         * Three channels: a four-input CMYK table never reaches here, because
+         * a CMYK profile is parsed but refused as a document profile (there is
+         * no four-channel pixel carrier). `readLUTTag` still reads it, so the
+         * refusal can name the real reason.
+         */
+        const pcsOut = srcLUT.eval([clamp01(rgb[0]), clamp01(rgb[1]), clamp01(rgb[2])]);
+        xyz = from.pcs === 'Lab '
+          ? labToXYZ(...decodeLabPCS(pcsOut, srcLUT.legacy !== false))
+          : [pcsOut[0] * 1.999969, pcsOut[1] * 1.999969, pcsOut[2] * 1.999969];
+      } else {
+        xyz = srcGray
+          ? [lin[0] * (from.white || WHITE_POINTS.D65)[0], lin[0], lin[0] * (from.white || WHITE_POINTS.D65)[2]]
+          : mul3(srcMatrix, lin);
+      }
       if (adapt) xyz = mul3(adapt, xyz);
       out = dstGray ? [xyz[1], xyz[1], xyz[1]] : mul3(dstInv, xyz);
     }
@@ -498,8 +753,8 @@ function parseICCInner(buffer) {
 
   const description = readTextTag(bytes, dv, tags.get('desc')) || 'Embedded profile';
 
-  if (dataSpace !== 'RGB ' && dataSpace !== 'GRAY') {
-    return { ok: false, reason: `${dataSpace.trim()} profiles are not supported — only RGB and grey`, description };
+  if (dataSpace !== 'RGB ' && dataSpace !== 'GRAY' && dataSpace !== 'CMYK') {
+    return { ok: false, reason: `${dataSpace.trim()} profiles are not supported`, description };
   }
   if (pcs !== 'XYZ ' && pcs !== 'Lab ') {
     return { ok: false, reason: `an unexpected connection space (${pcs.trim()})`, description };
@@ -525,12 +780,43 @@ function parseICCInner(buffer) {
   const g = readXYZTag(dv, tags.get('gXYZ'));
   const b = readXYZTag(dv, tags.get('bXYZ'));
   if (!r || !g || !b) {
-    const lut = tags.has('A2B0') || tags.has('B2A0');
+    /*
+     * No primaries means this is not a matrix/TRC profile. That used to end
+     * here; now the A→B table is read instead, which is how a scanner, a press
+     * or most v4 perceptual profiles describe themselves.
+     */
+    const a2b = readLUTTag(dv, tags.get('A2B0'));
+    // A CMYK table has four inputs; an RGB one has three. Anything else is not
+    // something this can drive.
+    const expected = dataSpace === 'CMYK' ? 4 : 3;
+    if (a2b && a2b.inputs === expected && a2b.outputs === 3 && (pcs === 'Lab ' || pcs === 'XYZ ')) {
+      return {
+        ok: true,
+        description,
+        profile: {
+          id: 'embedded',
+          name: description,
+          space: dataSpace === 'CMYK' ? 'cmyk' : 'rgb',
+          pcs,
+          lut: a2b,
+          /*
+           * Only the A→B direction is read. Converting *into* this profile
+           * needs B2A0, so it can be a source and never a destination —
+           * `makeTransform` throws on one and the UI does not offer it.
+           */
+          oneWay: true,
+          white: readXYZTag(dv, tags.get('wtpt')) || WHITE_POINTS.D50,
+          blackPoint: readBlackPoint(dv, tags.get('bkpt')),
+          embedded: true,
+          deviceClass,
+        },
+      };
+    }
     return {
       ok: false,
       description,
-      reason: lut
-        ? 'this is a LUT-based profile; Pikado reads matrix/TRC profiles only'
+      reason: tags.has('A2B0') || tags.has('B2A0')
+        ? 'this is a LUT-based profile and its A2B0 table could not be read'
         : 'the profile has no primary colorant tags (rXYZ/gXYZ/bXYZ)',
     };
   }
