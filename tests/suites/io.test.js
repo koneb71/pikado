@@ -827,3 +827,89 @@ suite('io / memoryUse counts what is really held', async (t) => {
 
   t.eq(doc.memoryUse(), base + 100 * 100 * 4, 'a shared buffer is counted once, not twice');
 });
+
+suite('io / adjustments Photoshop can actually read', async (t) => {
+  /*
+   * Five kinds that used to travel only in Pikado's private block, so they
+   * opened in Photoshop as correctly named, correctly masked, and completely
+   * inert layers. Each is now written in the documented binary form.
+   *
+   * Verified against our own parser rather than against Photoshop, which was
+   * not available. That is a weaker check than it sounds only if the two halves
+   * were written together against the same misreading — they were not: the
+   * reader predates this by a long way and is unchanged, so it is an
+   * independent decoder of the same spec.
+   */
+  const cases = [
+    ['hue-saturation', {
+      colorize: false, masterHue: 20, masterSat: -30, masterLight: 10,
+      redsHue: -5, redsSat: 12, redsLight: -3,
+      cyansHue: 7, cyansSat: -8, cyansLight: 4,
+    }, ['masterHue', 'masterSat', 'masterLight', 'redsHue', 'redsSat', 'cyansSat']],
+    ['color-balance', {
+      shadowsCR: -12, shadowsMG: 5, shadowsYB: 30,
+      midtonesCR: 8, midtonesMG: -20, midtonesYB: 2,
+      highlightsCR: 40, highlightsMG: 0, highlightsYB: -15,
+      preserveLuminosity: false,
+    }, ['shadowsCR', 'shadowsYB', 'midtonesMG', 'highlightsCR', 'highlightsYB', 'preserveLuminosity']],
+    ['channel-mixer', {
+      monochrome: false, redR: 90, redG: 15, redB: -5, redC: 3,
+      greenR: -10, greenG: 105, greenB: 5, greenC: 0,
+      blueR: 0, blueG: -20, blueB: 120, blueC: -4,
+    }, ['monochrome', 'redR', 'redG', 'redB', 'redC', 'greenG', 'blueB', 'blueC']],
+    ['selective-color', {
+      method: 'absolute',
+      redsC: -40, redsM: 10, redsY: 25, redsK: 5,
+      neutralsC: 3, neutralsM: -7, neutralsY: 11, neutralsK: -2,
+      blacksC: 0, blacksM: 0, blacksY: 0, blacksK: 60,
+    }, ['method', 'redsC', 'redsY', 'neutralsM', 'neutralsY', 'blacksK']],
+    ['photo-filter', { filter: 'Custom', color: '#3366cc', density: 42, preserveLuminosity: false },
+      ['density', 'preserveLuminosity']],
+  ];
+
+  for (const [kind, params, checked] of cases) {
+    const doc = t.doc(40, 30, '#808080', `psd-${kind}`);
+    doc.layers.unshift(createAdjustmentLayer(kind, params, 40, 30, kind));
+    const bytes = await (await writePSD(doc)).arrayBuffer();
+
+    /*
+     * Read with our private block ignored — the way any other application sees
+     * the file. Reading normally proves nothing here: the private block is
+     * authoritative and would mask a native record that is missing or wrong.
+     * Verified to fail by removing the kind's case from writeLegacyAdjustment,
+     * which is exactly the state all five were in before.
+     */
+    const back = await readPSD(bytes, { ignorePrivate: true });
+    const layer = back.flatLayers().find((l) => l.adjustment && l.adjustment.kind === kind);
+    t.ok(layer, `${kind} is a real adjustment to anything reading the file`);
+    if (!layer) continue;
+    const got = layer.adjustment.params || {};
+    for (const key of checked) {
+      t.eq(got[key], params[key], `  ${kind}.${key} survived natively`);
+    }
+  }
+});
+
+suite('io / reading a PSD the way another application would', async (t) => {
+  /*
+   * The escape hatch that makes the suite above mean anything. Pikado prefers
+   * its own private blocks on read, which is right — they round trip every kind
+   * and every parameter — but it also means our export can look perfect to us
+   * while carrying nothing another reader could use.
+   * Verified to fail by having `ignorePrivate` not suppress the pkAd block.
+   */
+  const doc = t.doc(40, 30, '#808080', 'psd-private');
+  // A kind with no native form at all, so the two reads must disagree.
+  doc.layers.unshift(createAdjustmentLayer('vibrance', { vibrance: 44, saturation: -12 }, 40, 30, 'Vibrance'));
+  const bytes = await (await writePSD(doc)).arrayBuffer();
+
+  const ours = await readPSD(bytes);
+  const theirs = await readPSD(bytes, { ignorePrivate: true });
+  const mine = ours.flatLayers().find((l) => l.adjustment);
+  const other = theirs.flatLayers().find((l) => l.adjustment);
+
+  t.eq(mine && mine.adjustment.params.vibrance, 44, 'we read our own parameters back exactly');
+  t.notOk(other && other.adjustment, 'and another reader sees no adjustment data for a kind we cannot write natively');
+  t.ok(theirs.flatLayers().some((l) => l.name === 'Vibrance'),
+    'though the layer is still there, correctly named — inert rather than missing');
+});

@@ -1003,12 +1003,130 @@ function writeLegacyAdjustment(w, adjustment) {
       writeBlock(w, 'curv', (b) => writeCurvesBody(b, p.curves));
       return;
 
+    case 'hue-saturation':
+      writeBlock(w, 'hue2', (b) => writeHueSaturationBody(b, p));
+      return;
+
+    case 'color-balance':
+      writeBlock(w, 'blnc', (b) => {
+        for (const tone of ['shadows', 'midtones', 'highlights']) {
+          for (const axis of ['CR', 'MG', 'YB']) b.int16(clampi(num(p[`${tone}${axis}`], 0), -100, 100));
+        }
+        b.byte(p.preserveLuminosity === false ? 0 : 1);
+      });
+      return;
+
+    case 'channel-mixer':
+      writeBlock(w, 'mixr', (b) => writeChannelMixerBody(b, p));
+      return;
+
+    case 'photo-filter':
+      writeBlock(w, 'phfl', (b) => {
+        const c = parseColor(p.color || '#ec8a00');
+        // Version 2 is the RGB form. Version 3 stores XYZ, which buys nothing
+        // here and would need a conversion in both directions.
+        b.uint16(2);
+        b.uint16(0);              // colour space: RGB
+        b.uint16(clampi(c.r * 257, 0, 65535));
+        b.uint16(clampi(c.g * 257, 0, 65535));
+        b.uint16(clampi(c.b * 257, 0, 65535));
+        b.uint16(0);              // fourth component, unused in RGB
+        b.uint32(clampi(num(p.density, 25), 1, 100));
+        b.byte(p.preserveLuminosity === false ? 0 : 1);
+      });
+      return;
+
+    case 'selective-color':
+      writeBlock(w, 'selc', (b) => {
+        b.uint16(1);
+        b.uint16(p.method === 'absolute' ? 1 : 0);
+        // A reserved record leads the table; Photoshop writes it as zeros and
+        // our own reader skips exactly these eight bytes.
+        b.zeros(8);
+        for (const g of SELECTIVE_GROUPS) {
+          for (const ch of ['C', 'M', 'Y', 'K']) b.int16(clampi(num(p[`${g}${ch}`], 0), -100, 100));
+        }
+      });
+      return;
+
     default:
-      // vibrance, selective-color, shadows-highlights, color-lookup,
-      // hdr-toning, replace-color, equalize, auto-*, gradient-map,
-      // channel-mixer, black-white, photo-filter, color-balance,
-      // hue-saturation, exposure and desaturate have no simple legacy form.
+      // shadows-highlights, color-lookup, hdr-toning, replace-color, equalize,
+      // the auto-* kinds, gradient-map, black-white, vibrance, exposure and
+      // desaturate still travel by the private block alone. Photoshop wants a
+      // full descriptor for those, and a half-written descriptor is worse than
+      // none: it opens as a corrupt adjustment rather than an inert one.
   }
+}
+
+const SELECTIVE_GROUPS = ['reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas', 'whites', 'neutrals', 'blacks'];
+
+/**
+ * 'hue2' version 2: colorize settings, the master band, then six hue bands.
+ *
+ * Every band except the master is preceded by four int16 hue boundaries — the
+ * soft edges of that band's range. Photoshop's defaults are used rather than
+ * zeros: a band whose range is empty adjusts nothing, so writing zeros would
+ * open as a Hue/Saturation layer that silently does not work.
+ */
+const HUE_BANDS = [
+  ['reds', [315, 345, 15, 45]],
+  ['yellows', [15, 45, 75, 105]],
+  ['greens', [75, 105, 135, 165]],
+  ['cyans', [135, 165, 195, 225]],
+  ['blues', [195, 225, 255, 285]],
+  ['magentas', [255, 285, 315, 345]],
+];
+
+function writeHueSaturationBody(w, p) {
+  w.uint16(2);
+  w.byte(p.colorize ? 1 : 0);
+  w.byte(0);
+  w.int16(clampi(num(p.colorizeHue, 0), -180, 360));
+  w.int16(clampi(num(p.colorizeSat, 25), -100, 100));
+  w.int16(clampi(num(p.colorizeLight, 0), -100, 100));
+
+  const band = (id) => {
+    w.int16(clampi(num(p[`${id}Hue`], 0), -180, 180));
+    w.int16(clampi(num(p[`${id}Sat`], 0), -100, 100));
+    w.int16(clampi(num(p[`${id}Light`], 0), -100, 100));
+  };
+  band('master');
+  for (const [id, edges] of HUE_BANDS) {
+    for (const e of edges) w.int16(e);
+    band(id);
+  }
+}
+
+/**
+ * 'mixr' version 1: a monochrome flag then four rows of five int16.
+ *
+ * The fourth entry of each row is the channel a CMYK document would have and is
+ * unused here; the fifth is the constant. In monochrome mode Photoshop reads
+ * row 0 as the grey row, so the grey values go there and the colour rows are
+ * still written — an empty tail would leave the layer with nothing to fall back
+ * to when monochrome is switched off.
+ */
+function writeChannelMixerBody(w, p) {
+  w.uint16(1);
+  w.uint16(p.monochrome ? 1 : 0);
+  const row = (prefix, defaults) => {
+    w.int16(clampi(num(p[`${prefix}R`], defaults[0]), -200, 200));
+    w.int16(clampi(num(p[`${prefix}G`], defaults[1]), -200, 200));
+    w.int16(clampi(num(p[`${prefix}B`], defaults[2]), -200, 200));
+    w.int16(0);
+    w.int16(clampi(num(p[`${prefix}C`], 0), -200, 200));
+  };
+  if (p.monochrome) {
+    row('gray', [40, 40, 20]);
+    row('green', [0, 100, 0]);
+    row('blue', [0, 0, 100]);
+  } else {
+    row('red', [100, 0, 0]);
+    row('green', [0, 100, 0]);
+    row('blue', [0, 0, 100]);
+  }
+  // The fourth row is the alpha/spare row Photoshop always writes.
+  w.int16(0); w.int16(0); w.int16(0); w.int16(0); w.int16(0);
 }
 
 /** One 10-byte Levels record: input black/white, output black/white, gamma×100. */

@@ -562,11 +562,18 @@ Stated plainly so you don't find out by clicking:
   read off a real install, and the `keyOriginPoly*` origination keys for live
   polygons are not publicly documented, so a polygon may open in Photoshop as an
   editable path rather than a live shape. Neither affects geometry — the path is
-  always authoritative. Six adjustment kinds (Invert, Posterize, Threshold,
-  Brightness/Contrast, Levels, Curves) are written as native Photoshop
-  adjustments; the other 18 open there as correctly named, correctly masked but
-  inert layers, and round-trip exactly through Pikado via a private block
-  Photoshop safely ignores.
+  always authoritative. Eleven adjustment kinds are written as native Photoshop
+  adjustments — Invert, Posterize, Threshold, Brightness/Contrast, Levels,
+  Curves, Hue/Saturation, Colour Balance, Channel Mixer, Photo Filter and
+  Selective Colour. The remaining thirteen open there as correctly named,
+  correctly masked but inert layers, and round-trip exactly through Pikado via a
+  private block Photoshop safely ignores.
+
+  That private block would happily hide an export carrying nothing anyone else
+  can read, so `readPSD(bytes, { ignorePrivate: true })` reads a file the way
+  another application would — our own blocks skipped, only what the format
+  itself carries believed. Every native adjustment is checked that way, which is
+  the closest thing to a Photoshop test available without Photoshop.
 - **Smart Objects** are non-destructive: `layer.smart.source` is a
   real embedded `PikaDocument`, every render restarts from it, and scaling to 10%
   and back is *pixel-exact* (measured mean absolute difference 0.0000, versus ~32

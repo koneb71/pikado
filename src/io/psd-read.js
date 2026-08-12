@@ -320,6 +320,14 @@ export function projectedLayerBytes(layerCount, width, height, records = null) {
  *   proceeds, which keeps every existing caller and every test behaving exactly
  *   as before.
  */
+/**
+ * @param {ArrayBuffer} arrayBuffer
+ * @param {{budgetBytes?:number, onOversize?:Function, ignorePrivate?:boolean}} [opts]
+ *   `ignorePrivate` skips Pikado's own blocks, so the file is read the way any
+ *   other application would read it. Use it to check what an export really
+ *   carries: a private block that round trips perfectly proves nothing about
+ *   what Photoshop will see.
+ */
 export async function readPSD(arrayBuffer, opts = {}) {
   if (!arrayBuffer || arrayBuffer.byteLength < 26) throw new Error('The file is too small to be a PSD');
   const r = new ByteReader(arrayBuffer);
@@ -351,6 +359,14 @@ export async function readPSD(arrayBuffer, opts = {}) {
     buf: arrayBuffer, psb, depth, colorMode, width, height, channelCount,
     mergedHasAlpha: channelCount > (colorMode === 1 ? 1 : 3),
     skipped: new Set(), warnings: [],
+    /*
+     * `ignorePrivate` reads the file the way any other application would: our
+     * own blocks are skipped and only what the PSD format itself carries is
+     * believed. It is how the export can be checked without owning a copy of
+     * Photoshop — a private block that round trips perfectly says nothing at
+     * all about what Photoshop will see.
+     */
+    ignorePrivate: !!opts.ignorePrivate,
   };
 
   // --- Colour mode data (palette for indexed/duotone; unused for RGB/Gray).
@@ -1361,6 +1377,7 @@ function interpretBlocks(rec, ctx) {
         safe(() => { info.vectorOrigination = readVectorOrigination(r()); });
         break;
       case PIKADO_TEXT_KEY:
+        if (ctx.ignorePrivate) break;
         safe(() => {
           const payload = readPikadoPayload(r(), PIKADO_TEXT_MAGIC);
           if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
@@ -1370,6 +1387,7 @@ function interpretBlocks(rec, ctx) {
         });
         break;
       case PIKADO_SHAPE_KEY:
+        if (ctx.ignorePrivate) break;
         safe(() => {
           const payload = readPikadoPayload(r(), PIKADO_SHAPE_MAGIC);
           if (payload && Array.isArray(payload.subpaths) && payload.subpaths.length) {
@@ -1379,6 +1397,7 @@ function interpretBlocks(rec, ctx) {
         });
         break;
       case PIKADO_ADJUSTMENT_KEY:
+        if (ctx.ignorePrivate) break;
         safe(() => {
           const decoded = readPikadoAdjustment(r());
           if (decoded) {
