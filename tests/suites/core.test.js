@@ -736,8 +736,8 @@ suite('core / the snap tolerance is a screen distance, not a document one', asyn
     { threshold: snapThreshold(1) }).dx, 0, 'and does not when zoomed in');
 
   // The ruler drag path: a bare position rather than a rectangle.
-  t.eq(snapPosition(98, 'v', { gridSize: 100 }, 6), 100, 'a dragged guide snaps to the grid');
-  t.eq(snapPosition(90, 'v', { gridSize: 100 }, 6), 90, 'and is left alone beyond the tolerance');
+  t.eq(snapPosition(98, 'v', { gridSize: 100 }, 6).pos, 100, 'a dragged guide snaps to the grid');
+  t.eq(snapPosition(90, 'v', { gridSize: 100 }, 6).pos, 90, 'and is left alone beyond the tolerance');
 });
 
 suite('core / dragging a layer snaps it to a guide', async (t) => {

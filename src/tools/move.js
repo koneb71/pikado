@@ -2,7 +2,7 @@ import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { LayerType, translateLayerGeometry } from '../core/layer.js';
 import { createCanvas, cloneCanvas, uid, el } from '../core/util.js';
-import { snapRect } from '../core/snapping.js';
+import { snapRect, clearSnapLines } from '../core/snapping.js';
 import {
   layerBounds as contentBoundsOf, cacheShiftedBounds, layersBounds, peekBounds,
 } from '../core/layer-bounds.js';
@@ -321,6 +321,7 @@ class MoveTool extends Tool {
   onDeactivate() {
     if (isTransforming()) commitTransform();
     this.drag = null;
+    if (clearSnapLines()) app.requestRender();
   }
 
   commit() {
@@ -544,6 +545,9 @@ class MoveTool extends Tool {
     const d = this.drag;
     if (!d) return;
     this.drag = null;
+    // Before the !moved bail: a drag that snapped back to where it started
+    // still put hints on screen.
+    if (clearSnapLines()) app.requestRender();
     if (!d.moved) return;
     if (!d.pixelMove) {
       d.layers.forEach((l, i) => {

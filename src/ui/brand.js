@@ -40,6 +40,7 @@ export const OVERLAY = {
   handleFill: '#FFFFFF',
   handleStroke: 'rgba(10, 10, 14, 0.9)',
   guide: '#35D0E8',
+  smartGuide: '#FF4D9D',
   warn: '#FFC46B',
 };
 

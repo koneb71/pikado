@@ -24,6 +24,31 @@ export function snapSuspended(e) {
   return !app.snap || !!(e && (e.ctrlKey || e.metaKey));
 }
 
+/* ------------------------------------------------------------------ */
+/* The hints on screen                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The lines the last solved snap landed on.
+ *
+ * Kept here rather than on the drag state of whichever tool is running, so the
+ * canvas overlay has one thing to read and every call site gets the hints
+ * without wiring anything up. Recorded on every solve — including the ones that
+ * find nothing and the ones Ctrl suspends, so the hints vanish the instant they
+ * stop being true — and cleared by whoever ends the drag.
+ */
+let lines = [];
+
+export function snapLines() {
+  return lines;
+}
+
+export function clearSnapLines() {
+  if (!lines.length) return false;
+  lines = [];
+  return true;
+}
+
 /**
  * Everything in a document worth aligning to.
  *
@@ -76,12 +101,16 @@ export function snapTargets(doc, opts = {}) {
  *   is in range, so callers can add the result unconditionally.
  */
 export function snapRect(rect, doc, opts = {}) {
-  const none = { dx: 0, dy: 0, lines: [] };
-  if (!rect || !doc || snapSuspended(opts.event)) return none;
-  return solveSnap(rect, snapTargets(doc, opts), {
+  if (!rect || !doc || snapSuspended(opts.event)) {
+    lines = [];
+    return { dx: 0, dy: 0, lines };
+  }
+  const r = solveSnap(rect, snapTargets(doc, opts), {
     threshold: snapThreshold(app.viewport.scale),
     axes: opts.axes,
   });
+  lines = r.lines;
+  return r;
 }
 
 /**
@@ -92,6 +121,16 @@ export function snapRect(rect, doc, opts = {}) {
  * @param {'h'|'v'} axis  the orientation of the guide being dragged
  */
 export function snapGuidePos(pos, axis, doc, opts = {}) {
-  if (!doc || snapSuspended(opts.event)) return pos;
-  return snapPosition(pos, axis, snapTargets(doc, opts), snapThreshold(app.viewport.scale));
+  if (!doc || snapSuspended(opts.event)) {
+    lines = [];
+    return pos;
+  }
+  const r = snapPosition(pos, axis, snapTargets(doc, opts), snapThreshold(app.viewport.scale));
+  /*
+   * The guide it landed on would be drawn twice, once as a hint and once as
+   * itself, so leave those out — what is worth showing is the layer edge or
+   * document centre that the guide is now lined up with.
+   */
+  lines = r.lines.filter((l) => l.kind !== 'guide');
+  return r.pos;
 }

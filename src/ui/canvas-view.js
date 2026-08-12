@@ -1,6 +1,7 @@
 import { app } from '../core/app.js';
 import { getViewComposite } from '../render/compositor.js';
 import { createCanvas } from '../core/util.js';
+import { snapLines } from '../core/snapping.js';
 import { OVERLAY } from './brand.js';
 
 /**
@@ -144,6 +145,7 @@ export class CanvasView {
 
     if (app.showGrid) this._drawGrid(ctx, m, doc);
     if (app.showGuides) this._drawGuides(ctx, m, doc);
+    this._drawSnapLines(ctx, m, doc);
     if (!doc.quickMask) this._drawAnts(ctx, m, doc);
 
     // --- active tool overlay --------------------------------------------
@@ -235,6 +237,32 @@ export class CanvasView {
     for (const g of doc.guides) {
       if (g.axis === 'v') { ctx.moveTo(g.pos, 0); ctx.lineTo(g.pos, doc.height); }
       else { ctx.moveTo(0, g.pos); ctx.lineTo(doc.width, g.pos); }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * Smart guides: what the thing being dragged is currently lined up with.
+   *
+   * Only ever non-empty during a drag — `snapping.js` records the lines as it
+   * solves and the tool clears them on pointer-up — so this needs no state of
+   * its own and no "am I dragging" test. They are deliberately not gated on
+   * `app.showGuides`: that hides the guides you placed, and these are feedback
+   * about the drag in your hand.
+   */
+  _drawSnapLines(ctx, m, doc) {
+    const lines = snapLines();
+    if (!lines.length) return;
+    const view = app.viewport;
+    ctx.save();
+    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+    ctx.lineWidth = 1 / view.scale;
+    ctx.strokeStyle = OVERLAY.smartGuide;
+    ctx.beginPath();
+    for (const l of lines) {
+      if (l.axis === 'v') { ctx.moveTo(l.pos, 0); ctx.lineTo(l.pos, doc.height); }
+      else { ctx.moveTo(0, l.pos); ctx.lineTo(doc.width, l.pos); }
     }
     ctx.stroke();
     ctx.restore();

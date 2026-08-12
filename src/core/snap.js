@@ -161,7 +161,8 @@ export function solveSnap(rect, targets = {}, opts = {}) {
  * @param {'h'|'v'} axis the orientation of the thing being dragged
  * @param {object} targets
  * @param {number} threshold in document units
- * @returns {number} the snapped position
+ * @returns {{pos:number, lines:Array}} the snapped position and the lines it
+ *   ended up on, so the overlay has the same hints a rectangle drag gets.
  */
 export function snapPosition(pos, axis, targets, threshold) {
   const along = axis === 'v' ? 'x' : 'y';
@@ -169,7 +170,7 @@ export function snapPosition(pos, axis, targets, threshold) {
     ? { x: pos, y: 0, width: 0, height: 0 }
     : { x: 0, y: pos, width: 0, height: 0 };
   const r = solveSnap(rect, targets, { threshold, axes: along });
-  return pos + (along === 'x' ? r.dx : r.dy);
+  return { pos: pos + (along === 'x' ? r.dx : r.dy), lines: r.lines };
 }
 
 /** The tolerance in document units for a given zoom. One place, one convention. */

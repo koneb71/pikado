@@ -1,6 +1,6 @@
 import { el, rafThrottle } from '../core/util.js';
 import { app } from '../core/app.js';
-import { snapGuidePos } from '../core/snapping.js';
+import { snapGuidePos, clearSnapLines } from '../core/snapping.js';
 import './rulers.css';
 
 /**
@@ -335,6 +335,7 @@ function finishGuide(s, e) {
   const p = areaPoint(s, e);
   const dropped = p.x > RULER_SIZE && p.y > RULER_SIZE;
   s.drag = null;
+  clearSnapLines();
 
   const i = doc.guides.indexOf(guide);
   if (!dropped) {
@@ -349,6 +350,7 @@ function cancelGuide(s) {
   if (!s.drag) return;
   const { doc, guide } = s.drag;
   s.drag = null;
+  clearSnapLines();
   const i = doc.guides.indexOf(guide);
   if (i >= 0) doc.guides.splice(i, 1);
   app.requestRender();
