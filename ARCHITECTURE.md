@@ -1079,7 +1079,9 @@ src/ai/
     openai.js          first adapter — real mask parameter
     gemini.js          second adapter — no mask parameter, so the hole is punched
                        into the image and the layer mask confines the result
-    mock.js            procedural, no key, no network — how the UI is tested
+    mock.js            procedural, no key, no network — how the UI is tested.
+                       Registered by importing it; the app only does so behind
+                       `?ai=mock`, so it is not in the shipped dropdown.
 ```
 
 **`credentials.js` exports no getter.** This is the load-bearing decision. The
@@ -1100,6 +1102,15 @@ its owner, which was fine with one provider and a real bug with two: the "is a k
 set?" check ignored the label, so configuring OpenAI and then switching to Gemini
 would have sent the OpenAI key to Google. Every entry point now names the provider
 it means. Consent is per host for the same reason.
+
+**`loadCredentials()` must be called before the AI dialogs read anything.**
+`loadAiProviders()` in `commands/definitions.js` does it, and that is the only
+caller. It is memoised, so opening the dialogs repeatedly costs one IndexedDB
+read. For the whole first life of the feature nothing called it at all, so
+"remember on this device" wrote a key that was never read back — a working
+function with no caller, which a test of the function would never have caught.
+`ai-credentials.test.js` therefore drives `loadAiProviders()` rather than
+`loadCredentials()`.
 
 **Storage is memory-first.** Nothing is written to disk unless the user ticks
 "remember on this device", which uses IndexedDB under `ai.credential` —
@@ -1396,7 +1407,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/core/{snap,snapping,layer-bounds}.js`
 - `src/core/animation.js`, `src/ui/panels/timeline.js`
 - `src/color/{icc,manage}.js`
-- `src/ai/*` + `src/ui/dialogs/{ai-key,ai-consent,generative-fill}.js`
+- `src/ai/*` + `src/ui/dialogs/{ai-key,ai-consent,generative-fill,ai-guide}.js`
 - `src/select/{maxflow,grabcut,refine}.js`
 - `src/vector/path.js`, `src/text/text-render.js`
 

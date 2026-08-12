@@ -122,11 +122,51 @@ async function openSelectAndMask(doc, opts = {}) {
  * is not even fetched until a user deliberately asks for the feature. The
  * providers register themselves as a side effect of that import.
  */
-async function openGenerativeFill(doc) {
-  if (!doc) return;
+/**
+ * Whether to offer the mock provider.
+ *
+ * It generates a hatched placeholder with no key and no network, which is what
+ * makes it useful in the test suite and wrong in the shipped dropdown: beside
+ * two real providers it reads as a third one that is simply broken. `?ai=mock`
+ * is the flag its own source comment always claimed gated it, and did not.
+ *
+ * Exported and taking the query string as an argument so the rule can be tested
+ * without a page load — the test suite registers the mock by importing it, so
+ * its absence cannot be observed any other way.
+ *
+ * @param {string} search
+ * @returns {boolean}
+ */
+export function mockProviderRequested(search = '') {
+  return new URLSearchParams(search).get('ai') === 'mock';
+}
+
+/**
+ * Everything the AI feature needs, fetched on demand.
+ *
+ * Exported so the test suite can assert the wiring itself. That is not
+ * ceremony: the credential restore below existed as a function nobody called
+ * for the whole life of the feature, and a test of the function would have
+ * passed the entire time.
+ */
+export async function loadAiProviders() {
   await import('../ai/providers/openai.js');
   await import('../ai/providers/gemini.js');
-  await import('../ai/providers/mock.js');
+  if (mockProviderRequested(location.search)) {
+    await import('../ai/providers/mock.js');
+  }
+  /*
+   * Restore any key the user asked this device to remember. Without it the
+   * "Remember this key on this device" checkbox wrote to IndexedDB and nothing
+   * ever read it back, so it behaved exactly like not ticking the box.
+   */
+  const { loadCredentials } = await import('../ai/credentials.js');
+  await loadCredentials();
+}
+
+async function openGenerativeFill(doc) {
+  if (!doc) return;
+  await loadAiProviders();
   const { showGenerativeFillDialog } = await import('../ui/dialogs/generative-fill.js');
   await showGenerativeFillDialog(doc);
 }
@@ -1353,8 +1393,7 @@ registerCommands([
     id: 'edit.ai-settings',
     label: 'AI Settings…',
     run: async () => {
-      await import('../ai/providers/openai.js');
-      await import('../ai/providers/gemini.js');
+      await loadAiProviders();
       const { showAiKeyDialog } = await import('../ui/dialogs/ai-key.js');
       await showAiKeyDialog('openai');
     },
@@ -1838,6 +1877,24 @@ registerCommands([
   { id: 'window.workspace.reset', label: 'Reset Workspace', run: resetWorkspace },
 
   /* --- Help ------------------------------------------------------- */
+  {
+    /*
+     * Above About rather than below it, because it is the one thing in this menu
+     * somebody actually needs: Generative Fill spends real money and is the only
+     * feature whose setup lives in a different dialog from the feature itself.
+     */
+    id: 'help.ai-guide',
+    label: 'Using Generative Fill…',
+    run: async () => {
+      const { showAiGuideDialog } = await import('../ui/dialogs/ai-guide.js');
+      // Opened here rather than by the guide calling runCommand: this command is
+      // still running while the guide is up, and runCommand will not re-enter.
+      if (await showAiGuideDialog() !== 'settings') return;
+      await loadAiProviders();
+      const { showAiKeyDialog } = await import('../ui/dialogs/ai-key.js');
+      await showAiKeyDialog('openai');
+    },
+  },
   { id: 'help.about', label: 'About Pikado…', run: showAbout },
 ]);
 
@@ -2152,7 +2209,7 @@ export const MENU_TREE = [
   },
   {
     label: 'Help',
-    items: ['help.about', '---', 'edit.keyboard-shortcuts'],
+    items: ['help.ai-guide', '---', 'help.about', '---', 'edit.keyboard-shortcuts'],
   },
 ];
 

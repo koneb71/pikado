@@ -257,7 +257,13 @@ outside your selection is masked off rather than silently replacing your picture
 
 There is also a Mock (offline) provider that generates a hatched placeholder with
 no key and no network. It exists so the whole path — setup, consent, progress,
-cancellation and every error — can be exercised in the test suite and by hand.
+cancellation and every error — can be exercised in the test suite and by hand;
+add `?ai=mock` to the URL to get it. It is not in the normal dropdown, because
+beside two real providers a test double reads as a third one that is broken.
+
+**Help > Using Generative Fill** has the whole thing as instructions, in the app,
+for the same reason it needs them: the setup lives in a different dialog from the
+feature, and it is the one thing here that spends money.
 
 What actually gets sent is the selection plus the pixels around it, squared off
 and scaled to the provider's size. Where the document allows, the crop grows to

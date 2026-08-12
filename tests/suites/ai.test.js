@@ -499,3 +499,24 @@ suite('ai / a model is a preference and a key is still not', async (t) => {
     setPrefs({ aiModels: before.models || {}, aiEfforts: before.efforts || {} });
   }
 });
+
+suite('ai / the test double is not offered to real users', async (t) => {
+  const defs = await import('/src/commands/definitions.js');
+  const { mockProviderRequested } = defs;
+
+  /*
+   * The mock is registered by importing it — which this suite does, so its
+   * absence from the dropdown cannot be observed from in here. What can be
+   * observed is the rule that decides whether the app imports it at all.
+   *
+   * Verified to fail by making mockProviderRequested return true, which is what
+   * the app did in effect: the flag was described in a comment and never read.
+   */
+  t.ok(mockProviderRequested('?ai=mock'), 'the flag turns the mock on');
+  t.notOk(mockProviderRequested(''), 'and an ordinary visit does not get it');
+  t.notOk(mockProviderRequested('?ai=openai'), 'nor does another value');
+  t.notOk(mockProviderRequested('?mock=1'), 'nor a differently named parameter');
+
+  const help = defs.default.find((m) => m.label === 'Help');
+  t.ok(help && help.items.includes('help.ai-guide'), 'the Generative Fill guide is in the Help menu');
+});

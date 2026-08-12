@@ -52,12 +52,27 @@ const keys = new Map();
 const scopes = new Map();
 
 /**
- * Restore remembered keys into memory. Call once during boot.
- * Async because it reads IndexedDB.
+ * Restore remembered keys into memory.
+ *
+ * Called from every AI entry point rather than at boot, so the IndexedDB read
+ * happens for the people who use the feature and nobody else — the same reason
+ * the provider modules are not fetched until asked for.
+ *
+ * **Runs at most once**, so opening the AI dialogs repeatedly costs one
+ * IndexedDB read rather than one per open. Only a saving, not a correctness
+ * guard: a second run would be harmless, because `setCredential` deletes the
+ * stored copy when a key is set for this session only, so there is never a
+ * stale record on disk waiting to overwrite what is in memory.
  *
  * @returns {Promise<number>} how many keys were restored
  */
-export async function loadCredentials() {
+let loading = null;
+export function loadCredentials() {
+  if (!loading) loading = readCredentials();
+  return loading;
+}
+
+async function readCredentials() {
   try {
     const rec = await kvGet(STORE_KEY);
     if (!rec || typeof rec !== 'object') return 0;
@@ -72,6 +87,11 @@ export async function loadCredentials() {
   } catch {
     return 0;
   }
+}
+
+/** For tests, which need a fresh boot rather than one memoised run. */
+export function resetCredentialLoad() {
+  loading = null;
 }
 
 /** The persisted record, or an empty object. */

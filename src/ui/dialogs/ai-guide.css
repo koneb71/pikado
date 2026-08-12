@@ -1,0 +1,51 @@
+/*
+ * The Generative Fill guide.
+ *
+ * Numbered steps rather than a wall of prose, because this dialog is read while
+ * doing the thing it describes: the eye needs to find "step 3" again after
+ * looking away at the canvas.
+ */
+
+.pkd-guide { font-size: var(--fs); line-height: 1.6; }
+.pkd-guide p { margin: 0 0 6px; color: var(--text-dim); }
+.pkd-guide strong { color: var(--text); font-weight: 600; }
+
+.pkd-guide-steps {
+  list-style: none;
+  margin: 4px 0 12px;
+  padding: 0;
+}
+
+.pkd-guide-step {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+
+.pkd-guide-step > div { min-width: 0; }
+.pkd-guide-step p:last-child { margin-bottom: 0; }
+
+/* A fixed-width counter so the step bodies share one left edge. */
+.pkd-guide-num {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--accent-soft, var(--accent));
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.pkd-guide ul {
+  margin: 4px 0 10px;
+  padding: 0 0 0 20px;
+  color: var(--text-dim);
+}
+
+.pkd-guide li { margin: 3px 0; }
+.pkd-guide-steps > li { margin-bottom: 10px; }

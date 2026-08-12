@@ -416,3 +416,44 @@ suite('ai credentials / Gemini carries the model in the path and thinks only whe
     'and the default model is the current one');
   await forgetAllCredentials();
 });
+
+suite('ai credentials / a remembered key comes back, and only once', async (t) => {
+  const { resetCredentialLoad } = await import('/src/ai/credentials.js');
+  await forgetAllCredentials();
+
+  /*
+   * A real reload, not a simulated one: put a key in the store the way
+   * `remember: true` does, with nothing in memory. That is exactly the state a
+   * user is in on their second visit.
+   */
+  await kvSet('ai.credentials', { openai: { key: 'sk-remembered-across-boots' } });
+  t.notOk(hasCredential('openai'), 'a fresh boot starts with nothing in memory');
+
+  /*
+   * Through the app's own entry point, not by calling loadCredentials directly.
+   * The bug this catches was never a broken function — it was a working one
+   * that nothing called, so "Remember this key on this device" wrote to
+   * IndexedDB, no code read it back, and the box behaved exactly like leaving
+   * it unticked. A test of the function would have passed throughout.
+   * Verified to fail by removing the loadCredentials call from loadAiProviders.
+   */
+  const { loadAiProviders } = await import('/src/commands/definitions.js');
+  resetCredentialLoad();
+  await loadAiProviders();
+  t.ok(hasCredential('openai'), 'opening the AI feature restores it');
+  t.ok(redactedCredential('openai').endsWith('oots'), 'and it is the key that was remembered');
+
+  /*
+   * Setting a key for this session only clears the remembered copy, which is
+   * what makes a second restore harmless and the memoisation a saving rather
+   * than a guard. Asserted because it is the reason the load can be
+   * fire-and-forget at all.
+   * Verified to fail by dropping the store cleanup from setCredential.
+   */
+  await setCredential('openai', 'sk-session-only-abcd');
+  t.notOk(await kvGet('ai.credentials'),
+    'a session-only key removes the remembered one from disk');
+
+  await forgetAllCredentials();
+  resetCredentialLoad();
+});
