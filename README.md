@@ -553,7 +553,8 @@ Stated plainly so you don't find out by clicking:
 - **CMYK and Lab as document modes, and 16-bit.** Everything is 8-bit
   internally, so a convert into a much larger space and back costs a little
   precision a 16-bit pipeline would not (the suite pins it under 2.2 mean
-  absolute difference), and a 16-bit PSD opens by converting down.
+  absolute difference), and a 16-bit PSD opens by converting down — and now
+  says so rather than losing the depth silently.
 
   The reason this is one bullet rather than three is that they share a blocker:
   every pixel buffer in Pikado is an `HTMLCanvasElement`, and a canvas backing

@@ -369,6 +369,16 @@ export async function readPSD(arrayBuffer, opts = {}) {
     ignorePrivate: !!opts.ignorePrivate,
   };
 
+  /*
+   * A 16-bit file opens, and loses half its depth doing so. That was silent,
+   * which is the wrong kind of quiet: the whole reason to work in 16-bit is
+   * headroom for heavy tonal edits, and someone who does not know it has gone
+   * will spend it and see banding they cannot explain.
+   */
+  if (depth === 16) {
+    ctx.warnings.push('This is a 16-bit file. Pikado works in 8 bits per channel, so it was converted down — tonal edits have less headroom than the original.');
+  }
+
   // --- Colour mode data (palette for indexed/duotone; unused for RGB/Gray).
   const cmdLength = r.readUint32();
   r.skip(cmdLength);
@@ -881,13 +891,43 @@ function undoPrediction(data, width, height, depth) {
   return data;
 }
 
-/** Normalise raw channel bytes to one 8-bit sample per pixel. */
-function toSamples(raw, width, height, depth) {
+/**
+ * Normalise raw channel bytes to one 8-bit sample per pixel.
+ *
+ * Exported for the tests: it is the only place a 16-bit file loses depth, and
+ * it had no coverage at all.
+ *
+ * **16-bit narrows here and cannot yet do otherwise.** Every pixel buffer in
+ * Pikado is a canvas, which is 8-bit RGBA, so there is nowhere to put the extra
+ * precision — see the limitations in the README. What this must at least do is
+ * narrow *correctly*.
+ *
+ * The old code took the high byte, which is `floor(v / 256)` and not the same
+ * as scaling: 16-bit full scale is 65535 and 8-bit full scale is 255, so the
+ * ratio is 257, not 256. Truncating biases every sample downward by up to a
+ * level and sends the darkest 255 values of the range to 0 rather than to 1.
+ * Rounding through 257 is exact at both ends — 0 to 0 and 65535 to 255.
+ *
+ * A note on range, since it is worth stating rather than assuming: this treats
+ * 16-bit samples as 0..65535. Photoshop's *internal* representation is often
+ * described as 0..32768, and if a file on disk used that range white would
+ * arrive as 128 and every 16-bit PSD would open at half brightness. That is not
+ * a subtle failure, so a real 16-bit export is what would settle it — not
+ * reasoning. Until one is checked, this is the documented file-format range.
+ *
+ * @param {Uint8Array} raw big-endian samples
+ * @param {number} depth 8 or 16
+ */
+export function toSamples(raw, width, height, depth) {
   const n = width * height;
   const out = new Uint8Array(n);
   if (!raw) return out;
   if (depth === 16) {
-    for (let i = 0; i < n; i++) out[i] = raw[i * 2] || 0; // high byte ≈ value / 257
+    for (let i = 0; i < n; i++) {
+      const hi = raw[i * 2] || 0;
+      const lo = raw[i * 2 + 1] || 0;
+      out[i] = Math.round(((hi << 8) | lo) / 257);
+    }
   } else {
     out.set(raw.subarray(0, Math.min(n, raw.length)));
   }

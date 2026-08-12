@@ -913,3 +913,83 @@ suite('io / reading a PSD the way another application would', async (t) => {
   t.ok(theirs.flatLayers().some((l) => l.name === 'Vibrance'),
     'though the layer is still there, correctly named — inert rather than missing');
 });
+
+suite('io / 16-bit samples narrow correctly, and say that they did', async (t) => {
+  const { toSamples } = await import('/src/io/psd-read.js');
+
+  /** Big-endian 16-bit samples. */
+  const be = (...vals) => {
+    const out = new Uint8Array(vals.length * 2);
+    vals.forEach((v, i) => { out[i * 2] = (v >> 8) & 0xff; out[i * 2 + 1] = v & 0xff; });
+    return out;
+  };
+
+  /*
+   * 16-bit full scale is 65535 and 8-bit full scale is 255, so the ratio is
+   * 257 — not 256. The old code took the high byte, which is floor(v / 256):
+   * exact at white by luck, biased low everywhere else, and it sent the darkest
+   * 255 values of the range to 0 instead of 1.
+   * Verified to fail by restoring `out[i] = raw[i * 2]`.
+   */
+  const got = toSamples(be(0, 65535, 32896, 255, 511, 257), 6, 1, 16);
+  t.eq(got[0], 0, 'zero stays zero');
+  t.eq(got[1], 255, 'and full scale is exactly full scale');
+  t.eq(got[2], 128, 'a mid value lands mid');
+  t.eq(got[3], 1, 'a value just above black rounds to 1, not down to 0');
+  t.eq(got[4], 2, 'and the next step to 2');
+  t.eq(got[5], 1, 'exactly one 8-bit step is exactly 1');
+
+  /*
+   * Monotonic across the whole range: narrowing must never send a brighter
+   * 16-bit sample to a darker 8-bit one.
+   * Verified to fail by rounding with a divisor that is not 257.
+   */
+  let prev = -1;
+  let monotonic = true;
+  let exact = true;
+  for (let v = 0; v <= 65535; v += 7) {
+    const out = toSamples(be(v), 1, 1, 16)[0];
+    if (out < prev) monotonic = false;
+    prev = out;
+    // Every 8-bit value n must be reachable from its own 16-bit encoding.
+    if (v % 257 === 0 && out !== v / 257) exact = false;
+  }
+  t.ok(monotonic, 'narrowing never goes backwards');
+  t.ok(exact, 'and an exactly-representable value round-trips exactly');
+
+  // 8-bit data passes straight through.
+  const eight = toSamples(new Uint8Array([0, 7, 128, 255]), 4, 1, 8);
+  t.eq([...eight].join(','), '0,7,128,255', '8-bit samples are untouched');
+
+  // A short or absent buffer must not throw — a truncated file is ordinary.
+  t.eq(toSamples(null, 2, 2, 16).length, 4, 'a missing buffer yields zeros of the right size');
+  t.eq(toSamples(be(65535), 4, 1, 16)[3], 0, 'and a short one is padded rather than read past');
+});
+
+suite('io / opening a 16-bit file says the depth was lost', async (t) => {
+  const { PikaDocument } = await import('/src/core/document.js');
+  const { app } = await import('/src/core/app.js');
+  const doc = new PikaDocument({ width: 4, height: 4, name: 'depth' });
+  const bytes = await (await writePSD(doc)).arrayBuffer();
+
+  // Pikado writes 8-bit, so flip the header's depth to claim 16 and check the
+  // warning fires. The pixel data is then misread, which is fine — the
+  // assertion is about the warning, and a real 16-bit file is not something
+  // this suite can produce.
+  const u8 = new Uint8Array(bytes.slice(0));
+  new DataView(u8.buffer).setUint16(22, 16);
+
+  const seen = [];
+  const realToast = app.toast;
+  app.toast = (msg) => { seen.push(String(msg)); };
+  try { await readPSD(u8.buffer); } catch { /* misread pixels are expected */ }
+  finally { app.toast = realToast; }
+
+  /*
+   * Silence here is the wrong kind of quiet: the reason to work in 16 bits is
+   * headroom, and someone who does not know it has gone will spend it and see
+   * banding they cannot explain.
+   * Verified to fail by removing the ctx.warnings.push for depth === 16.
+   */
+  t.ok(seen.some((m) => /16-bit/.test(m)), `the depth loss is reported (${seen.join(' | ') || 'nothing'})`);
+});
