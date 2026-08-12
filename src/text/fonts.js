@@ -2,9 +2,14 @@
  * Font catalogue + measurement helpers for the type tools.
  *
  * `FONT_FAMILIES` mixes system stacks (always available) with a handful of
- * Google families that are fetched on demand by `loadGoogleFont()`. Every
- * entry exposes a CSS `stack` string that both the canvas renderer and the
- * editing `<textarea>` use, so glyph metrics agree exactly.
+ * Google families, which `ensureFont()` downloads through `font-manager.js`.
+ * Every entry exposes a CSS `stack` string that both the canvas renderer and
+ * the editing `<textarea>` use, so glyph metrics agree exactly.
+ *
+ * A family not in that list is identified as `google:<Exact Family Name>` and
+ * comes from the bundled catalogue — see `normalizeFontId` below, which is
+ * where the three dialects that have historically been written into
+ * `layer.text.font` are reconciled.
  */
 
 import { createCanvas } from '../core/util.js';
@@ -56,6 +61,30 @@ export const FONT_FAMILIES = [
 /** `{value,label}` list for a `select` ParamDescriptor. */
 export const FONT_FAMILY_OPTIONS = FONT_FAMILIES.map((f) => ({ value: f.id, label: f.name }));
 
+/**
+ * Every family the user can pick right now: the built-ins, plus whatever has
+ * been downloaded, plus the layer's own family when it is neither.
+ *
+ * One builder for all three pickers. The `current` shim is what lets a control
+ * display a family it has no entry for — a Google family not yet downloaded, or
+ * one named by a PSD — instead of silently showing the wrong name.
+ *
+ * @param {string} [current] the id the caller is displaying
+ * @param {{id:string,name:string}[]} [installed] downloaded families
+ * @returns {{value:string,label:string}[]}
+ */
+export function fontFamilyOptions(current = '', installed = []) {
+  const out = [...FONT_FAMILY_OPTIONS];
+  for (const f of installed) {
+    if (!out.some((o) => o.value === f.id)) out.push({ value: f.id, label: f.name });
+  }
+  const key = normalizeFontId(current);
+  if (key && !out.some((o) => o.value === key)) {
+    out.unshift({ value: key, label: googleFamilyOf(key) || String(key) });
+  }
+  return out;
+}
+
 export const FONT_WEIGHTS = [
   { value: 100, label: 'Thin' },
   { value: 200, label: 'Extra Light' },
@@ -71,17 +100,182 @@ export const FONT_WEIGHTS = [
 /** Common type sizes offered in the options bar. */
 export const FONT_SIZES = [6, 8, 9, 10, 11, 12, 14, 16, 18, 21, 24, 30, 36, 48, 60, 72, 96, 144, 288];
 
+/* ------------------------------------------------------------------ */
+/* Font identity                                                       */
+/* ------------------------------------------------------------------ */
+
 /**
- * @param {string} id a FONT_FAMILIES id — unknown ids fall through to the
- *   system stack so old documents never render blank.
+ * A downloaded Google family is identified as `google:<Exact Family Name>`.
+ *
+ * The name *is* the id rather than a slug, and that is load-bearing. The exact
+ * string is already the key for the css2 API, for CSS `font-family`, for
+ * `FontFace`, and for the catalogue — a slug would add a lossy two-way mapping
+ * to maintain and a collision surface ("Noto Sans JP" vs "Noto Sans Jp"). More
+ * importantly the name-as-id resolves with *nothing else loaded*: reopening a
+ * `.pkd` offline, with no catalogue chunk and no IndexedDB read, still knows
+ * which family the layer wants and what to call it in a warning.
  */
-export function fontStack(id) {
-  const f = FONT_FAMILIES.find((x) => x.id === id);
-  return f ? f.stack : (id && /[a-z]/i.test(String(id)) ? `${id}, ${SANS}` : SANS);
+export const GOOGLE_PREFIX = 'google:';
+
+/**
+ * The css2 URL for a family, built from what that family actually offers.
+ *
+ * This is the whole of a bug that shipped for the life of the feature. The old
+ * code posted `:ital,wght@0,100..900;1,100..900` for every family, and a weight
+ * range a family does not have is a **hard failure**, not a fallback to what it
+ * does have. Ten of the fourteen bundled Google families — Open Sans, Lato,
+ * Poppins, Oswald, Playfair Display, Merriweather, JetBrains Mono, Pacifico,
+ * Lobster, Dancing Script — never loaded at all, and because the loader
+ * resolved `false` instead of throwing, picking one silently rendered the CSS
+ * fallback instead.
+ *
+ * Three shapes, decided by the family rather than assumed:
+ *
+ *   static, one weight   `?family=Pacifico`                  (no axis at all)
+ *   static, many weights `?family=Lato:ital,wght@0,100;0,300;…;1,100;…`
+ *   variable             `?family=Open+Sans:ital,wght@0,300..800;1,300..800`
+ *
+ * @param {{family:string, weights?:number[], italic?:boolean, variable?:boolean}[]} families
+ * @param {{text?:string}} [opts] `text` asks Google to subset to those glyphs,
+ *   which is what makes a preview a few KB rather than the whole face.
+ * @returns {string}
+ */
+export function css2Url(families, opts = {}) {
+  const parts = [];
+  for (const f of families) {
+    if (!f || !f.family) continue;
+    const name = f.family.trim().replace(/\s+/g, '+');
+    const weights = (f.weights || []).filter((w) => Number.isFinite(w)).sort((a, b) => a - b);
+
+    // No axis spec always resolves, so it is the right answer whenever there is
+    // nothing to say — one weight, or no weight data at all.
+    if (weights.length < 2 && !f.italic) { parts.push(name); continue; }
+
+    const axis = f.variable
+      ? `${weights[0]}..${weights[weights.length - 1]}`
+      : weights.join(';0,');
+    const spec = f.italic
+      ? `ital,wght@0,${axis};1,${f.variable ? axis : weights.join(';1,')}`
+      : `wght@${f.variable ? axis : weights.join(';')}`;
+    parts.push(`${name}:${spec}`);
+  }
+  if (!parts.length) return '';
+  const text = opts.text ? `&text=${encodeURIComponent(opts.text)}` : '';
+  return `https://fonts.googleapis.com/css2?family=${parts.join('&family=')}${text}&display=swap`;
+}
+
+/** `google:Playfair Display` -> `Playfair Display`, otherwise ''. */
+export function googleFamilyOf(id) {
+  return typeof id === 'string' && id.startsWith(GOOGLE_PREFIX)
+    ? id.slice(GOOGLE_PREFIX.length)
+    : '';
+}
+
+/**
+ * The Google family name behind any id, or `''` for a pure system stack.
+ *
+ * Distinct from `googleFamilyOf` because the built-ins are the awkward case:
+ * `normalizeFontId` collapses `google:Pacifico` to the built-in id `pacifico`,
+ * which is right for identity but loses the name the font is *stored and
+ * registered* under. Anything asking "which downloaded family is this?" has to
+ * come through here, or every built-in Google family reads as not installed.
+ */
+export function googleNameFor(id) {
+  const key = normalizeFontId(id);
+  const direct = googleFamilyOf(key);
+  if (direct) return direct;
+  const f = FONT_FAMILIES.find((x) => x.id === key);
+  return (f && f.google) || '';
+}
+
+/**
+ * Aliases onto canonical ids, built once.
+ *
+ * Three separate dialects have to land on the same value: the catalogue ids the
+ * Type tool writes, the display names and raw CSS families the Character panel
+ * writes (`'Arial'`, `'sans-serif'`), and `google:` names for families that are
+ * already built in.
+ */
+const ALIASES = (() => {
+  const m = new Map();
+  const put = (k, id) => { if (k) m.set(String(k).toLowerCase(), id); };
+  for (const f of FONT_FAMILIES) {
+    put(f.id, f.id);
+    put(f.name, f.id);
+    // A built-in beats a download: `google:Roboto` collapses to `roboto`, which
+    // keeps its PostScript faces for PSD export and stops every picker
+    // listing Roboto twice.
+    if (f.google) {
+      put(f.google, f.id);
+      put(GOOGLE_PREFIX + f.google, f.id);
+    }
+  }
+  // The generic CSS families the Character panel offers as if they were fonts.
+  put('system-ui', 'system');
+  put('sans-serif', 'system');
+  put('serif', 'times');
+  put('monospace', 'mono');
+  put('cursive', 'brush');
+  return m;
+})();
+
+/**
+ * The canonical id for anything that has ever been written into
+ * `layer.text.font` or `layer.text.fontFamily`.
+ *
+ * Pure and synchronous — no catalogue, no IndexedDB — because it is called from
+ * `fontStack`, which runs on every rasterisation.
+ *
+ * Anything unrecognised is returned unchanged. That is deliberate: a family
+ * name from a PSD we have no mapping for still has to render through the CSS
+ * stack, and inventing an id for it would lose the only information we have.
+ *
+ * @param {string} v
+ * @returns {string}
+ */
+export function normalizeFontId(v) {
+  if (!v || typeof v !== 'string') return 'system';
+  const hit = ALIASES.get(v.toLowerCase());
+  if (hit) return hit;
+  const g = googleFamilyOf(v);
+  // `google:` survives even when the family is unknown to us — offline, that
+  // prefix plus the name is the whole of what we know, and it is enough.
+  return g ? GOOGLE_PREFIX + g.trim() : v;
+}
+
+/**
+ * Fallback stacks per catalogue category, so a substituted face is at least the
+ * right shape — a serif standing in for a serif.
+ */
+const CATEGORY_STACKS = {
+  'sans-serif': SANS,
+  serif: 'Georgia, "Times New Roman", serif',
+  display: SANS,
+  handwriting: '"Segoe Script", "Brush Script MT", cursive',
+  monospace: 'ui-monospace, Menlo, Consolas, monospace',
+};
+
+/**
+ * The CSS stack for a font id — unknown ids fall through to a system stack so
+ * old documents never render blank.
+ *
+ * @param {string} id
+ * @param {string} [category] the catalogue category, when the caller knows it,
+ *   so a missing download substitutes something of the right shape
+ */
+export function fontStack(id, category = '') {
+  const key = normalizeFontId(id);
+  const f = FONT_FAMILIES.find((x) => x.id === key);
+  if (f) return f.stack;
+  const google = googleFamilyOf(key);
+  const tail = CATEGORY_STACKS[category] || SANS;
+  if (google) return `"${google}", ${tail}`;
+  return key && /[a-z]/i.test(key) ? `${key}, ${tail}` : tail;
 }
 
 export function getFontFamily(id) {
-  return FONT_FAMILIES.find((x) => x.id === id) || null;
+  const key = normalizeFontId(id);
+  return FONT_FAMILIES.find((x) => x.id === key) || null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -171,15 +365,38 @@ const BOLD_THRESHOLD = 600;
  * @returns {{name:string, fauxBold:boolean, fauxItalic:boolean, real:boolean}}
  *   `real` is true when the name is the actual face for that weight and slant.
  */
-export function postScriptFace(id, weight = 400, style = 'normal') {
+export function postScriptFace(id, weight = 400, style = 'normal', caps = null) {
+  const key = normalizeFontId(id);
   const wantBold = Number(weight) >= BOLD_THRESHOLD;
   const wantItalic = style === 'italic';
-  const faces = POSTSCRIPT_FACES[id];
+  const faces = POSTSCRIPT_FACES[key];
 
   if (!faces) {
+    const google = googleFamilyOf(key);
+    if (google) {
+      /*
+       * Google's static faces are named `FamilyNoSpaces-Regular`, `-Bold`,
+       * `-Italic`, `-BoldItalic`. Claim a slot only when the family is known
+       * to have that face: an unresolvable PostScript name is worse than faux
+       * styling, because Photoshop then substitutes a different family
+       * outright. Without capabilities to check against, claim nothing.
+       */
+      const stem = google.replace(/[^A-Za-z0-9]/g, '');
+      const hasBold = !!caps && (caps.weights || []).some((w) => Number(w) >= BOLD_THRESHOLD);
+      const hasItalic = !!caps && (caps.italics || []).length > 0;
+      const bold = wantBold && hasBold;
+      const italic = wantItalic && hasItalic;
+      const slot = bold && italic ? 'BoldItalic' : bold ? 'Bold' : italic ? 'Italic' : 'Regular';
+      return {
+        name: `${stem}-${slot}`,
+        fauxBold: wantBold && !bold,
+        fauxItalic: wantItalic && !italic,
+        real: (!wantBold || bold) && (!wantItalic || italic),
+      };
+    }
     // An unknown id (a family typed in by hand, or one from a foreign file)
     // has no face table, so the regular-plus-faux route is all there is.
-    const stripped = String(id == null ? '' : id).replace(/[^A-Za-z0-9]/g, '');
+    const stripped = String(key == null ? '' : key).replace(/[^A-Za-z0-9]/g, '');
     return { name: stripped || 'Helvetica', fauxBold: wantBold, fauxItalic: wantItalic, real: false };
   }
 
@@ -239,68 +456,30 @@ export function familyFromPostScriptName(name) {
 /* Google font loading                                                 */
 /* ------------------------------------------------------------------ */
 
-const _requested = new Map();
-
 /**
- * Inject a Google Fonts stylesheet and wait for the browser to report the
- * face as ready. Resolves (without throwing) when the network is unavailable
- * so text still renders in the fallback stack.
- * @param {string} name the Google family name, e.g. 'Playfair Display'
- * @returns {Promise<boolean>} true when the face actually loaded
- */
-export function loadGoogleFont(name) {
-  if (!name) return Promise.resolve(false);
-  if (_requested.has(name)) return _requested.get(name);
-
-  const href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(name).replace(/%20/g, '+')}:ital,wght@0,100..900;1,100..900&display=swap`;
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href = href;
-  link.dataset.pkFont = name;
-  document.head.appendChild(link);
-
-  const p = new Promise((resolve) => {
-    const settle = async () => {
-      try {
-        await Promise.all([
-          document.fonts.load(`400 24px "${name}"`),
-          document.fonts.load(`700 24px "${name}"`),
-        ]);
-        await document.fonts.ready;
-        resolve(document.fonts.check(`400 24px "${name}"`));
-      } catch {
-        resolve(false);
-      }
-    };
-    link.addEventListener('load', settle, { once: true });
-    link.addEventListener('error', () => resolve(false), { once: true });
-    // Some browsers fire neither for cached stylesheets.
-    setTimeout(settle, 1200);
-  });
-  _requested.set(name, p);
-  return p;
-}
-
-/**
- * Make sure the face behind a FONT_FAMILIES id is usable, loading it from
- * Google when needed.
+ * Make sure the face behind a font id is usable.
+ *
+ * Everything that needs the network now goes through `font-manager.js`, which
+ * downloads a family's bytes and stores them. This used to inject a Google
+ * stylesheet `<link>` with a hardcoded `wght@100..900`, which is a hard failure
+ * for any family that does not offer that range — ten of the fourteen bundled
+ * Google families never loaded at all, and because the loader resolved `false`
+ * rather than throwing, the failure was invisible.
+ *
+ * Imported lazily so that a document with no Google family in it never pulls
+ * the manager, the catalogue, or IndexedDB.
+ *
  * @returns {Promise<boolean>}
  */
-export async function ensureFont(id, weight = 400, style = 'normal') {
-  const f = getFontFamily(id);
-  if (!f) return false;
-  if (f.google) await loadGoogleFont(f.google);
-  try {
-    await document.fonts.load(`${style} ${weight} 24px ${f.stack}`);
-  } catch {
-    /* the stack still resolves to a fallback face */
-  }
-  return true;
-}
-
-/** Preload every family that the character panel may show a preview of. */
-export function preloadGoogleFonts() {
-  return Promise.all(FONT_FAMILIES.filter((f) => f.google).map((f) => loadGoogleFont(f.google)));
+export async function ensureFont(id) {
+  const key = normalizeFontId(id);
+  const f = getFontFamily(key);
+  // A built-in with a `google` name is downloaded like any other Google family;
+  // a pure system stack needs nothing at all.
+  const needsNetwork = googleFamilyOf(key) || (f && f.google);
+  if (!needsNetwork) return true;
+  const { ensureFamily } = await import('./font-manager.js');
+  return ensureFamily(f && f.google ? GOOGLE_PREFIX + f.google : key);
 }
 
 /* ------------------------------------------------------------------ */

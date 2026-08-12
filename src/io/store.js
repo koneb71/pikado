@@ -10,13 +10,19 @@
  * welcome screen list recent documents (with thumbnails) without reading a
  * single project blob.
  *
- *   docmeta: {id, name, width, height, updatedAt, bytes, thumb: Blob}
- *   docdata: {id, data: Blob}
- *   kv:      {key, value}   — the session pointer and anything else small
+ *   docmeta:  {id, name, width, height, updatedAt, bytes, thumb: Blob}
+ *   docdata:  {id, data: Blob}
+ *   kv:       {key, value}   — the session pointer and anything else small
+ *   fontmeta: {family, category, weights, italics, faces, bytes, addedAt}
+ *   fontdata: {family, faces: [{weight, style, unicodeRange, buffer}]}
+ *
+ * Downloaded fonts split the same way and for the same reason: the pickers and
+ * PSD export need to know which families exist and what weights they have, and
+ * that answer must not cost a read of several megabytes of woff2.
  */
 
 const DB_NAME = 'pikado';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 /** Stop growing the store past this; the least recently touched go first. */
 export const STORE_LIMIT_BYTES = 1_200 * 1024 * 1024;
@@ -65,6 +71,9 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains('docdata')) db.createObjectStore('docdata', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv', { keyPath: 'key' });
+      // v2: downloaded fonts.
+      if (!db.objectStoreNames.contains('fontmeta')) db.createObjectStore('fontmeta', { keyPath: 'family' });
+      if (!db.objectStoreNames.contains('fontdata')) db.createObjectStore('fontdata', { keyPath: 'family' });
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -286,6 +295,84 @@ export async function prune(keepIds = []) {
     }
   }
   return { evicted, bytes: total };
+}
+
+/* ------------------------------------------------------------------ */
+/* Downloaded fonts                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Fonts are deliberately outside `prune()` above, which walks documents only.
+ * Evicting an autosave costs the seconds since the last quiet moment; evicting
+ * a font silently changes how every document that uses it looks, with nothing
+ * on screen to say why. The ceiling is enforced by refusing new downloads
+ * instead, and removal is explicit.
+ */
+
+/** Stop accepting new font downloads past this. */
+export const FONT_LIMIT_BYTES = 128 * 1024 * 1024;
+
+/**
+ * Store one downloaded family: metadata and faces in separate records, so the
+ * pickers can be built without reading a byte of woff2.
+ *
+ * @param {{family:string, category:string, weights:number[], italics:number[]}} meta
+ * @param {{weight:number, style:string, unicodeRange:string, buffer:ArrayBuffer}[]} faces
+ */
+export async function putFont(meta, faces) {
+  if (!meta || !meta.family || !Array.isArray(faces) || !faces.length) {
+    throw new Error('putFont needs a family and at least one face');
+  }
+  const bytes = faces.reduce((n, f) => n + (f.buffer ? f.buffer.byteLength : 0), 0);
+  const record = { ...meta, faces: faces.length, bytes, addedAt: nextStamp(), source: 'google' };
+  await withTx(['fontmeta', 'fontdata'], 'readwrite', (tx) => {
+    tx.objectStore('fontmeta').put(record);
+    tx.objectStore('fontdata').put({ family: meta.family, faces });
+  });
+  return record;
+}
+
+/** Every downloaded family's metadata. Cheap — no font bytes are read. */
+export async function listFontMeta() {
+  const out = [];
+  try {
+    await withTx(['fontmeta'], 'readonly', (tx) => {
+      const req = tx.objectStore('fontmeta').openCursor();
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (!cur) return;
+        out.push(cur.value);
+        cur.continue();
+      };
+    });
+  } catch {
+    return [];
+  }
+  return out;
+}
+
+/** The stored faces for one family, or null. */
+export async function getFontData(family) {
+  const rec = await getOne('fontdata', family);
+  return rec && Array.isArray(rec.faces) ? rec.faces : null;
+}
+
+export async function deleteFont(family) {
+  try {
+    await withTx(['fontmeta', 'fontdata'], 'readwrite', (tx) => {
+      tx.objectStore('fontmeta').delete(family);
+      tx.objectStore('fontdata').delete(family);
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Total bytes held by downloaded fonts. */
+export async function fontUsage() {
+  const metas = await listFontMeta();
+  return metas.reduce((n, m) => n + (m.bytes || 0), 0);
 }
 
 /**

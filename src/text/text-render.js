@@ -24,7 +24,7 @@
  */
 
 import { createCanvas, ctx2d, clamp } from '../core/util.js';
-import { fontCssString, fontMetrics, measureRun, measureChars } from './fonts.js';
+import { fontCssString, fontMetrics, measureRun, measureChars, normalizeFontId } from './fonts.js';
 
 export const WARP_STYLES = [
   { value: 'none', label: 'None' },
@@ -198,7 +198,13 @@ export function resolveTextProps(raw) {
   const content = contentPick.value == null ? '' : String(contentPick.value);
 
   const fontPick = pickAlias(t, 'font');
-  const font = fontPick.value || t.family || 'system';
+  /*
+   * Normalised here, at the one point every render path passes through, so a
+   * layer carrying a display name or a raw CSS family — which the Character
+   * panel used to write — heals on its first rasterisation rather than
+   * degrading silently through `fontStack` and `postScriptFace`.
+   */
+  const font = normalizeFontId(fontPick.value || t.family || 'system');
 
   // Leading: an alias value is always absolute px (0 = auto); the canonical
   // key keeps the multiplier-or-px convention of `resolveLineStep`.

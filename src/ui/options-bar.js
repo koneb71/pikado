@@ -124,6 +124,21 @@ function syncControls() {
 /* Individual controls                                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A descriptor's options, which may be a plain array or a thunk.
+ *
+ * A thunk is for lists that change while the bar is on screen — the font list
+ * grows when a family is downloaded, so an array captured at registration would
+ * go stale at exactly the moment it matters.
+ */
+function optionsOf(p) {
+  const o = typeof p.options === 'function' ? p.options() : p.options;
+  return Array.isArray(o) ? o : [];
+}
+
+const valueOf = (o) => (typeof o === 'object' && o ? o.value : o);
+const labelOf = (o) => (typeof o === 'object' && o ? o.label : String(o));
+
 function renderOption(p, tool) {
   if (!p) return null;
   if (p.type === 'separator') return el('div.pk-vsep');
@@ -186,26 +201,35 @@ function renderOption(p, tool) {
 
     case 'select': {
       const sel = el('select.pk-select.pk-ob-select');
-      for (const o of p.options || []) {
-        const val = typeof o === 'object' ? o.value : o;
-        const lab = typeof o === 'object' ? o.label : String(o);
-        sel.appendChild(el('option', { value: val, text: lab }));
-      }
-      sel.value = state[p.key];
+      /*
+       * Rebuilt on every sync rather than once, because a descriptor may
+       * declare its options as a thunk when the list can change while the bar
+       * is up — the font list grows as families are downloaded, and a layer can
+       * carry a family the list has never had.
+       */
+      const fill = (v) => {
+        const opts = optionsOf(p);
+        const same = sel.options.length === opts.length
+          && opts.every((o, i) => sel.options[i] && sel.options[i].value === String(valueOf(o)));
+        if (!same) {
+          sel.replaceChildren(...opts.map((o) => el('option', { value: valueOf(o), text: labelOf(o) })));
+        }
+        sel.value = v;
+      };
+      fill(state[p.key]);
       sel.addEventListener('change', () => {
-        const opt = (p.options || []).find((o) => String(typeof o === 'object' ? o.value : o) === sel.value);
-        const value = opt == null ? sel.value : typeof opt === 'object' ? opt.value : opt;
-        setValue(tool, p.key, value);
+        const opt = optionsOf(p).find((o) => String(valueOf(o)) === sel.value);
+        setValue(tool, p.key, opt == null ? sel.value : valueOf(opt));
       });
       row.append(el('span.pk-ob-label', { text: p.label || '' }), sel);
-      register((v) => { sel.value = v; });
+      register(fill);
       break;
     }
 
     case 'radio': {
       const seg = el('div.pk-seg');
       const buttons = [];
-      for (const o of p.options || []) {
+      for (const o of optionsOf(p)) {
         const val = typeof o === 'object' ? o.value : o;
         const lab = typeof o === 'object' ? o.label : String(o);
         const b = el('button.pk-seg-btn', {

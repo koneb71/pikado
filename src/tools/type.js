@@ -21,7 +21,7 @@ import { toHex, parseColor, toCss } from '../core/color.js';
 import { paramDialog } from '../ui/dialog.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
 import { formatAccel } from '../commands/registry.js';
-import { FONT_FAMILY_OPTIONS, FONT_WEIGHTS, fontStack, ensureFont, invalidateFontMetrics } from '../text/fonts.js';
+import { fontFamilyOptions, FONT_WEIGHTS, fontStack, ensureFont, invalidateFontMetrics } from '../text/fonts.js';
 import {
   WARP_STYLES, defaultTextProps, layoutText, textOrigin, wrapWidthFor,
   measureTextLayer, rasterizeTextLayer, textLayerToMask, resolveTextProps,
@@ -466,7 +466,7 @@ class TypeToolBase extends Tool {
       groupOrder: 15,
       ...opts,
       options: [
-        { key: 'font', label: 'Font', type: 'select', options: FONT_FAMILY_OPTIONS, default: 'system' },
+        { key: 'font', label: 'Font', type: 'select', options: () => fontFamilyOptions(), default: 'system' },
         { key: 'size', label: 'Size', type: 'number', min: 1, max: 1600, step: 1, default: 48, unit: 'px' },
         { key: 'weight', label: 'Weight', type: 'select', options: FONT_WEIGHTS, default: 400 },
         { key: 'italic', label: 'Italic', type: 'checkbox', default: false },

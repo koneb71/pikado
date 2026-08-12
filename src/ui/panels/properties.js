@@ -9,7 +9,7 @@ import { boxBlurMask } from '../../core/selection.js';
 import { getAdjustment, defaultParams } from '../../adjustments/registry.js';
 import { buildForm } from '../dialog.js';
 import { toHex, parseColor } from '../../core/color.js';
-import { FONT_FAMILY_OPTIONS, FONT_WEIGHTS, ensureFont } from '../../text/fonts.js';
+import { fontFamilyOptions, FONT_WEIGHTS, ensureFont } from '../../text/fonts.js';
 import * as ops from '../../layers/ops.js';
 import {
   isSmartLayer, getSmartTransform, getSmartFilters, decomposeMatrix, composeMatrix,
@@ -473,9 +473,9 @@ function textSection(doc, layer) {
   if (t.style == null) t.style = t.italic ? 'italic' : 'normal';
   if (t.letterSpacing == null) t.letterSpacing = 0;
 
-  const families = FONT_FAMILY_OPTIONS.some((o) => o.value === t.font)
-    ? FONT_FAMILY_OPTIONS
-    : [{ value: t.font, label: String(t.font) }, ...FONT_FAMILY_OPTIONS];
+  // Shared builder — it already prepends a family the list does not have, which
+  // is what the ad-hoc code here used to do.
+  const families = fontFamilyOptions(t.font);
 
   const state = {
     content: String(t.content),

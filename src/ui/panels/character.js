@@ -5,6 +5,7 @@ import { LayerType } from '../../core/layer.js';
 import { parseColor, toHex } from '../../core/color.js';
 import { iconEl } from '../icons.js';
 import { colorSwatchButton } from '../color-picker.js';
+import { fontFamilyOptions, normalizeFontId } from '../../text/fonts.js';
 import './panels.css';
 import './character.css';
 
@@ -17,7 +18,7 @@ import './character.css';
  */
 
 const DEFAULT_TEXT = {
-  fontFamily: 'Arial',
+  fontFamily: 'system',
   fontStyle: 'regular',
   fontSize: 24,
   leading: 0,          // 0 = auto (1.2 × size)
@@ -46,12 +47,6 @@ const DEFAULT_TEXT = {
 };
 
 if (!app.textDefaults) app.textDefaults = { ...DEFAULT_TEXT };
-
-const FONTS = [
-  'Arial', 'Helvetica', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Segoe UI',
-  'Times New Roman', 'Georgia', 'Garamond', 'Palatino Linotype', 'Courier New',
-  'Lucida Console', 'Impact', 'Comic Sans MS', 'system-ui', 'serif', 'sans-serif', 'monospace',
-];
 
 const STYLES = [
   { value: 'regular', label: 'Regular' },
@@ -191,6 +186,30 @@ registerPanel({
       );
     };
 
+    /*
+     * The font row rebuilds its options on every sync rather than being built
+     * once, because the list grows: a family downloaded while the panel is open
+     * has to appear, and a layer can carry a family that is not in the list at
+     * all. It used to be a fixed list of raw CSS names ('Arial', 'sans-serif'),
+     * which is a different vocabulary from the ids the Type tool writes — so
+     * this select showed the wrong family for every layer the Type tool made,
+     * and PSD export of one of its values silently lost the real face.
+     */
+    const fontField = () => {
+      const sel = el('select.pk-select.pkt-select');
+      sel.addEventListener('change', () => set('fontFamily', sel.value, false));
+      controls.push(() => {
+        const current = normalizeFontId(get('fontFamily'));
+        const opts = fontFamilyOptions(current);
+        const same = sel.options.length === opts.length
+          && opts.every((o, i) => sel.options[i] && sel.options[i].value === o.value);
+        if (!same) sel.replaceChildren(...opts.map((o) => el('option', { value: o.value, text: o.label })));
+        sel.value = current;
+      });
+      return el('label.pkt-field.pkt-wide', {},
+        el('span.pkt-label', { text: 'Font' }), sel);
+    };
+
     const checkField = (label, key) => {
       const input = el('input', { type: 'checkbox' });
       input.addEventListener('change', () => set(key, input.checked, false));
@@ -218,7 +237,7 @@ registerPanel({
     controls.push(() => colorBtn.sync());
 
     const charSection = el('div.pkt-section', {},
-      selectField('Font', 'fontFamily', FONTS),
+      fontField(),
       selectField('Style', 'fontStyle', STYLES),
       el('div.pkt-pair', {},
         numField('Size', 'fontSize', { min: 1, max: 1600, unit: 'px' }),
