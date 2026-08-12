@@ -2,6 +2,9 @@ import { registerFilter } from './registry.js';
 import { operableRect, operableSurface } from './run.js';
 import { app } from '../core/app.js';
 import { el, createCanvas, clamp, deg2rad } from '../core/util.js';
+import {
+  FACE_SLIDERS, applyFaceLiquify, faceParamsAreNeutral, defaultFaceBox,
+} from './face-liquify.js';
 import './distort.css';
 
 /**
@@ -679,9 +682,10 @@ registerFilter({
  * there stays exactly zero, and a zero displacement samples the source pixel
  * centre exactly).
  *
- * Not implemented: face-aware liquify. Detecting eyes/nose/mouth needs a trained
- * facial-landmark model, which is not something this file can honestly fake — see
- * the README.
+ * The face-aware sliders live in `face-liquify.js` and write into this same
+ * mesh, so freezing, reconstruct and the single inverse resample all apply to
+ * them unchanged. What is still absent is *detection*: the face is the region
+ * being worked on rather than something found automatically.
  */
 
 const MESH_N = 65;
@@ -1183,9 +1187,58 @@ registerFilter({
     { key: 'showMesh', label: 'Show Mesh', type: 'checkbox', default: false },
     { key: 'showMask', label: 'Show Frozen Areas', type: 'checkbox', default: true },
     { key: 'mesh', type: 'custom', default: null, render: renderLiquify },
+
+    /*
+     * Face-aware sliders. The face is *the region being worked on*: make a
+     * selection round a face and these act on it, otherwise they fall back to a
+     * portrait-framed guess in the middle of the layer.
+     *
+     * That is not a detector, and it is not pretending to be one. There is no
+     * FaceDetector in this engine and a landmark model is a table of trained
+     * coefficients — inventing numbers would give a detector that looks
+     * implemented and finds nothing, which is worse than none because the user
+     * would blame their photograph. Selecting the face is one gesture and it is
+     * honest. See src/filters/face-liquify.js.
+     */
+    ...FACE_SLIDERS.map((f) => ({
+      key: f.key,
+      label: f.label,
+      type: 'slider',
+      min: -100,
+      max: 100,
+      step: 1,
+      default: 0,
+      group: f.group,
+    })),
   ],
   apply(imageData, p) {
-    if (liquifyMeshIsEmpty(p.mesh)) return imageData;
-    return applyLiquifyMesh(imageData, p.mesh);
+    const brush = p.mesh;
+    const mesh = faceParamsAreNeutral(p)
+      ? brush
+      : applyFaceLiquify(
+        faceBoxFor(imageData),
+        p,
+        imageData.width,
+        imageData.height,
+        brush && brush.dx ? brush : null,
+      );
+    if (liquifyMeshIsEmpty(mesh)) return imageData;
+    return applyLiquifyMesh(imageData, mesh);
   },
 });
+
+/**
+ * Where the face is, for the sliders above.
+ *
+ * `imageData` is already the region being worked on — Liquify operates on the
+ * selection when there is one — so a selection *is* the face box. With no
+ * selection the whole layer is the region, and a centred portrait frame is the
+ * best available starting point.
+ */
+function faceBoxFor(imageData) {
+  const doc = app.activeDoc;
+  const selected = doc && doc.selection && doc.selection.active;
+  return selected
+    ? { x: 0, y: 0, width: imageData.width, height: imageData.height }
+    : defaultFaceBox(imageData.width, imageData.height);
+}

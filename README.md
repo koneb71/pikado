@@ -374,6 +374,24 @@ gzipped, loaded only when the browser opens. There is no API key anywhere: the
 endpoint that lists them is unreachable from a browser, and a key in a
 client-side bundle is not a secret.
 
+## Liquify, including faces
+
+Ten tools on one forward-displacement mesh — Forward Warp, Reconstruct, Smooth,
+both Twirls, Pucker, Bloat, Push Left, and Freeze/Thaw masking — with a live
+preview. Nothing compounds: the mesh is inverse-mapped once from the untouched
+original, so pushing pixels around all afternoon costs exactly one resample.
+
+Sixteen **face-aware sliders** sit on the same mesh: eye size, height, width,
+tilt and distance; nose height and width; smile, upper and lower lip, mouth
+width and height; forehead, chin, jawline and face width. Because they write
+into the ordinary mesh, freezing protects a region from a slider exactly as it
+protects one from a brush, and a slider back at zero undoes itself exactly —
+they are settings, not strokes, so the mesh is rebuilt rather than accumulated.
+
+The face is **the region you are working on**: select a face and the sliders act
+on it. There is no automatic detection, and that is a deliberate absence rather
+than an oversight — see the limitations at the end.
+
 ## Things line up
 
 Drag a layer, pull out a selection, draw a shape, slide a crop box or move a
@@ -545,10 +563,13 @@ Stated plainly so you don't find out by clicking:
   would honour one — a control that stored a number and moved nothing would be
   worse than its absence. Duplicate the layer to move something, or animate
   opacity to cross-fade.
-- **Face-aware Liquify.** Everything else in Liquify is there — Forward Warp,
-  Reconstruct, Smooth, both Twirls, Pucker, Bloat, Push Left, and Freeze/Thaw
-  masking, all ten tools with a live mesh preview — but there is no face
-  detection driving the eye and mouth sliders.
+- **Face detection.** Liquify has the face-aware sliders — sixteen of them,
+  covering eyes, nose, mouth and face shape — but nothing finds the face for
+  you: select it, and the sliders act on that region. There is no
+  `FaceDetector` in browsers we can rely on, and a landmark model is a table of
+  trained coefficients rather than something that can be written from first
+  principles. A detector that looks implemented and finds nothing would be
+  worse than none, because you would blame the photograph.
 - **How Adobe reads our PSDs.** A Pikado → PSD → Pikado round trip is lossless
   and byte-identical from the first save onward, and that is verified: layers,
   groups, masks, blend modes, fill opacity, layer styles (`lfx2`), live text

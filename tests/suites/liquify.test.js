@@ -269,3 +269,102 @@ suite('liquify / reconstruct undoes and smooth relaxes', async (t) => {
   }
   t.lt(variation(rough), before, `smooth reduces roughness in the field (${before.toFixed(2)} -> ${variation(rough).toFixed(2)})`);
 });
+
+/* ------------------------------------------------------------------ */
+/* Face-aware sliders                                                  */
+/* ------------------------------------------------------------------ */
+
+suite('liquify / face sliders move the feature they name and nothing else', async (t) => {
+  const {
+    applyFaceLiquify, faceRegions, defaultFaceParams, defaultFaceBox, faceParamsAreNeutral,
+  } = await import('/src/filters/face-liquify.js');
+
+  const W = 200, H = 240;
+  const box = { x: 40, y: 30, width: 120, height: 160 };
+  const R = faceRegions(box);
+
+  /** The mesh displacement nearest an image point, in normalised units. */
+  const at = (mesh, px, py) => {
+    const n = mesh.n;
+    const i = Math.round((px / W) * (n - 1));
+    const j = Math.round((py / H) * (n - 1));
+    const k = j * n + i;
+    return { dx: mesh.dx[k], dy: mesh.dy[k] };
+  };
+  const moved = (mesh, px, py) => Math.hypot(at(mesh, px, py).dx, at(mesh, px, py).dy);
+
+  /*
+   * Sliders are absolute settings, not strokes: dragging one back to zero has
+   * to undo it exactly. Verified to fail by accumulating into the base mesh
+   * instead of rebuilding from it.
+   */
+  const neutral = applyFaceLiquify(box, defaultFaceParams(), W, H);
+  t.ok(faceParamsAreNeutral(defaultFaceParams()), 'the defaults are all at rest');
+  t.eq(neutral.dx.reduce((a, b) => a + Math.abs(b), 0), 0, 'and move nothing at all');
+
+  // --- each slider touches its own feature -----------------------
+  const eyes = applyFaceLiquify(box, { ...defaultFaceParams(), eyeSize: 60 }, W, H);
+  t.gt(moved(eyes, R.left.cx + R.left.rx * 0.5, R.left.cy), 0, 'Eye Size moves the left eye');
+  t.gt(moved(eyes, R.right.cx - R.right.rx * 0.5, R.right.cy), 0, 'and the right one');
+  t.eq(moved(eyes, R.mouth.cx, R.mouth.cy), 0, 'and leaves the mouth alone');
+  t.eq(moved(eyes, 5, 5), 0, 'and the rest of the image entirely');
+
+  const mouth = applyFaceLiquify(box, { ...defaultFaceParams(), mouthWidth: 70 }, W, H);
+  t.gt(moved(mouth, R.mouth.cx + R.mouth.rx * 0.5, R.mouth.cy), 0, 'Mouth Width moves the mouth');
+  t.eq(moved(mouth, R.left.cx, R.left.cy), 0, 'and not the eyes');
+
+  /*
+   * A smile lifts the corners, not the whole mouth. Verified to fail by giving
+   * every point the same lift: the centre then moves as far as the corners,
+   * which just slides the mouth up the face.
+   */
+  const smile = applyFaceLiquify(box, { ...defaultFaceParams(), smile: 80 }, W, H);
+  const corner = Math.abs(at(smile, R.mouth.cx + R.mouth.rx * 0.75, R.mouth.cy).dy);
+  const centre = Math.abs(at(smile, R.mouth.cx, R.mouth.cy).dy);
+  t.gt(corner, centre * 2, `the corners lift much further than the centre (${corner.toFixed(4)} vs ${centre.toFixed(4)})`);
+  t.lt(at(smile, R.mouth.cx + R.mouth.rx * 0.75, R.mouth.cy).dy, 0, 'and they lift upward');
+
+  /*
+   * Upper Lip must not move the lower one — they are separate sliders because
+   * they are separate features. Verified to fail by dropping the half-plane
+   * test and painting the whole mouth region.
+   */
+  const upper = applyFaceLiquify(box, { ...defaultFaceParams(), upperLip: 80 }, W, H);
+  t.gt(Math.abs(at(upper, R.mouth.cx, R.mouth.cy - R.mouth.ry * 0.6).dy), 0, 'Upper Lip moves above the mouth line');
+  t.eq(at(upper, R.mouth.cx, R.mouth.cy + R.mouth.ry * 0.6).dy, 0, 'and nothing below it');
+
+  // --- direction and symmetry ------------------------------------
+  const apart = applyFaceLiquify(box, { ...defaultFaceParams(), eyeDistance: 100 }, W, H);
+  t.lt(at(apart, R.left.cx, R.left.cy).dx, 0, 'Eye Distance pushes the left eye left');
+  t.gt(at(apart, R.right.cx, R.right.cy).dx, 0, 'and the right eye right');
+
+  /*
+   * Contributions add rather than one winning, which is what makes two sliders
+   * on the same feature usable together.
+   * Verified to fail by assigning into the mesh instead of adding.
+   */
+  const apartOnly = applyFaceLiquify(box, { ...defaultFaceParams(), eyeDistance: 100 }, W, H);
+  const both = applyFaceLiquify(box, { ...defaultFaceParams(), eyeSize: 60, eyeDistance: 100 }, W, H);
+  /*
+   * Measured off-centre on purpose. At the eye's centre Eye Size displaces
+   * nothing — it is radial — so a test there cannot tell adding from
+   * overwriting, and passes either way.
+   */
+  const px = R.left.cx + R.left.rx * 0.5;
+  const sum = at(eyes, px, R.left.cy).dx + at(apartOnly, px, R.left.cy).dx;
+  t.ok(Math.abs(at(both, px, R.left.cy).dx - sum) < 1e-9,
+    'two sliders on one feature add rather than one winning');
+  t.ok(Math.abs(at(both, px, R.left.cy).dx - at(apartOnly, px, R.left.cy).dx) > 1e-9,
+    'and the combined result is not simply the last one written');
+
+  // --- freezing still protects -----------------------------------
+  const frozen = applyFaceLiquify(box, defaultFaceParams(), W, H);
+  frozen.frozen.fill(1);
+  const guarded = applyFaceLiquify(box, { ...defaultFaceParams(), eyeSize: 80 }, W, H, frozen);
+  t.eq(guarded.dx.reduce((a, b) => a + Math.abs(b), 0), 0,
+    'a fully frozen mesh is untouched by the sliders, as it is by the brushes');
+
+  const guess = defaultFaceBox(W, H);
+  t.ok(guess.width > 0 && guess.height > 0, 'the starting box is usable');
+  t.ok(guess.x >= 0 && guess.y >= 0 && guess.x + guess.width <= W, 'and inside the image');
+});
