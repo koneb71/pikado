@@ -17,6 +17,11 @@ are relative and **must include the `.js` extension**.
    `doc.beginEdit(layer)` first.** History snapshots share those buffers;
    `beginEdit` swaps in a private copy. Then call `doc.commit('Label')` to
    record the undo step, or `doc.touch()` for a live preview with no history.
+   Pass `{ surface: 'canvas' }` or `{ surface: 'mask' }` when you are only
+   writing one of them — forking both is the default and is safe, but it keeps a
+   byte-identical copy of the untouched buffer alive in every later snapshot.
+   **`doc.selection.mask` is shared the same way**, so no method on `Selection`
+   may write into an existing mask; replace the array instead.
 3. **Layer buffers are always document-sized** (`doc.width × doc.height`).
    There are no per-layer offsets; moving a layer moves its pixels.
 4. **A layer's canvas may be SHARED with another layer.** `beginEdit()` clones

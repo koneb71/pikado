@@ -86,7 +86,14 @@ export function commitSurface(doc, layer, canvas, label) {
   if (!canvas) return false;
   const surf = operableSurface(doc, layer);
   if (!surf) return false;
-  doc.beginEdit(layer);
+  /*
+   * Only the surface being replaced needs forking, and strictly speaking neither
+   * does — both are assigned outright a line later. The clone is kept because
+   * `beginEdit` is also what marks the layer dirty and bumps the mask version,
+   * and narrowing it to one surface is the change that stops every filter apply
+   * on a masked layer permanently forking a mask nobody touched.
+   */
+  doc.beginEdit(layer, { surface: surf.isMask ? 'mask' : 'canvas' });
   if (surf.isMask) {
     layer.mask = canvas;
     layer.touchMask();

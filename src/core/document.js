@@ -272,9 +272,14 @@ export class PikaDocument extends Emitter {
    * Prepare layers for pixel mutation. Always pair with `commit(label)`.
    * @param {Layer|Layer[]} [layers]
    */
-  beginEdit(layers) {
+  /**
+   * @param {Layer|Layer[]|null} layers
+   * @param {{surface?: 'canvas'|'mask'|'both'}} [opts] which buffer is about to
+   *   be written; defaults to both, so callers that do not say stay correct.
+   */
+  beginEdit(layers, opts) {
     const list = layers == null ? [this.activeLayer()] : Array.isArray(layers) ? layers : [layers];
-    for (const l of list) if (l) l.beginEdit();
+    for (const l of list) if (l) l.beginEdit(opts);
     return list;
   }
 
@@ -309,7 +314,19 @@ export class PikaDocument extends Emitter {
       layers: this.layers.map((l) => l.snapshot()),
       activeLayerId: this.activeLayerId,
       selectedLayerIds: [...this.selectedLayerIds],
-      selectionMask: this.selection.mask ? new Uint8ClampedArray(this.selection.mask) : null,
+      /*
+       * Shared by reference, not copied — the same copy-on-write discipline
+       * layer buffers already use. This was a deep copy on every single state
+       * whether the selection had changed or not: 12 MB per state at 4000x3000,
+       * so up to 720 MB across the 60-state history, for a selection the user
+       * may never have touched.
+       *
+       * Safe because `Selection` never writes into an existing mask — every
+       * mutator replaces the array. `invert()` was the one exception and no
+       * longer is. If a future method mutates in place, this line is what it
+       * breaks, so the test that pins it says so.
+       */
+      selectionMask: this.selection.mask,
       alphaChannels: this.alphaChannels.map((c) => ({ ...c })),
       paths: structuredClone(this.paths),
       guides: [...this.guides],
@@ -354,7 +371,9 @@ export class PikaDocument extends Emitter {
     if (sizeChanged) this.selection = new Selection(this.width, this.height);
     this.selection.width = this.width;
     this.selection.height = this.height;
-    this.selection.set(s.selectionMask ? new Uint8ClampedArray(s.selectionMask) : null);
+    // Shared on the way back too, for the same reason: nothing writes into an
+    // existing mask, so undo and redo can hand the same buffer around freely.
+    this.selection.set(s.selectionMask || null);
     this.alphaChannels = s.alphaChannels.map((c) => ({ ...c }));
     this.paths = structuredClone(s.paths);
     this.guides = [...s.guides];
@@ -539,8 +558,20 @@ export class PikaDocument extends Emitter {
     for (const l of this.flatLayers()) {
       add(l.canvas);
       add(l.mask);
+      /*
+       * The derived caches count too. `_maskAlpha` is a whole extra
+       * document-sized canvas per masked layer, and a smart layer's render cache
+       * is another — leaving them out is why a document could report 161 MB
+       * while holding considerably more. This is a status-bar figure people use
+       * to decide whether to close something, so it should not be a floor
+       * presented as a total.
+       */
+      add(l._maskAlpha);
+      if (l._smartCache) add(l._smartCache.canvas);
     }
     for (const c of this.alphaChannels || []) add(c.canvas);
+    add(this._composite);
+    add(this._channelComposite);
     return n;
   }
 }

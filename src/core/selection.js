@@ -106,9 +106,24 @@ export class Selection {
     this._touch();
   }
 
+  /**
+   * Invert into a NEW buffer rather than in place.
+   *
+   * This was the only method in the class that wrote into an existing mask, and
+   * that single exception is what stopped history from sharing the array instead
+   * of deep-copying it into all sixty states. Every other mutator already
+   * replaces `this.mask` wholesale, which is the same copy-on-write discipline
+   * layer buffers use — so making this one match turns a 12 MB-per-state copy at
+   * 4000x3000 into a pointer.
+   *
+   * Anything holding a reference to the old buffer (a history state, a tool
+   * mid-drag) keeps seeing what it captured, which is the point.
+   */
   invert() {
     if (!this.mask) { this.mask = new Uint8ClampedArray(this.width * this.height); this._touch(); return; }
-    for (let i = 0; i < this.mask.length; i++) this.mask[i] = 255 - this.mask[i];
+    const next = new Uint8ClampedArray(this.mask.length);
+    for (let i = 0; i < this.mask.length; i++) next[i] = 255 - this.mask[i];
+    this.mask = next;
     this._touch();
     this._dropIfEmpty();
   }

@@ -354,3 +354,130 @@ suite('core / keyboard shortcuts are unique', async (t) => {
   const malformed = list.filter((c) => !c.id || !(c.label || c.dynamicLabel)).map((c) => c.id || '(no id)');
   t.eq(malformed, [], 'every command has an id and a label');
 });
+
+/* ------------------------------------------------------------------ */
+/* What history actually costs                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * History shares pixel buffers; it does not copy them.
+ *
+ * That was already true of layer canvases and masks, and was not true of the
+ * selection: `captureState()` deep-copied the mask into every one of the sixty
+ * states whether or not it had changed. At 4000x3000 that is 12 MB per state,
+ * so up to 720 MB of duplicated selection for a selection the user may never
+ * have touched.
+ */
+suite('core / history shares the selection mask instead of copying it', async (t) => {
+  const W = 300, H = 200;
+  const doc = t.doc(W, H, '#ffffff', 'selhist');
+  const mask = new Uint8ClampedArray(W * H);
+  for (let i = 0; i < mask.length; i += 3) mask[i] = 255;
+  doc.selection.set(mask);
+
+  for (let i = 0; i < 30; i += 1) doc.commit(`edit ${i}`);
+
+  const buffers = new Set(doc.history.states.map((s) => s.state.selectionMask).filter(Boolean));
+  t.gt(doc.history.states.length, 20, 'there are plenty of states to share between');
+  /*
+   * Verified to fail by restoring the deep copy in captureState: `buffers.size`
+   * becomes one per state instead of one in total.
+   */
+  t.eq(buffers.size, 1, 'every state points at the same selection buffer');
+
+  // Sharing is only safe because nothing writes into an existing mask. If a
+  // future method mutates in place, this is the assertion that catches it.
+  // Not states[0] — that one was recorded when the document was created, before
+  // any selection existed, so its mask is legitimately null.
+  const captured = doc.history.states.map((s) => s.state.selectionMask).find(Boolean);
+  t.ok(captured, 'some state captured the selection');
+  const sample = captured[0];
+  doc.selection.invert();
+  t.eq(captured[0], sample, 'inverting the selection does not reach back into history');
+  t.eq(doc.selection.mask[0], 255 - sample, 'and still actually inverts');
+
+  doc.selection.set(new Uint8ClampedArray(W * H).fill(128));
+  t.eq(captured[0], sample, 'nor does replacing it wholesale');
+});
+
+suite('core / undo and redo still restore the right selection', async (t) => {
+  const W = 120, H = 90;
+  const doc = t.doc(W, H, '#ffffff', 'selundo');
+
+  doc.selection.set(new Uint8ClampedArray(W * H).fill(64));
+  doc.commit('first');
+  doc.selection.set(new Uint8ClampedArray(W * H).fill(200));
+  doc.commit('second');
+
+  t.eq(doc.selection.mask[0], 200, 'the newest selection is live');
+  doc.history.undo();
+  t.eq(doc.selection.mask[0], 64, 'undo brings the previous one back');
+  doc.history.redo();
+  t.eq(doc.selection.mask[0], 200, 'and redo returns to the newer one');
+
+  doc.selection.clear();
+  doc.commit('cleared');
+  t.notOk(doc.selection.mask, 'a cleared selection is null, not an empty buffer');
+  doc.history.undo();
+  t.ok(doc.selection.mask, 'and undo restores the one before it');
+});
+
+suite('core / beginEdit forks only the surface being written', async (t) => {
+  const W = 200, H = 150;
+  const doc = t.doc(W, H, '#ffffff', 'fork');
+  const layer = doc.layers[0];
+  layer.addMask(W, H, '#ffffff');
+
+  /*
+   * Filters replace layer.canvas outright, so forking the mask alongside it left
+   * a byte-identical copy alive in history on every apply — 7.7 MB per apply at
+   * 1600x1200 for a mask nobody edited. Verified to fail by dropping the
+   * `surface` argument: maskAfter stops being the same object.
+   */
+  const maskBefore = layer.mask;
+  const canvasBefore = layer.canvas;
+  doc.beginEdit(layer, { surface: 'canvas' });
+  t.ok(layer.canvas !== canvasBefore, 'the canvas is forked, because that is what is being written');
+  t.is(layer.mask, maskBefore, 'the mask is left alone');
+
+  // The mirror case, and the reason the default stays 'both'.
+  const maskBefore2 = layer.mask;
+  const canvasBefore2 = layer.canvas;
+  doc.beginEdit(layer, { surface: 'mask' });
+  t.ok(layer.mask !== maskBefore2, 'editing the mask forks the mask');
+  t.is(layer.canvas, canvasBefore2, 'and leaves the canvas alone');
+
+  const c3 = layer.canvas, m3 = layer.mask;
+  doc.beginEdit(layer);
+  t.ok(layer.canvas !== c3 && layer.mask !== m3, 'with no surface named, both are forked as before');
+});
+
+suite('core / memoryUse counts the derived caches too', async (t) => {
+  /*
+   * It counted only canvas, mask and alpha channels, which made it a floor
+   * presented as a total — _maskAlpha is a whole extra document-sized canvas per
+   * masked layer. Verified to fail by removing the _maskAlpha line.
+   */
+  const W = 100, H = 100;
+  const doc = t.doc(W, H, '#ffffff', 'mem');
+  const layer = doc.layers[0];
+  const plain = doc.memoryUse();
+
+  layer.addMask(W, H, '#ffffff');
+  const withMask = doc.memoryUse();
+  t.eq(withMask - plain, W * H * 4, 'a mask adds one buffer');
+
+  layer.maskAlphaCanvas();
+  t.eq(doc.memoryUse() - withMask, W * H * 4, 'and its alpha derivation adds another, now counted');
+
+  // Still de-duplicated by identity, which is what the PSD shared blank needs.
+  const { createRasterLayer } = await import('/src/core/layer.js');
+  const shared = createRasterLayer(W, H, 'shared');
+  shared.canvas = layer.canvas;
+  doc.layers.unshift(shared);
+  t.eq(doc.memoryUse(), doc.memoryUse(), 'stable');
+  const twice = createRasterLayer(W, H, 'twice');
+  twice.canvas = layer.canvas;
+  doc.layers.unshift(twice);
+  t.lt(doc.memoryUse(), (plain + W * H * 4 * 4), 'a shared buffer is still counted once');
+});

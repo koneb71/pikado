@@ -120,9 +120,27 @@ export class Layer {
    * Copy-on-write. Call before mutating pixels so the previous history state
    * keeps the old buffers.
    */
-  beginEdit() {
-    if (this.canvas) this.canvas = cloneCanvas(this.canvas);
-    if (this.mask) {
+  /**
+   * Fork this layer's buffers before writing to them.
+   *
+   * History snapshots share `canvas` and `mask` by reference, so a writer has to
+   * take a private copy first. `surface` says which one is about to be written:
+   * cloning both is the safe default and stays the default, but it is wrong
+   * often enough to matter.
+   *
+   * `commitSurface` (src/filters/run.js) calls this and then *replaces*
+   * `layer.canvas` outright — so the canvas clone is built and immediately
+   * discarded, and on a masked layer the untouched mask is permanently forked
+   * into a new buffer that every later snapshot then retains. That is 7.7 MB of
+   * byte-identical mask kept alive per filter apply at 1600x1200, for a mask
+   * nobody edited.
+   *
+   * @param {{surface?: 'canvas'|'mask'|'both'}} [opts]
+   */
+  beginEdit(opts = {}) {
+    const surface = opts.surface || 'both';
+    if (this.canvas && surface !== 'mask') this.canvas = cloneCanvas(this.canvas);
+    if (this.mask && surface !== 'canvas') {
       this.mask = cloneCanvas(this.mask);
       this.maskVersion++;
       this._maskAlphaVersion = -1;
