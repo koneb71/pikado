@@ -365,3 +365,31 @@ suite('fonts / a font that cannot be had substitutes rather than rewriting the l
   t.ok(fontStack('google:Definitely Not A Real Family', cat).includes('serif'),
     'so a missing serif is replaced by a serif');
 });
+
+suite('fonts / PSD export asks the manager what a downloaded family can do', async (t) => {
+  const { capabilitiesOf } = await import('/src/text/font-table.js');
+  const fm = await import('/src/text/font-manager.js');
+  await fm.hydrateInstalledFonts();
+
+  /*
+   * The wiring, not the arithmetic: `psd-write.js` must not import the font
+   * manager — that would drag IndexedDB and the catalogue into a format writer
+   * — so it asks through a hook the manager registers on load. If that hook is
+   * not connected, every downloaded family exports as Regular-plus-faux and the
+   * loss is invisible.
+   * Verified to fail by not calling setCapabilityProvider in font-manager.js.
+   */
+  const installed = fm.installedFamilies();
+  if (!installed.length) {
+    t.ok(capabilitiesOf('google:Nothing Here') === null, 'nothing downloaded, so nothing is claimed');
+    return;
+  }
+  const one = installed[0];
+  const caps = capabilitiesOf(one.id);
+  t.ok(caps, `the hook answers for ${one.family}`);
+  t.eq(caps.weights.join(','), one.weights.join(','), 'with the weights the manager holds');
+  t.eq(caps.category, one.category, 'and its category');
+
+  t.eq(capabilitiesOf('google:Definitely Not Downloaded'), null,
+    'and says nothing about a family it does not have');
+});

@@ -1219,6 +1219,7 @@ const DONE = [
   'Camera Raw develop controls and a frame-animation timeline',
   'Colour management with soft proofing and gamut warning',
   'Slices and notes',
+  'The whole Google Fonts catalogue, downloaded and kept for offline use',
   'Open and save .pkd projects; import/export PSD, PNG, JPG, WebP, GIF and SVG',
   'Non-destructive smart objects: embedded contents, re-editable smart filters and transforms',
 ];
@@ -1233,7 +1234,11 @@ const NOT_DONE = [
 function showAbout() {
   const dlg = new Dialog({ title: 'About Pikado', width: 520 });
   dlg.setBody(el('div.pkd-about', {},
-    el('p', { text: 'Pikado is an image editor that runs entirely in the browser. No pixels leave your machine.' }),
+    el('p', {
+      text: 'Pikado is an image editor that runs entirely in the browser. No pixels leave '
+        + 'your machine — Generative Fill is the one thing that can send any, and it asks first. '
+        + 'Web fonts are downloaded from Google when you use one, which sends nothing of yours.',
+    }),
     el('div.pkd-section', { text: 'What works' }),
     el('ul', {}, ...DONE.map((t) => el('li', { text: t }))),
     el('div.pkd-section', { text: 'What is not implemented' }),

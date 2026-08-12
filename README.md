@@ -3,10 +3,13 @@
 A browser-based raster and vector image editor in the spirit of Photopea and
 Photoshop. Everything runs client-side — no server, no upload, no account.
 
-The one exception is Generative Fill, which is off until you supply your own API
-key, and which then sends the part of your image you selected to the provider you
-chose. It is the only feature in Pikado that touches the network, it asks before
-the first time, and everything else keeps working without it.
+Two things reach the network, and only these two. **Generative Fill** is off
+until you supply your own API key, and then sends the part of your image you
+selected to the provider you chose; it asks before the first time. **Web fonts**
+are downloaded from Google Fonts when you use one — a download, not an upload,
+kept on your device afterwards so it works offline, and switchable off in
+Preferences. Nothing else leaves your machine, and everything keeps working
+without either.
 
 ```bash
 git clone https://github.com/koneb71/pikado.git
@@ -201,8 +204,9 @@ layer masked to your selection — non-destructive, so you can generate three
 attempts and keep the one that works. It sits next to Content-Aware Fill in the
 Edit menu, because they are the same job done two ways.
 
-**This is the only part of Pikado that uses the network, and it is the only part
-that can send your work anywhere.** So it is built to be refused easily:
+**This is the only part of Pikado that can send your work anywhere.** (Web
+fonts also use the network, but only ever to fetch a font — see
+[Fonts](#fonts).) So it is built to be refused easily:
 
 - **You bring the key.** Pikado ships no API credentials — in a static
   client-side app there is no such thing as a secret key, because anything in the
@@ -339,6 +343,37 @@ and enabled state come from one place and cannot disagree with the menu bar.
 Items that cannot apply right now are dropped rather than shown greyed, and the
 separators around them close up.
 
+## Fonts
+
+Thirty families are built in. The rest of Google Fonts — 1,941 of them — is
+behind **Type ▸ Manage Fonts**, with search, category filters, and a specimen of
+each rendered in its own face. The same list is the last row of every font
+picker, because "which font?" and "is there another font?" are the same
+question.
+
+**A font you download is kept.** The bytes go into IndexedDB and are registered
+again on the next visit, so a family works with the network off — including when
+you reopen a document that uses it. That is the reason downloading is byte-level
+rather than a stylesheet link: a link works while you are online and silently
+does not afterwards.
+
+Only the Latin faces are fetched. This is not a nicety — Noto Sans JP is 124
+separate files and about 5 MB for a single weight, of which exactly one is
+Latin, so the difference is a 43 KB download against a 5 MB one.
+
+A `.pkd` records which families its text uses, with their category and weights —
+a reference, never the font file. Reopening fetches what is missing; if it
+cannot, the text renders in a substitute of the right shape (a serif for a
+serif) and one message names what is missing. The layer keeps naming the font it
+wants, so the document heals the moment the family turns up rather than being
+permanently rewritten to the substitute.
+
+The catalogue itself is generated at build time by
+`scripts/fetch-google-fonts.mjs` and committed — 1,941 families in 15 KB
+gzipped, loaded only when the browser opens. There is no API key anywhere: the
+endpoint that lists them is unreachable from a browser, and a key in a
+client-side bundle is not a secret.
+
 ## Things line up
 
 Drag a layer, pull out a selection, draw a shape, slide a crop box or move a
@@ -383,7 +418,7 @@ src/
   select/      graph-cut segmentation, alpha matting, edge refinement
   color/       ICC profiles, conversions, soft proofing
   vector/      path model, geometry, shape rasterizing
-  text/        text layout, rasterizing, font handling
+  text/        text layout, rasterizing, the font catalogue and downloader
   layers/      layer operations (merge, group, mask, rasterize…)
   edit/        clipboard, fill & stroke
   commands/    command registry + every menu command

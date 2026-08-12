@@ -18,10 +18,12 @@
  *                   stale-while-revalidate — instant from cache, refreshed in
  *                                   the background for next time.
  *
- * Cross-origin requests are never intercepted. The only one Pikado makes is the
- * optional Google Fonts stylesheet in src/text/fonts.js, which already handles
- * its own failure; putting it behind the cache would only turn a clean, fast
- * failure into a slow one.
+ * Cross-origin requests are never intercepted, and font files are the case that
+ * makes the rule worth stating. Pikado downloads them from Google and stores the
+ * bytes in IndexedDB (src/text/font-manager.js), which is strictly better than a
+ * cache entry: it survives eviction pressure differently, it is listed and
+ * removable in the font browser, and it is what makes a downloaded family work
+ * offline. Caching them here as well would duplicate the storage for nothing.
  */
 
 /* Bump this to invalidate every cached response. Activation deletes any cache

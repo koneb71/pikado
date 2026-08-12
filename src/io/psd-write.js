@@ -3,6 +3,7 @@ import { getComposite } from '../render/compositor.js';
 import { createCanvas, ctx2dRead } from '../core/util.js';
 import { parseColor } from '../core/color.js';
 import { resolveTextProps, measureTextLayer } from '../text/text-render.js';
+import { capabilitiesOf } from '../text/font-table.js';
 import { postScriptFace } from '../text/fonts.js';
 import { subpathsBounds } from '../vector/path.js';
 
@@ -1472,7 +1473,20 @@ function writeLayerEffects(w, layer) {
  * is why the table lists a face only where it is a known constant.
  */
 function textFace(t) {
-  return postScriptFace(t.font, t.weight, t.italic || t.style === 'italic' ? 'italic' : 'normal');
+  /*
+   * A downloaded family has no entry in the built-in face table, so what it can
+   * actually offer comes from the capability hook — which knows the weights the
+   * family really has faces for. Claiming `-Bold` for a family that ships one
+   * weight is the failure mode this avoids: Photoshop answers an unresolvable
+   * PostScript name by substituting a different family outright, which is worse
+   * than the faux styling it would otherwise apply.
+   */
+  return postScriptFace(
+    t.font,
+    t.weight,
+    t.italic || t.style === 'italic' ? 'italic' : 'normal',
+    capabilitiesOf(t.font),
+  );
 }
 
 /** `/Justification` in EngineData, and the order `psd-read.js` decodes. */

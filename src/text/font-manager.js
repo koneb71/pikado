@@ -6,7 +6,7 @@ import { loadCatalog, findFamily, catalogReady } from './font-catalog.js';
 import {
   putFont, listFontMeta, getFontData, deleteFont, fontUsage, FONT_LIMIT_BYTES, storageAvailable,
 } from '../io/store.js';
-import { getPref } from '../ui/dialogs/preferences.js';
+import { getPref, setPrefs } from '../ui/dialogs/preferences.js';
 import { setCapabilityProvider, fontsUsedBy, tableEntry } from './font-table.js';
 import { setInstalledProvider } from '../ui/font-field.js';
 
@@ -75,6 +75,25 @@ export function webfontPolicy() {
 
 export function webfontsAllowed() {
   return webfontPolicy() !== 'off';
+}
+
+/**
+ * Say once, the first time a font is actually fetched, that fonts come from
+ * Google.
+ *
+ * At the moment it happens rather than in a modal beforehand: the user has just
+ * asked for a font, so this is information, not a decision to interrupt them
+ * for. Nothing of theirs is uploaded — it is a download — which is why this is
+ * a notice and Generative Fill's per-host consent is a question.
+ */
+function noticeOnce() {
+  if (getPref('webfontNoticeSeen', false)) return;
+  setPrefs({ webfontNoticeSeen: true });
+  app.toast(
+    'Fonts are downloaded from Google Fonts and kept on this device, so they work '
+    + 'offline afterwards. Nothing of yours is sent. Turn it off in Preferences.',
+    'info', 8000,
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -233,6 +252,7 @@ export function downloadFamily(family, opts = {}) {
     if (!webfontsAllowed()) {
       throw new FontError('refused', 'Downloading fonts is turned off in Preferences.');
     }
+    noticeOnce();
     const entry = await describe(name);
     if (!entry) throw new FontError('unknown', `${name} is not in the font catalogue.`);
 

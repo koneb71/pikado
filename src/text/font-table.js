@@ -25,6 +25,17 @@ export function setCapabilityProvider(fn) {
   capabilityProvider = typeof fn === 'function' ? fn : null;
 }
 
+/**
+ * What is known about a family right now, or null.
+ *
+ * The same hook the `.pkd` manifest uses, exposed so PSD export can ask without
+ * importing the font manager — which would drag IndexedDB and the catalogue
+ * into a format writer.
+ */
+export function capabilitiesOf(id) {
+  return capabilityProvider ? capabilityProvider(id) : null;
+}
+
 /** Every distinct font id used by text in a tree, including nested documents. */
 export function fontsUsedBy(doc) {
   const ids = new Set();

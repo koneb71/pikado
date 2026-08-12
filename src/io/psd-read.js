@@ -6,6 +6,7 @@ import { DEFAULT_STYLES } from '../effects/styles.js';
 import { getPattern } from '../paint/patterns.js';
 import { rasterizeTextLayer } from '../text/text-render.js';
 import { familyFromPostScriptName } from '../text/fonts.js';
+import { installedFamilies } from '../text/font-manager.js';
 import { rasterizeShapeLayer } from '../vector/path.js';
 import { SELECTION_CHANNEL_NAME, PSD_DASH_PRESETS, pikadoGradientAngle } from './psd-write.js';
 
@@ -2266,6 +2267,21 @@ function mapFontName(raw) {
   const style = /italic|oblique/i.test(raw) ? 'italic' : 'normal';
   const stem = raw.replace(/[^A-Za-z]/g, '');
   for (const [re, id] of FONT_ALIASES) if (re.test(stem)) return { font: id, weight, style };
+
+  /*
+   * A Google family we have downloaded round-trips exactly, because we wrote
+   * the name: `ZillaSlab-Bold` is `Zilla Slab` with its spaces stripped. Only
+   * the installed families are checked — the catalogue is 1,941 entries and
+   * this runs per type layer, so pulling that chunk to identify a font a PSD
+   * merely mentions would be a poor trade.
+   */
+  const bare = stem.replace(/(Regular|Bold|Italic|BoldItalic|Medium|Light|Thin|Black|SemiBold|ExtraBold)$/i, '');
+  for (const f of installedFamilies()) {
+    if (f.family.replace(/[^A-Za-z]/g, '').toLowerCase() === bare.toLowerCase()) {
+      return { font: f.id, weight, style };
+    }
+  }
+
   // Unknown families still work: fontStack() falls back to "<name>, sans-serif".
   const family = raw.split(/[-,]/)[0].trim();
   return { font: family || 'system', weight, style };

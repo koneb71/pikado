@@ -53,6 +53,12 @@ export const PREF_DEFAULTS = {
      reasoning as the line above — a model id is a preference, not a secret. */
   aiModels: {},
   aiEfforts: {},
+  /* Whether the Type tools may fetch a font from Google. A download, not an
+     upload — nothing of the user's leaves the machine — so it is allowed by
+     default and disclosed once, rather than gated behind a prompt in front of
+     someone who has only picked a font from a list. See src/text/font-manager.js. */
+  webfonts: 'auto',
+  webfontNoticeSeen: false,
   /* Guides & Grid */
   showGuides: true,
   showRulers: true,
@@ -79,6 +85,16 @@ const CATEGORIES = [
       { key: 'recentLimit', label: 'Recent Documents', type: 'slider', min: 0, max: 20, step: 1 },
       { key: 'confirmBeforeClosing', label: 'Ask before closing a document with unsaved changes', type: 'checkbox' },
       { key: 'resetColorsOnLaunch', label: 'Reset foreground / background colours on launch', type: 'checkbox' },
+      {
+        key: 'webfonts', label: 'Web Fonts', type: 'select',
+        options: [
+          { value: 'auto', label: 'Download when needed' },
+          { value: 'off', label: 'Never download' },
+        ],
+        hint: 'Fonts come from Google Fonts. Nothing of yours is sent — this is a '
+          + 'download — and a family is kept once fetched, so it works offline afterwards. '
+          + 'Turning it off leaves the built-in Google families showing a substitute face.',
+      },
     ],
   },
   {
