@@ -13,7 +13,7 @@ import { FONT_WEIGHTS, ensureFont, BROWSE_FONTS } from '../../text/fonts.js';
 import { fontOptions, resolveFontChoice } from '../font-field.js';
 import * as ops from '../../layers/ops.js';
 import {
-  isSmartLayer, getSmartTransform, getSmartFilters, decomposeMatrix, composeMatrix,
+  isSmartLayer, getSmartTransform, getSmartFilters, decomposeMatrix, composeMatrix, authoredParams,
   setSmartTransform, resetSmartTransform, editSmartContents, exportSmartContents,
   getSmartPerspective, getSmartWarp, clearSmartShape,
 } from '../../core/smart.js';
@@ -757,7 +757,16 @@ const DEG = 180 / Math.PI;
 function smartSection(doc, layer) {
   const s = layer.smart;
   const node = el('div.pk-panel-section');
-  const d = decomposeMatrix(getSmartTransform(layer), s.sourceWidth, s.sourceHeight);
+  /*
+   * The authored parameters when they still describe the matrix, otherwise the
+   * canonical decomposition. This is the whole of why Skew Y can read back as
+   * Skew Y: the matrix has one shear degree of freedom and cannot record which
+   * field the user typed into, so it has to be remembered separately — and
+   * checked against the matrix before it is believed.
+   */
+  const m0 = getSmartTransform(layer);
+  const d = authoredParams(layer.smart, m0, s.sourceWidth, s.sourceHeight)
+    || decomposeMatrix(m0, s.sourceWidth, s.sourceHeight);
 
   const state = {
     x: round2(d.centerX),
@@ -766,14 +775,14 @@ function smartSection(doc, layer) {
     scaleY: round2(d.scaleY * 100),
     angle: round2(d.angle * DEG),
     skewX: round2(d.skewX * DEG),
-    skewY: 0,
+    skewY: round2((d.skewY || 0) * DEG),
     linked: Math.abs(d.scaleX - d.scaleY) < 1e-6,
   };
 
   /** The matrix this panel last wrote — see the note about Skew Y above. */
   let owned = null;
 
-  const matrixFor = () => composeMatrix({
+  const authoredFor = () => ({
     centerX: Number(state.x) || 0,
     centerY: Number(state.y) || 0,
     scaleX: (Number(state.scaleX) || 0) / 100,
@@ -781,7 +790,9 @@ function smartSection(doc, layer) {
     angle: ((Number(state.angle) || 0) * Math.PI) / 180,
     skewX: ((Number(state.skewX) || 0) * Math.PI) / 180,
     skewY: ((Number(state.skewY) || 0) * Math.PI) / 180,
-  }, s.sourceWidth, s.sourceHeight);
+  });
+
+  const matrixFor = () => composeMatrix(authoredFor(), s.sourceWidth, s.sourceHeight);
 
   const committer = makeCommitter('Transform Smart Object', { layerFor: () => layer });
 
@@ -801,6 +812,9 @@ function smartSection(doc, layer) {
     committer.bump();
     const m = matrixFor();
     owned = m.slice();
+    // Remembered alongside the matrix, never instead of it — the matrix stays
+    // authoritative for rendering, and this only says how the user got there.
+    layer.smart.authored = authoredFor();
     setSmartTransform(doc, layer, m, { commit: false });
   });
 
@@ -865,16 +879,22 @@ function smartSection(doc, layer) {
     const m = getSmartTransform(layer);
     const mine = owned && m.every((n, i) => Math.abs(n - owned[i]) < 1e-9);
     if (!mine) {
-      // Somebody else moved the matrix (Free Transform, undo, a script), so the
-      // authored skew pair no longer describes it — show the canonical form.
-      const cur = decomposeMatrix(m, layer.smart.sourceWidth, layer.smart.sourceHeight);
+      /*
+       * Somebody else moved the matrix — Free Transform, an undo, a script. The
+       * memo is checked against the matrix rather than trusted, so a stale one
+       * is detected and the canonical form shown instead. That is the honest
+       * answer at that point: the authored pair really has stopped describing
+       * this layer.
+       */
+      const cur = authoredParams(layer.smart, m, layer.smart.sourceWidth, layer.smart.sourceHeight)
+        || decomposeMatrix(m, layer.smart.sourceWidth, layer.smart.sourceHeight);
       state.x = round2(cur.centerX);
       state.y = round2(cur.centerY);
       state.scaleX = round2(cur.scaleX * 100);
       state.scaleY = round2(cur.scaleY * 100);
       state.angle = round2(cur.angle * DEG);
       state.skewX = round2(cur.skewX * DEG);
-      state.skewY = 0;
+      state.skewY = round2((cur.skewY || 0) * DEG);
       owned = null;
     }
     form.refresh();

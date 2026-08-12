@@ -682,3 +682,61 @@ suite('smart / perspective and warp are non-destructive', async (t) => {
   t.eq(getSmartWarp(doc.findLayer(id)), null, 'clearing drops the grid');
   t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), flat), 0, 'and the original render comes back exactly');
 });
+
+suite('smart / Skew Y reads back as Skew Y', async (t) => {
+  const { authoredParams } = await import('/src/core/smart.js');
+  const { savePKD, loadPKD } = await import('/src/io/pkd.js');
+
+  const doc = PikaDocument.blank(200, 120, 'skew', '#ffffff');
+  const base = doc.layers[0];
+  const layer = createSmartObject(doc, [base]);
+  const { sourceWidth: w, sourceHeight: h } = layer.smart;
+
+  const authored = {
+    centerX: 100, centerY: 60, scaleX: 1, scaleY: 1, angle: 0,
+    skewX: 0, skewY: (12 * Math.PI) / 180,
+  };
+  const m = composeMatrix(authored, w, h);
+  layer.smart.authored = { ...authored };
+  setSmartTransform(doc, layer, m, { commit: false });
+
+  /*
+   * An affine matrix has one shear degree of freedom, and centre, scale and
+   * rotation spend the other five — so the decomposition can only ever put the
+   * whole shear in Skew X. It is not a rounding loss: the matrix genuinely does
+   * not record which field was typed into, which is why the authored pair has
+   * to be remembered alongside it.
+   */
+  const canonical = decomposeMatrix(getSmartTransform(layer), w, h);
+  t.eq(canonical.skewY, 0, 'the canonical decomposition still reports no Skew Y');
+  t.ok(Math.abs(canonical.skewX) > 0.01, 'having folded the shear into Skew X');
+
+  /*
+   * Verified to fail by having authoredParams return null unconditionally: the
+   * panel falls back to the canonical form and Skew Y reads 0 again, which is
+   * exactly the behaviour this replaces.
+   */
+  const back = authoredParams(layer.smart, getSmartTransform(layer), w, h);
+  t.ok(back, 'the authored parameters are recovered');
+  t.ok(Math.abs(back.skewY - authored.skewY) < 1e-9, 'with Skew Y intact');
+  t.eq(Math.round(back.skewX * 1e9), 0, 'and Skew X still zero, as authored');
+
+  /*
+   * The memo is checked against the matrix rather than trusted. Anything else
+   * moving the layer — Free Transform, an undo, a script — makes it stale, and
+   * a stale memo must not be believed: the authored pair really has stopped
+   * describing the layer at that point.
+   * Verified to fail by returning the memo without comparing it.
+   */
+  setSmartTransform(doc, layer, composeMatrix({ ...authored, angle: 0.4 }, w, h), { commit: false });
+  t.eq(authoredParams(layer.smart, getSmartTransform(layer), w, h), null,
+    'a matrix moved by something else discards the memo');
+
+  // And it survives a save, because it is part of the smart payload.
+  layer.smart.authored = { ...authored };
+  setSmartTransform(doc, layer, m, { commit: false });
+  const reopened = await loadPKD(await (await savePKD(doc)).arrayBuffer());
+  const rl = reopened.flatLayers().find((l) => l.smart);
+  const after = authoredParams(rl.smart, getSmartTransform(rl), rl.smart.sourceWidth, rl.smart.sourceHeight);
+  t.ok(after && Math.abs(after.skewY - authored.skewY) < 1e-6, 'and survives a round trip through .pkd');
+});

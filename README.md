@@ -574,10 +574,14 @@ Stated plainly so you don't find out by clicking:
   and back is *pixel-exact* (measured mean absolute difference 0.0000, versus ~32
   for the equivalent destructive resample) — including when a perspective or a
   warp mesh is applied on top.
-- **Skew Y in the Properties panel** is authored faithfully but reads back as
-  Skew X. An affine matrix has one shear degree of freedom and centre, scale and
-  rotation use the other five, so the canonical decomposition puts the whole
-  shear in Skew X. The field is live while you are the one driving it.
+
+  Skew Y reads back as Skew Y, which takes a little care: an affine matrix has
+  one shear degree of freedom and centre, scale and rotation spend the other
+  five, so the matrix genuinely cannot record which of the two fields you typed
+  into. The authored pair is remembered alongside it and checked against it
+  before it is believed — so anything else moving the layer (Free Transform, an
+  undo, a script) is detected and the canonical form shown instead, which at
+  that point is the honest answer.
 
 PSD writing was verified against Pikado's own parser and at the byte level, but
 not against a real Photoshop install — that wasn't available here.

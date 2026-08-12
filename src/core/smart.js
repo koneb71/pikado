@@ -128,6 +128,38 @@ export function composeMatrix(
   return [a, b, c, d, centerX - (a * hx + c * hy), centerY - (b * hx + d * hy)];
 }
 
+/**
+ * The parameters the user actually authored, when they still describe the
+ * matrix — otherwise null.
+ *
+ * An affine matrix has one shear degree of freedom, and centre, scale and
+ * rotation spend the other five, so `decomposeMatrix` can only ever hand back
+ * the canonical form with the whole shear in `skewX`. That is not a rounding
+ * loss — the matrix genuinely does not record which of the two skew fields the
+ * user typed into — so the only way for Skew Y to read back as Skew Y is to
+ * remember what was authored.
+ *
+ * Remembered *alongside* the matrix, never instead of it: the matrix stays the
+ * single source of truth for rendering, and this is checked against it before
+ * it is believed. So Free Transform, a script or an undo moving the matrix
+ * makes the memo stale, it is detected, and the panel falls back to the
+ * canonical decomposition — which is the honest answer at that point, because
+ * the authored pair really has stopped describing the layer.
+ *
+ * @returns {{centerX,centerY,scaleX,scaleY,angle,skewX,skewY}|null} radians
+ */
+export function authoredParams(smart, matrix, sourceWidth, sourceHeight) {
+  const a = smart && smart.authored;
+  if (!a || !validMatrix(matrix)) return null;
+  const composed = composeMatrix(a, sourceWidth, sourceHeight);
+  // Loose enough for a round trip through JSON and a hand-typed field, tight
+  // enough that any real edit invalidates it.
+  for (let i = 0; i < 6; i += 1) {
+    if (Math.abs(composed[i] - matrix[i]) > 1e-6) return null;
+  }
+  return { ...a };
+}
+
 function validMatrix(m) {
   return Array.isArray(m) && m.length === 6 && m.every((n) => Number.isFinite(n));
 }
