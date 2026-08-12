@@ -281,3 +281,87 @@ suite('fonts / a PSD face is only claimed when the family has it', async (t) => 
   t.eq(noItalic.name, 'ZillaSlab-Regular', 'a family with no italic file is not given one');
   t.ok(noItalic.fauxItalic, 'it is slanted instead');
 });
+
+/* ------------------------------------------------------------------ */
+/* Documents                                                           */
+/* ------------------------------------------------------------------ */
+
+suite('fonts / a project file names its fonts and carries none of them', async (t) => {
+  const { Layer, LayerType } = await import('/src/core/layer.js');
+  const { savePKD, loadPKD } = await import('/src/io/pkd.js');
+  const { fontTableFor, fontsUsedBy } = await import('/src/text/font-table.js');
+  await import('/src/text/font-manager.js');   // registers the capability provider
+  await loadCatalog();
+
+  const doc = t.doc(300, 160, '#ffffff', 'fonttable');
+  const add = (name, font) => {
+    const l = new Layer({ type: LayerType.TEXT, name });
+    l.text = { content: 'Hg', font, size: 30, weight: 400, x: 10, y: 40 };
+    doc.addLayer(l, { above: doc.layers[0] });
+    return l;
+  };
+  add('serif-head', 'google:Zilla Slab');
+  add('plain', 'arial');
+
+  const used = [...fontsUsedBy(doc)];
+  t.ok(used.includes('google:Zilla Slab') && used.includes('arial'), 'both families are found');
+
+  const table = fontTableFor(doc);
+  t.eq(table.length, 1, 'only the family that has to travel is listed');
+  t.eq(table[0].family, 'Zilla Slab', 'named by its Google name');
+  /*
+   * The category is what lets a missing serif substitute with a serif rather
+   * than with whatever sans is nearest — so it has to be in the file, since
+   * offline there is nothing else that knows.
+   * Verified to fail by dropping the catalogue fallback from the capability
+   * provider: the category comes back empty.
+   */
+  t.eq(table[0].category, 'serif', 'and remembered as a serif');
+  t.ok(table[0].weights.length > 0, 'with the weights it offers, so a PSD export stays honest');
+
+  const bytes = await (await savePKD(doc)).arrayBuffer();
+  const whole = new TextDecoder('latin1').decode(new Uint8Array(bytes));
+  /*
+   * A reference, never the font. Bytes in a .pkd would make a project file a
+   * redistribution vector for something the author may have no right to pass
+   * on. Verified to fail by writing the faces into the manifest.
+   */
+  t.notOk(/wOFF|wOF2|fonts\.gstatic\.com/.test(whole), 'no font file rides along');
+
+  const reopened = await loadPKD(bytes);
+  t.eq(reopened.fontTable.length, 1, 'the table survives the round trip');
+  t.eq(reopened.fontTable[0].category, 'serif', 'category and all');
+  t.eq(reopened.flatLayers().find((l) => l.name === 'serif-head').text.font, 'google:Zilla Slab',
+    "and the layer's own font is untouched");
+});
+
+suite('fonts / a font that cannot be had substitutes rather than rewriting the layer', async (t) => {
+  const { Layer, LayerType } = await import('/src/core/layer.js');
+  const fm = await import('/src/text/font-manager.js');
+  const { fontStack } = await import('/src/text/fonts.js');
+
+  const doc = t.doc(300, 160, '#ffffff', 'missingfont');
+  const l = new Layer({ type: LayerType.TEXT, name: 'h' });
+  l.text = { content: 'Hg', font: 'google:Definitely Not A Real Family', size: 30, weight: 400, x: 10, y: 40 };
+  doc.addLayer(l, { above: doc.layers[0] });
+  doc.fontTable = [{ id: 'google:Definitely Not A Real Family', family: 'Definitely Not A Real Family', category: 'serif', weights: [400], italics: [] }];
+
+  const missing = await fm.ensureDocumentFonts(doc);
+  t.eq(missing.length, 1, 'the family is reported missing');
+  t.eq(missing[0].family, 'Definitely Not A Real Family', 'by name, so the warning can say which');
+  t.eq(doc.missingFonts.length, 1, 'and recorded on the document rather than only toasted');
+
+  /*
+   * The layer is left alone on purpose. Rewriting `layer.text.font` to the
+   * substitute would make the document permanently wrong — a save would bake
+   * the substitution in, and the file would not heal when the font arrived.
+   * Verified to fail by assigning the fallback id onto the layer.
+   */
+  t.eq(l.text.font, 'google:Definitely Not A Real Family', 'the layer still names what it wants');
+
+  // And the file's own table is what makes the substitute the right shape.
+  const cat = fm.documentFontCategory(doc, 'google:Definitely Not A Real Family');
+  t.eq(cat, 'serif', 'the category comes from the file when the font cannot be had');
+  t.ok(fontStack('google:Definitely Not A Real Family', cat).includes('serif'),
+    'so a missing serif is replaced by a serif');
+});

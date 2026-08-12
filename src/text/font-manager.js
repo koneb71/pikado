@@ -2,11 +2,12 @@ import { app } from '../core/app.js';
 import {
   css2Url, googleNameFor, normalizeFontId, invalidateFontMetrics, getFontFamily,
 } from './fonts.js';
-import { loadCatalog, findFamily } from './font-catalog.js';
+import { loadCatalog, findFamily, catalogReady } from './font-catalog.js';
 import {
   putFont, listFontMeta, getFontData, deleteFont, fontUsage, FONT_LIMIT_BYTES, storageAvailable,
 } from '../io/store.js';
 import { getPref } from '../ui/dialogs/preferences.js';
+import { setCapabilityProvider, fontsUsedBy, tableEntry } from './font-table.js';
 
 /**
  * Downloaded fonts: fetching, storing, and registering them with the browser.
@@ -22,6 +23,25 @@ import { getPref } from '../ui/dialogs/preferences.js';
  * — and the bytes stay on disk until something actually needs to draw with
  * them.
  */
+
+/*
+ * So a `.pkd` manifest and a PSD FontSet can record real weights without the
+ * format modules having to import this one.
+ */
+setCapabilityProvider((id) => {
+  const known = familyCapabilities(id);
+  if (known) return known;
+  /*
+   * Not downloaded, but the catalogue may still know its shape — and the
+   * category is the field that decides whether a missing serif substitutes with
+   * a serif or with whatever sans is nearest. Only read when the catalogue
+   * happens to be in memory: this runs on every save, and a save must not pull
+   * a 60 KB chunk for a document that has no Google font in it.
+   */
+  if (!catalogReady()) return null;
+  const e = findFamily(googleNameFor(id));
+  return e ? { weights: e.weights, italics: e.italic ? e.weights : [], category: e.category } : null;
+});
 
 /** family name -> {family, category, weights, italics, bytes} */
 const installed = new Map();
@@ -341,3 +361,121 @@ export async function removeFamily(family) {
 }
 
 export { FontError };
+
+/* ------------------------------------------------------------------ */
+/* Documents                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Make a document's fonts usable, and say plainly when one cannot be.
+ *
+ * Runs on `doc-added`, which covers File > Open, a drop, and session restore
+ * in one place — and deliberately not inside `loadPKD`/`readPSD`, so the format
+ * readers never reach for the network.
+ *
+ * A family that cannot be had **substitutes at render time and the layer is
+ * left alone**. Rewriting `layer.text.font` would be the destructive move: the
+ * document would then be permanently wrong even once the font arrived, and a
+ * save would bake in the substitution. Instead the id stands, `fontStack()`
+ * falls back in the right category, and the document heals the moment the
+ * family turns up.
+ */
+export async function ensureDocumentFonts(doc) {
+  if (!doc) return [];
+  const ids = [...fontsUsedBy(doc)].filter((id) => googleNameFor(id));
+  if (!ids.length) {
+    doc.missingFonts = [];
+    return [];
+  }
+
+  await hydrateInstalledFonts();
+  const missing = [];
+  const arrived = [];
+
+  for (const id of ids) {
+    const family = googleNameFor(id);
+    if (installed.has(family)) {
+      const faces = await getFontData(family);
+      if (faces) { await registerFaces(family, faces); arrived.push(family); }
+      continue;
+    }
+    if (!webfontsAllowed()) {
+      missing.push({ id, family, reason: 'off' });
+      continue;
+    }
+    try {
+      await downloadFamily(family);
+      arrived.push(family);
+    } catch (err) {
+      missing.push({ id, family, reason: (err && err.reason) || 'offline' });
+    }
+  }
+
+  doc.missingFonts = missing;
+  if (arrived.length) {
+    invalidateFontMetrics();
+    app.emit('fonts-changed', { families: arrived });
+  }
+  if (missing.length) {
+    /*
+     * One toast per document, naming what is wrong. Silence here was the old
+     * behaviour and the worst of it: a document opened looking subtly wrong
+     * with nothing to say why, and the substituted face was easy to mistake for
+     * the author's choice.
+     */
+    const names = missing.map((m) => m.family);
+    const list = names.length === 1 ? names[0]
+      : `${names.slice(0, 2).join(', ')}${names.length > 2 ? ` and ${names.length - 2} more` : ''}`;
+    const why = missing.every((m) => m.reason === 'off')
+      ? 'Downloading fonts is turned off'
+      : 'They could not be downloaded';
+    app.toast(`${list} — showing a substitute face. ${why}.`, 'warn', 6000);
+    app.emit('doc-fonts', doc);
+  }
+  return missing;
+}
+
+/**
+ * What a document's own manifest says about a family, for substituting in kind
+ * when the font itself is not here.
+ */
+export function documentFontCategory(doc, id) {
+  const caps = familyCapabilities(id);
+  if (caps && caps.category) return caps.category;
+  // The file's own manifest is the offline answer: with no catalogue and no
+  // download, it is the only thing that knows a missing family was a serif.
+  const entry = tableEntry(doc, id);
+  if (entry && entry.category) return entry.category;
+  if (catalogReady()) {
+    const e = findFamily(googleNameFor(id));
+    if (e) return e.category;
+  }
+  return '';
+}
+
+/* ------------------------------------------------------------------ */
+/* Keeping metrics honest                                              */
+/* ------------------------------------------------------------------ */
+
+let metricsTimer = null;
+
+/**
+ * A face arriving changes measurements, and text is rasterised into a layer's
+ * canvas — so this is not a repaint, it is a re-render of the layers that use
+ * the family that just landed.
+ *
+ * Before this, `invalidateFontMetrics()` was called from exactly one place in
+ * the Type tool, so any other path — a document opening, a download finishing —
+ * kept whatever metrics were cached before the font existed.
+ */
+export function watchFontLoading() {
+  if (!document.fonts || !document.fonts.addEventListener) return;
+  document.fonts.addEventListener('loadingdone', () => {
+    clearTimeout(metricsTimer);
+    // Debounced: a batch of subsets lands as a burst of events.
+    metricsTimer = setTimeout(() => {
+      invalidateFontMetrics();
+      app.emit('fonts-changed', { families: [...installed.keys()] });
+    }, 50);
+  });
+}

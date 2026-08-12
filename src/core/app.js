@@ -75,6 +75,14 @@ class App extends Emitter {
       this.emit('doc-resize', doc);
     });
     doc.history.on('change', () => this.emit('history-change', doc));
+    /*
+     * One seam for "a document just arrived", whatever brought it — File > Open,
+     * a drop, session restore, a new blank. `font-manager` listens so the fonts
+     * a document's text layers name can be resolved before anyone looks at it,
+     * deliberately outside the format readers so `loadPKD` and `readPSD` stay
+     * free of the network.
+     */
+    this.emit('doc-added', doc);
     this.emit('docs-change');
     if (activate) this.setActiveDoc(doc);
     return doc;

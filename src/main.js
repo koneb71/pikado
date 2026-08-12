@@ -138,6 +138,7 @@ function boot() {
   // what you should land on, not a blank Untitled-1 you did not ask for.
   installSession();
   installOffline();
+  installFonts();
   restoreSession().catch((err) => console.warn('[boot] session restore failed', err));
   prefetchLazyChunks();
 
@@ -200,6 +201,63 @@ function installFileInput() {
  * a user who went offline without having opened them would hit a 503. Warming
  * them while nothing is happening also makes their first open instant.
  */
+/**
+ * Resolve a document's fonts whenever one arrives, and keep metrics honest when
+ * a face lands.
+ *
+ * Loaded lazily and off the boot path: a session with no downloaded font and no
+ * text in a Google family never touches IndexedDB's font stores, the catalogue,
+ * or the network. The listener is attached synchronously first so a document
+ * restored during boot is not missed.
+ */
+function installFonts() {
+  const pending = [];
+  app.on('doc-added', (doc) => pending.push(doc));
+  import('./text/font-manager.js').then((fm) => {
+    fm.watchFontLoading();
+    fm.hydrateInstalledFonts();
+    const run = (doc) => fm.ensureDocumentFonts(doc).catch(() => { /* reported in-band */ });
+    app.on('doc-added', run);
+    // Anything that arrived while this module was loading.
+    for (const doc of pending.splice(0)) run(doc);
+  }).catch(() => { /* fonts stay at their built-in stacks */ });
+
+  /*
+   * A face arriving changes measurement, and text lives in a layer's canvas —
+   * so the layers that use the family have to be rasterised again, not merely
+   * repainted. Only those layers: re-rendering every text layer in every open
+   * document on any font event is how a font download turns into a visible
+   * stall.
+   */
+  app.on('fonts-changed', async ({ families }) => {
+    const changed = new Set(families || []);
+    if (!changed.size) return;
+    const [{ googleNameFor }, { rasterizeTextLayer }] = await Promise.all([
+      import('./text/fonts.js'), import('./text/text-render.js'),
+    ]);
+    for (const doc of app.docs) {
+      const affected = doc.flatLayers().filter((l) => l.text
+        && changed.has(googleNameFor(l.text.font || l.text.fontFamily)));
+      if (!affected.length) continue;
+      for (const l of affected) {
+        // Not a history step: the document did not change, its font arrived.
+        const cv = await rasterizeTextLayer(l, doc);
+        if (cv) l.canvas = cv;
+        l.thumbDirty = true;
+      }
+      doc.invalidate();
+      /*
+       * Emitted, but without `touch()` — that sets `dirty`, and a font arriving
+       * is not an edit the user made. Marking the document unsaved for it would
+       * put an "unsaved changes" prompt in front of someone who only opened a
+       * file.
+       */
+      doc.emit('change', { reason: 'fonts' });
+    }
+    app.requestRender();
+  });
+}
+
 function prefetchLazyChunks() {
   const warm = () => {
     Promise.allSettled([

@@ -2,6 +2,7 @@ import { PikaDocument } from '../core/document.js';
 import { getProfile, TRC, WHITE_POINTS } from '../color/icc.js';
 import { Layer, LayerType } from '../core/layer.js';
 import { createCanvas, ctx2d, loadImage } from '../core/util.js';
+import { fontTableFor } from '../text/font-table.js';
 
 /**
  * `.pkd` — the lossless Pikado project format.
@@ -223,6 +224,18 @@ export async function savePKD(doc) {
     format: 'pikado',
     version: FORMAT_VERSION,
     created: new Date().toISOString(),
+    /*
+     * The fonts this document names — a reference, never the font files. A
+     * `.pkd` that carried font bytes would be a redistribution vector for
+     * something the author may have no right to pass on, would grow every save,
+     * and would pin a stale copy of a family Google keeps updating.
+     *
+     * More than the family name, though, because a name alone is not enough
+     * when the font cannot be had: the category is what lets a substitute be a
+     * serif rather than whatever sans is nearest, and the weights keep a PSD
+     * export from a reopened document honest about which faces exist.
+     */
+    fonts: fontTableFor(doc),
     doc: {
       name: doc.name,
       width: doc.width,
@@ -333,6 +346,9 @@ export async function loadPKD(arrayBuffer) {
   doc.frames = Array.isArray(info.frames) ? structuredClone(info.frames) : [];
   doc.activeFrameId = info.activeFrameId || null;
   doc.loopCount = info.loopCount == null ? 0 : info.loopCount;
+  // Read before the layers, so anything resolving a font during decode can see
+  // what the file claims about it.
+  doc.fontTable = Array.isArray(manifest.fonts) ? manifest.fonts : [];
   doc.paths = decode(info.paths) || [];
   doc.activePathId = info.activePathId || null;
   doc.alphaChannels = decode(info.alphaChannels) || [];
