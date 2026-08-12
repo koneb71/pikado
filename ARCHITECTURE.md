@@ -22,8 +22,14 @@ are relative and **must include the `.js` extension**.
    byte-identical copy of the untouched buffer alive in every later snapshot.
    **`doc.selection.mask` is shared the same way**, so no method on `Selection`
    may write into an existing mask; replace the array instead.
-3. **Layer buffers are always document-sized** (`doc.width × doc.height`).
-   There are no per-layer offsets; moving a layer moves its pixels.
+3. **`layer.canvas` is always document-sized — but the pixels behind it may not
+   be.** A layer can hold a compact `tile` instead: its pixels at their natural
+   size plus where they sit. Reading `.canvas` materialises the tile and gives up
+   the compact form, so anything on a hot path — `snapshot()`, `thumbnail()`,
+   `contentBounds()`, `memoryUse()`, the compositor's fast path — must go through
+   `layer.tile` instead, or the whole document expands on the first commit or the
+   first frame. A 60-layer 4000×3000 PSD opens in 99 MB compact and 3.6 GB
+   expanded, so this is the difference between the file opening and not.
 4. **A layer's canvas may be SHARED with another layer.** `beginEdit()` clones
    before any write, which is what makes sharing safe — the PSD importer hands
    every pixel-less layer one blank canvas rather than allocating a

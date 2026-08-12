@@ -286,7 +286,28 @@ const LAYER_COLOR_LABELS = ['none', 'red', 'orange', 'yellow', 'green', 'blue', 
  * @param {number} height
  * @returns {number} bytes
  */
-export function projectedLayerBytes(layerCount, width, height) {
+export function projectedLayerBytes(layerCount, width, height, records = null) {
+  /*
+   * Layers are stored at their own size now, so the cost is the sum of the
+   * layers' own rectangles rather than layer count times canvas area. Those
+   * rectangles are right there in the records, which makes this an actual
+   * measurement instead of a worst case.
+   *
+   * Using the old worst case would now be actively harmful: it puts a 60-layer
+   * 4000x3000 file at 3.6 GB and offers to flatten it, when the same file really
+   * opens fully layered in 99 MB. Warning someone away from a document that
+   * would have been fine is worse than not warning at all.
+   */
+  if (Array.isArray(records) && records.length) {
+    let bytes = 0;
+    for (const r of records) {
+      const w = Math.max(0, (r.right || 0) - (r.left || 0));
+      const h = Math.max(0, (r.bottom || 0) - (r.top || 0));
+      bytes += w * h * 4;
+    }
+    return Math.round(bytes * 1.33);
+  }
+  // No records to inspect: fall back to the pessimistic figure.
   return Math.round(layerCount * width * height * 4 * 1.33);
 }
 
@@ -385,7 +406,7 @@ export async function readPSD(arrayBuffer, opts = {}) {
      * empty. So "open it flattened" costs one document-sized canvas instead of
      * N, and needs no new decoding path.
      */
-    const projected = projectedLayerBytes(parsed.records.length, width, height);
+    const projected = projectedLayerBytes(parsed.records.length, width, height, parsed.records);
     const budget = opts.budgetBytes || Infinity;
     if (projected > budget && typeof opts.onOversize === 'function') {
       const choice = await opts.onOversize({
@@ -1166,6 +1187,7 @@ async function buildLeafLayer(rec, info, doc, ctx) {
   const label = info.name || rec.name || 'layer';
 
   let canvas = null;
+  let tile = null;
   if (width > 0 && height > 0 && width * height <= 200e6) {
     const planes = {};
     for (const ch of rec.channels) {
@@ -1186,19 +1208,18 @@ async function buildLeafLayer(rec, info, doc, ctx) {
         d[i + 2] = B ? B[p] : 0;
         d[i + 3] = A ? A[p] : 255;
       }
-      const tile = createCanvas(width, height);
-      tile.getContext('2d').putImageData(img, 0, 0);
-      canvas = createCanvas(doc.width, doc.height);
-      ctx2d(canvas).drawImage(tile, rec.left, rec.top);
       /*
-       * Release the tile now rather than waiting for GC. Its backing store lives
-       * outside the JS heap, so the collector has a poor view of how much it
-       * costs, and on a file with a hundred layers the tiles alone can keep a
-       * few hundred megabytes alive long after the only copy that matters has
-       * been drawn. Zeroing the dimensions frees it immediately.
+       * Kept at its natural size rather than expanded to the document.
+       *
+       * This is the whole point: a PSD already stores each layer as a small tile
+       * plus where it sits, and expanding that to a document-sized buffer was
+       * throwing the compactness away. A 120x120 layer in a 1600x1200 document
+       * costs 133x less this way, and the compositor draws it at its offset
+       * without ever expanding it.
        */
-      tile.width = 0;
-      tile.height = 0;
+      const tileCanvas = createCanvas(width, height);
+      tileCanvas.getContext('2d').putImageData(img, 0, 0);
+      tile = { canvas: tileCanvas, x: rec.left, y: rec.top, docWidth: doc.width, docHeight: doc.height };
     }
   }
 
@@ -1206,20 +1227,20 @@ async function buildLeafLayer(rec, info, doc, ctx) {
   if (info.adjustment) {
     layer = new Layer({ type: LayerType.ADJUSTMENT, name: label, adjustment: info.adjustment });
   } else if (info.text) {
-    layer = new Layer({ type: LayerType.TEXT, name: label, canvas: canvas || blankFor(doc, ctx) });
+    layer = new Layer({ type: LayerType.TEXT, name: label, canvas: canvas || (tile ? null : blankFor(doc, ctx)), tile });
     layer.text = info.text;
     revive(layer, canvas, () => rasterizeTextLayer(layer, doc), ctx, label);
   } else if (info.shape || info.vectorMask) {
-    layer = new Layer({ type: LayerType.SHAPE, name: label, canvas: canvas || blankFor(doc, ctx) });
+    layer = new Layer({ type: LayerType.SHAPE, name: label, canvas: canvas || (tile ? null : blankFor(doc, ctx)), tile });
     layer.shape = info.shape ? restorePrivateShape(info.shape) : vectorShapeOf(info, doc);
     revive(layer, canvas, () => rasterizeShapeLayer(layer, doc), ctx, label);
   } else if (info.fill) {
-    layer = new Layer({ type: LayerType.SHAPE, name: label, canvas: canvas || blankFor(doc, ctx) });
+    layer = new Layer({ type: LayerType.SHAPE, name: label, canvas: canvas || (tile ? null : blankFor(doc, ctx)), tile });
     // Fill layers cover the whole canvas; giving them explicit geometry keeps
     // them re-rasterisable if the user edits the fill later.
     layer.shape = { ...info.fill, subpaths: rectSubpaths(0, 0, doc.width, doc.height) };
   } else {
-    layer = new Layer({ type: LayerType.RASTER, name: label, canvas: canvas || blankFor(doc, ctx) });
+    layer = new Layer({ type: LayerType.RASTER, name: label, canvas: canvas || (tile ? null : blankFor(doc, ctx)), tile });
   }
 
   applyCommon(layer, rec, info);

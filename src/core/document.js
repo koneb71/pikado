@@ -556,7 +556,11 @@ export class PikaDocument extends Emitter {
       n += cv.width * cv.height * 4;
     };
     for (const l of this.flatLayers()) {
-      add(l.canvas);
+      // Never `l.canvas` — asking a document how much memory it uses must not be
+      // the thing that makes it use more. A compact layer is counted at its real
+      // size, which is the number that matters.
+      if (l._full) add(l._full);
+      else if (l._tile) add(l._tile.canvas);
       add(l.mask);
       /*
        * The derived caches count too. `_maskAlpha` is a whole extra

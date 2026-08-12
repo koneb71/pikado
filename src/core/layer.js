@@ -59,8 +59,29 @@ export class Layer {
     this.clipped = !!opts.clipped;
     this.locked = opts.locked || { all: false, pixels: false, position: false, transparency: false };
 
-    /** @type {HTMLCanvasElement|null} document-sized pixel buffer */
-    this.canvas = opts.canvas || null;
+    /*
+     * Pixels live in exactly one of two forms.
+     *
+     * `_full` is a document-sized buffer, which is what everything in Pikado has
+     * always assumed. `_tile` is the compact form — the pixels at their natural
+     * size plus where they sit — which is how a PSD actually stores a layer and
+     * how it stays cheap. A layer whose content is 120x120 in a 1600x1200
+     * document costs 133x less as a tile, measured.
+     *
+     * Reading `.canvas` materialises a tile into `_full` and drops the tile, so
+     * every one of the ~230 places that read it keep working unchanged. The
+     * saving comes from the layers nobody ever reads that way — in a big PSD you
+     * are only viewing, that is nearly all of them, because the compositor has a
+     * fast path that draws the tile directly (see `tile` below).
+     *
+     * Materialising is one-way on purpose. Once `_full` exists it is what writers
+     * mutate, so the tile can no longer be trusted as the source of truth and is
+     * discarded rather than left to drift.
+     */
+    /** @type {HTMLCanvasElement|null} */
+    this._full = opts.canvas || null;
+    /** @type {{canvas: HTMLCanvasElement, x: number, y: number}|null} */
+    this._tile = opts.tile || null;
     /** @type {HTMLCanvasElement|null} document-sized greyscale mask (white = visible) */
     this.mask = opts.mask || null;
     this.maskEnabled = opts.maskEnabled !== false;
@@ -97,6 +118,57 @@ export class Layer {
   }
 
   /* ------------------------------------------------------------------ */
+
+  /**
+   * The document-sized pixel buffer, materialising a tile if that is all we have.
+   *
+   * Reading this is what costs memory, so the hot paths deliberately do not:
+   * `snapshot()`, `thumb()` and the compositor's fast path all go through `tile`
+   * instead. Anything else can read `.canvas` and get exactly what it always got.
+   */
+  get canvas() {
+    if (this._full) return this._full;
+    if (!this._tile) return null;
+    const { canvas: src, x, y, docWidth, docHeight } = this._tile;
+    const out = createCanvas(docWidth, docHeight);
+    ctx2d(out).drawImage(src, x, y);
+    this._full = out;
+    this._tile = null;
+    return out;
+  }
+
+  set canvas(cv) {
+    this._full = cv || null;
+    this._tile = null;
+  }
+
+  /**
+   * The compact form, or null when the pixels are already document-sized.
+   *
+   * Consumers that can honour an offset should prefer this and leave the layer
+   * compact. Everyone else reads `.canvas` and pays for the expansion.
+   */
+  get tile() {
+    return this._tile;
+  }
+
+  /**
+   * Store pixels compactly: `src` sits at (x, y) in a `docWidth` x `docHeight`
+   * document. Replaces whatever was there.
+   */
+  setTile(src, x, y, docWidth, docHeight) {
+    this._full = null;
+    this._tile = src ? { canvas: src, x, y, docWidth, docHeight } : null;
+    this.thumbDirty = true;
+    return this;
+  }
+
+  /** Bytes of pixel buffer this layer holds, without materialising anything. */
+  pixelBytes() {
+    if (this._full) return this._full.width * this._full.height * 4;
+    if (this._tile) return this._tile.canvas.width * this._tile.canvas.height * 4;
+    return 0;
+  }
 
   get isRasterLike() {
     return this.type !== LayerType.GROUP && this.type !== LayerType.ADJUSTMENT;
@@ -139,7 +211,10 @@ export class Layer {
    */
   beginEdit(opts = {}) {
     const surface = opts.surface || 'both';
-    if (this.canvas && surface !== 'mask') this.canvas = cloneCanvas(this.canvas);
+    if (surface !== 'mask') {
+      if (this._full) this._full = cloneCanvas(this._full);
+      else if (this._tile) this._tile = { ...this._tile, canvas: cloneCanvas(this._tile.canvas) };
+    }
     if (this.mask && surface !== 'canvas') {
       this.mask = cloneCanvas(this.mask);
       this.maskVersion++;
@@ -216,7 +291,8 @@ export class Layer {
       blendMode: this.blendMode,
       clipped: this.clipped,
       locked: { ...this.locked },
-      canvas: cloneCanvas(this.canvas),
+      canvas: this._full ? cloneCanvas(this._full) : null,
+      tile: this._tile ? { ...this._tile, canvas: cloneCanvas(this._tile.canvas) } : null,
       mask: cloneCanvas(this.mask),
       maskEnabled: this.maskEnabled,
       maskLinked: this.maskLinked,
@@ -254,7 +330,10 @@ export class Layer {
       blendMode: this.blendMode,
       clipped: this.clipped,
       locked: { ...this.locked },
-      canvas: this.canvas,
+      // Whichever form the pixels are in — never `this.canvas`, which would
+      // materialise every layer in the document on every single commit.
+      canvas: this._full,
+      tile: this._tile,
       mask: this.mask,
       maskEnabled: this.maskEnabled,
       maskLinked: this.maskLinked,
@@ -285,9 +364,38 @@ export class Layer {
 
   /** Opaque bounding box of the layer pixels, or null when fully empty. */
   contentBounds() {
-    if (!this.canvas) return null;
-    const w = this.canvas.width, h = this.canvas.height;
-    const d = this.canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+    /*
+     * Scans the tile when there is one, and returns document-space coordinates
+     * either way. Two wins, not one: it does not materialise, and it reads a
+     * 120x120 buffer instead of a 1600x1200 one to answer the same question.
+     * PSD export calls this on every layer and then crops to it, so this is the
+     * hot path for saving as well as for aligning.
+     */
+    const t = this._tile;
+    if (t) {
+      const tw = t.canvas.width, th = t.canvas.height;
+      const td = t.canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, tw, th).data;
+      let tMinX = tw, tMinY = th, tMaxX = -1, tMaxY = -1;
+      for (let y = 0; y < th; y++) {
+        const row = y * tw * 4;
+        for (let x = 0; x < tw; x++) {
+          if (td[row + x * 4 + 3] !== 0) {
+            if (x < tMinX) tMinX = x;
+            if (x > tMaxX) tMaxX = x;
+            if (y < tMinY) tMinY = y;
+            if (y > tMaxY) tMaxY = y;
+          }
+        }
+      }
+      if (tMaxX < 0) return null;
+      return {
+        x: tMinX + t.x, y: tMinY + t.y,
+        width: tMaxX - tMinX + 1, height: tMaxY - tMinY + 1,
+      };
+    }
+    if (!this._full) return null;
+    const w = this._full.width, h = this._full.height;
+    const d = this._full.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
     let minX = w, minY = h, maxX = -1, maxY = -1;
     for (let y = 0; y < h; y++) {
       const row = y * w * 4;
@@ -309,12 +417,28 @@ export class Layer {
     if (!this.thumbDirty && this._thumb && this._thumb.width === size) return this._thumb;
     const cv = createCanvas(size, size);
     const c = cv.getContext('2d');
-    const src = this.type === LayerType.GROUP ? null : this.canvas;
+    /*
+     * Drawn from the tile when there is one. The Layers panel asks every layer
+     * for a thumbnail on every render, so reading `.canvas` here would expand the
+     * whole document to full size the moment a PSD finished importing — which is
+     * exactly the cost this is meant to avoid.
+     *
+     * The tile is scaled as if it were document-sized so the thumbnail frames the
+     * layer the same way either form does, rather than zooming into the content.
+     */
+    const t = this.type === LayerType.GROUP ? null : this._tile;
+    const src = t ? t.canvas : (this.type === LayerType.GROUP ? null : this._full);
     if (src) {
-      const s = Math.min(size / src.width, size / src.height);
-      const w = src.width * s, h = src.height * s;
+      const boxW = t ? t.docWidth : src.width;
+      const boxH = t ? t.docHeight : src.height;
+      const s = Math.min(size / boxW, size / boxH);
       c.imageSmoothingQuality = 'high';
-      c.drawImage(src, (size - w) / 2, (size - h) / 2, w, h);
+      c.drawImage(
+        src,
+        (size - boxW * s) / 2 + (t ? t.x * s : 0),
+        (size - boxH * s) / 2 + (t ? t.y * s : 0),
+        src.width * s, src.height * s,
+      );
     }
     this._thumb = cv;
     this.thumbDirty = false;

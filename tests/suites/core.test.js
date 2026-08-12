@@ -481,3 +481,126 @@ suite('core / memoryUse counts the derived caches too', async (t) => {
   doc.layers.unshift(twice);
   t.lt(doc.memoryUse(), (plain + W * H * 4 * 4), 'a shared buffer is still counted once');
 });
+
+/* ------------------------------------------------------------------ */
+/* Per-layer bounds                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A layer's pixels can be held compactly — at their natural size plus an offset —
+ * instead of in a document-sized buffer. That is how a PSD stores them, and
+ * expanding it was costing 133x on a 120x120 layer in a 1600x1200 document.
+ *
+ * `.canvas` still hands back a document-sized buffer, so the ~230 places that
+ * read it are unchanged. What matters is that the paths which run constantly —
+ * snapshot, thumbnail, memoryUse, contentBounds, and the compositor — do NOT
+ * read it, because any one of them would expand the whole document on the first
+ * commit or the first frame.
+ */
+suite('core / a layer can hold its pixels compactly', async (t) => {
+  const { createCanvas, ctx2d } = await import('/src/core/util.js');
+  const W = 800, H = 600;
+  const doc = t.doc(W, H, '#ffffff', 'tiles');
+
+  const tile = createCanvas(100, 80);
+  const tc = ctx2d(tile);
+  tc.fillStyle = '#ff0000';
+  tc.fillRect(0, 0, 100, 80);
+
+  const layer = new Layer({ type: LayerType.RASTER, name: 'compact' });
+  layer.setTile(tile, 250, 180, W, H);
+  doc.addLayer(layer, { above: doc.layers[0] });
+
+  t.ok(layer.tile, 'the layer reports a tile');
+  t.eq(layer.pixelBytes(), 100 * 80 * 4, 'and costs only what the tile costs');
+  t.lt(layer.pixelBytes(), W * H * 4 / 40, 'which is a small fraction of a document-sized buffer');
+
+  // The things that run constantly must not expand it.
+  layer.snapshot();
+  t.ok(layer.tile, 'taking a history snapshot leaves it compact');
+  layer.thumbnail();
+  t.ok(layer.tile, 'drawing its panel thumbnail leaves it compact');
+  doc.memoryUse();
+  t.ok(layer.tile, 'asking the document its memory use leaves it compact');
+  const b = layer.contentBounds();
+  t.ok(layer.tile, 'and measuring its content bounds leaves it compact');
+  t.eq(`${b.x},${b.y},${b.width},${b.height}`, '250,180,100,80', 'bounds come back in document space');
+
+  // Reading .canvas is the one thing that does expand it, on purpose.
+  const full = layer.canvas;
+  t.eq(`${full.width}x${full.height}`, `${W}x${H}`, 'reading .canvas gives a document-sized buffer');
+  t.notOk(layer.tile, 'and the tile is given up, because writers now own the full buffer');
+  t.pixel(full, 300, 220, '255,0,0,255', 'with the pixels in the right place');
+  t.pixel(full, 10, 10, '0,0,0,0', 'and nothing outside the tile');
+});
+
+suite('core / compositing a compact layer matches the expanded one exactly', async (t) => {
+  const { createCanvas, ctx2d } = await import('/src/core/util.js');
+  const { getComposite } = await import('/src/render/compositor.js');
+  const W = 400, H = 300;
+
+  const build = (compact) => {
+    const doc = t.doc(W, H, '#ffffff', compact ? 'compact' : 'expanded');
+    for (let i = 0; i < 4; i += 1) {
+      const tile = createCanvas(60, 50);
+      const c = ctx2d(tile);
+      c.fillStyle = `hsl(${i * 80} 70% 50%)`;
+      c.fillRect(0, 0, 60, 50);
+      const l = new Layer({ type: LayerType.RASTER, name: `l${i}` });
+      l.setTile(tile, 40 + i * 55, 30 + i * 40, W, H);
+      if (!compact) l.canvas; // force expansion
+      doc.addLayer(l, { above: doc.layers[0] });
+    }
+    return doc;
+  };
+
+  const compact = build(true);
+  const expanded = build(false);
+  const a = getComposite(compact).getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H);
+  const b = getComposite(expanded).getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H);
+
+  /*
+   * Verified to fail by removing the tile fast path from drawLayer: the compact
+   * document composites through `.canvas`, which is still correct, so this
+   * assertion would still pass — but the one below it would not.
+   */
+  t.eq(t.mad(a.data, b.data), 0, 'the two paths produce identical pixels');
+  t.ok(compact.flatLayers().some((l) => l.tile), 'and the compact document is still compact after compositing');
+  t.notOk(expanded.flatLayers().slice(0, 4).some((l) => l.tile), 'while the expanded one never was');
+});
+
+suite('core / editing a compact layer keeps history correct', async (t) => {
+  const { createCanvas, ctx2d } = await import('/src/core/util.js');
+  const { getComposite } = await import('/src/render/compositor.js');
+  const W = 300, H = 200;
+  const doc = t.doc(W, H, '#ffffff', 'edit');
+
+  const tile = createCanvas(80, 60);
+  ctx2d(tile).fillStyle = '#00ff00';
+  ctx2d(tile).fillRect(0, 0, 80, 60);
+  const layer = new Layer({ type: LayerType.RASTER, name: 'c' });
+  layer.setTile(tile, 100, 70, W, H);
+  doc.addLayer(layer, { above: doc.layers[0] });
+  doc.commit('add');
+
+  t.pixel(getComposite(doc), 140, 100, '0,255,0,255', 'the tile shows where it was placed');
+
+  // beginEdit must fork the tile rather than expanding it — a layer that is
+  // merely touched should stay cheap.
+  const tileBefore = layer.tile.canvas;
+  doc.beginEdit(layer);
+  t.ok(layer.tile, 'beginEdit leaves the layer compact');
+  t.ok(layer.tile.canvas !== tileBefore, 'but gives it a private copy to write into');
+
+  // Now actually write through .canvas, which expands, and check undo.
+  ctx2d(layer.canvas).fillStyle = '#0000ff';
+  ctx2d(layer.canvas).fillRect(0, 0, W, H);
+  doc.commit('paint');
+  t.pixel(getComposite(doc), 10, 10, '0,0,255,255', 'the paint covers the document');
+
+  doc.history.undo();
+  const back = doc.findLayer(layer.id);
+  t.pixel(getComposite(doc), 10, 10, '255,255,255,255', 'undo restores the background');
+  t.pixel(getComposite(doc), 140, 100, '0,255,0,255', 'and the compact layer with it');
+  t.ok(back.tile || back.canvas, 'the restored layer has its pixels in one form or the other');
+});

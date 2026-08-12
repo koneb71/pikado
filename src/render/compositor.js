@@ -379,6 +379,35 @@ function drawLayer(layer, ctx, doc, opts, extra = {}) {
   }
 
   drawBelowEffects(layer, ctx, doc, opts);
+
+  /*
+   * The fast path, and the whole reason a compact layer stays compact.
+   *
+   * When a layer has nothing that needs a document-sized surface — no effects, no
+   * mask, full fill opacity, and a blend mode Canvas2D can do natively — its
+   * pixels can be drawn straight from the tile at their offset. Reading
+   * `layer.canvas` instead would expand it to document size on the first frame
+   * and every layer in the document with it.
+   *
+   * The non-native blend modes cannot come here: `blendOnto` falls through to
+   * WebGL or `blendCPU`, both of which read the source at destination size.
+   */
+  const tile = layer.tile;
+  if (tile
+    && !(!opts.ignoreEffects && hasStyles(layer))
+    && !(layer.mask && layer.maskEnabled)
+    && (layer.fillOpacity == null || layer.fillOpacity >= 1)
+    && isNativeBlend(layer.blendMode === 'pass-through' ? 'normal' : layer.blendMode)) {
+    const op = effectiveOpacity(layer);
+    if (op <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = op;
+    ctx.globalCompositeOperation = gcoFor(layer.blendMode === 'pass-through' ? 'normal' : layer.blendMode);
+    ctx.drawImage(tile.canvas, tile.x, tile.y);
+    ctx.restore();
+    return;
+  }
+
   const px = layerPixels(layer, doc, opts);
   if (!px) return;
   blendOnto(ctx, px, layer.blendMode, effectiveOpacity(layer), doc);
