@@ -838,3 +838,44 @@ suite('core / aligning against other layers does not expand them', async (t) => 
     app.snap = wasSnapping;
   }
 });
+
+suite('core / dragging a guide snaps it to the document, not to itself', async (t) => {
+  const { app } = await import('/src/core/app.js');
+  const { snapGuidePos } = await import('/src/core/snapping.js');
+
+  const doc = t.doc(600, 400, '#ffffff', 'guidesnap');
+  const g = { axis: 'v', pos: 250 };
+  doc.guides = [g];
+
+  const was = { snap: app.snap, grid: app.gridSize };
+  try {
+    app.snap = true;
+    app.gridSize = 0;
+
+    t.eq(snapGuidePos(297, 'v', doc, { excludeGuide: g }), 300,
+      'a guide dragged near the middle of the document lands on it');
+
+    /*
+     * The guide being dragged sits under the cursor, and `moveGuide` writes its
+     * new position on every pointer move — so if it stayed in its own candidate
+     * list it would always be the nearest target and the guide would never
+     * move. Verified to fail by dropping the excludeGuide filter in
+     * `snapTargets`: this returns 250, the guide's own position, and the drag
+     * is stuck.
+     */
+    t.eq(snapGuidePos(252, 'v', doc, { excludeGuide: g }), 252,
+      'and is not dragged back onto where it already was');
+
+    t.eq(snapGuidePos(252, 'v', doc, {}), 250, 'while a second guide at that position does catch it');
+
+    app.snap = false;
+    t.eq(snapGuidePos(297, 'v', doc, { excludeGuide: g }), 297, 'View > Snap off leaves it alone');
+
+    app.snap = true;
+    t.eq(snapGuidePos(297, 'v', doc, { excludeGuide: g, event: { ctrlKey: true } }), 297,
+      'and so does holding Ctrl');
+  } finally {
+    app.snap = was.snap;
+    app.gridSize = was.grid;
+  }
+});

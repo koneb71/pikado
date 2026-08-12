@@ -1,5 +1,6 @@
 import { el, rafThrottle } from '../core/util.js';
 import { app } from '../core/app.js';
+import { snapGuidePos } from '../core/snapping.js';
 import './rulers.css';
 
 /**
@@ -313,13 +314,18 @@ function moveGuide(s, e) {
   const guide = s.drag.guide;
   const p = areaPoint(s, e);
   const d = app.viewport.toDoc(p.x, p.y);
-  let pos = guide.axis === 'h' ? d.y : d.x;
-  if (app.snap && app.gridSize > 0) {
-    const g = app.gridSize;
-    const snapped = Math.round(pos / g) * g;
-    if (Math.abs(snapped - pos) * app.viewport.scale < 6) pos = snapped;
-  }
-  guide.pos = Math.round(pos);
+  const pos = guide.axis === 'h' ? d.y : d.x;
+  /*
+   * This used to snap to the grid and nothing else, with its own copy of the
+   * tolerance arithmetic. On the shared solver a dragged guide also lands on
+   * the document's edges and centre, on other guides, and on the edges of the
+   * layers it passes — which is the whole reason you drag a guide out.
+   *
+   * The guide being dragged is excluded from its own candidates: it sits at
+   * the cursor, so it would always be the nearest target and the drag would
+   * never move.
+   */
+  guide.pos = Math.round(snapGuidePos(pos, guide.axis, s.drag.doc, { excludeGuide: guide, event: e }));
   app.requestRender();
 }
 

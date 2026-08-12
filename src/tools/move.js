@@ -2,7 +2,10 @@ import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { LayerType, translateLayerGeometry } from '../core/layer.js';
 import { createCanvas, cloneCanvas, uid, el } from '../core/util.js';
-import { solveSnap, snapThreshold } from '../core/snap.js';
+import { snapRect } from '../core/snapping.js';
+import {
+  layerBounds as contentBoundsOf, cacheShiftedBounds, layersBounds, peekBounds,
+} from '../core/layer-bounds.js';
 import { iconEl } from '../ui/icons.js';
 import {
   isTransforming, startTransform, commitTransform, cancelTransform,
@@ -50,41 +53,6 @@ function shiftCanvas(cv, dx, dy) {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.clearRect(0, 0, cv.width, cv.height);
   c.drawImage(tmp, dx, dy);
-}
-
-/**
- * `contentBounds()` scans every pixel of the layer, and the transform box asks
- * for it on every rendered frame. Cache it against the canvas *object*: the
- * copy-on-write rule means `beginEdit` hands out a fresh canvas for each
- * recorded edit, so identity is a sound invalidation key.
- * @type {WeakMap<HTMLCanvasElement, {x,y,width,height}|null>}
- */
-const boundsCache = new WeakMap();
-
-function contentBoundsOf(layer) {
-  /*
-   * Keyed on `pixelKey()`, not `layer.canvas`.
-   *
-   * Reading `.canvas` materialises a compact layer into a document-sized buffer,
-   * and snapping asks for the bounds of EVERY layer in the document so it has
-   * something to align against. Keyed the old way, one drag would expand the
-   * whole document — a 60-layer 4000x3000 PSD goes from 99 MB to 3.6 GB.
-   * `contentBounds()` is already tile-aware and answers in document space either
-   * way; this just stops the cache key undoing that.
-   */
-  const key = layer.pixelKey();
-  if (!key) return null;
-  if (boundsCache.has(key)) return boundsCache.get(key);
-  const b = layer.contentBounds();
-  boundsCache.set(key, b);
-  return b;
-}
-
-/** Record where a known bounding box landed after a translation. */
-function cacheShiftedBounds(layer, b, dx, dy) {
-  const key = layer.pixelKey();
-  if (!key) return;
-  boundsCache.set(key, b ? { ...b, x: b.x + dx, y: b.y + dy } : null);
 }
 
 /** Offset a layer's pixels (and its mask when linked). Needs beginEdit first. */
@@ -185,20 +153,6 @@ export function layersUnderPoint(doc, x, y, limit = 10) {
   return out;
 }
 
-/** Union of the content bounds of `layers`, or null. */
-export function layersBounds(layers) {
-  let r = null;
-  for (const l of layers) {
-    const b = contentBoundsOf(l);
-    if (!b) continue;
-    r = r ? {
-      x: Math.min(r.x, b.x), y: Math.min(r.y, b.y),
-      x2: Math.max(r.x2, b.x + b.width), y2: Math.max(r.y2, b.y + b.height),
-    } : { x: b.x, y: b.y, x2: b.x + b.width, y2: b.y + b.height };
-  }
-  return r ? { x: r.x, y: r.y, width: r.x2 - r.x, height: r.y2 - r.y } : null;
-}
-
 /* ------------------------------------------------------------------ */
 /* Align & distribute                                                  */
 /* ------------------------------------------------------------------ */
@@ -278,7 +232,7 @@ export function nudgeLayers(doc, dx, dy) {
   if (!layers.length) return false;
   // Read the bounds before the edit so the cache can be carried across the
   // copy-on-write rather than rescanning on every key repeat.
-  const prior = layers.map((l) => (boundsCache.has(l.canvas) ? boundsCache.get(l.canvas) : undefined));
+  const prior = layers.map(peekBounds);
   doc.beginEdit(layers);
   layers.forEach((l, i) => {
     offsetLayer(l, dx, dy);
@@ -451,7 +405,7 @@ class MoveTool extends Tool {
     if (!layers.length) return;
 
     const boxBounds = this.state.showTransform && !pixelMove ? layersBounds(layers) : null;
-    const priorBounds = layers.map((l) => (boundsCache.has(l.canvas) ? boundsCache.get(l.canvas) : undefined));
+    const priorBounds = layers.map(peekBounds);
     doc.beginEdit(layers);
     const drag = {
       doc,
@@ -532,31 +486,18 @@ class MoveTool extends Tool {
   /**
    * Nudge a drag onto whatever it is near.
    *
-   * The bounds of every OTHER layer are the smart-guide candidates. Gathering
-   * them goes through `contentBoundsOf`, which is cached and — since it is keyed
-   * on `pixelKey()` — does not expand a compact layer just to measure it.
+   * The moving layers are excluded from the targets, or the drag would keep
+   * offering the layer its own starting edges and glue it in place.
    *
    * @returns {{dx:number, dy:number, lines:Array}}
    */
   snapDrag(d, dx, dy, e) {
-    const none = { dx, dy, lines: [] };
-    if (!app.snap || (e && (e.ctrlKey || e.metaKey))) return none;
     const base = d.boxBounds || layersBounds(d.layers);
-    if (!base) return none;
-
-    const doc = d.doc;
-    const moving = new Set(d.layers);
-    const rects = [];
-    for (const l of doc.flatLayers()) {
-      if (moving.has(l) || l.type === LayerType.GROUP || !l.visible) continue;
-      const b = contentBoundsOf(l);
-      if (b) rects.push(b);
-    }
-
-    const r = solveSnap(
+    if (!base) return { dx, dy, lines: [] };
+    const r = snapRect(
       { x: base.x + dx, y: base.y + dy, width: base.width, height: base.height },
-      { guides: doc.guides, gridSize: app.gridSize, docWidth: doc.width, docHeight: doc.height, rects },
-      { threshold: snapThreshold(app.viewport.scale) },
+      d.doc,
+      { exclude: d.layers, event: e },
     );
     return { dx: dx + r.dx, dy: dy + r.dy, lines: r.lines };
   }
