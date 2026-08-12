@@ -85,7 +85,8 @@ export function applyGeneratedFill(doc, patch, coverage, opts) {
  * still cannot send anything the user has not agreed to send. It fails closed.
  *
  * @param {import('../core/document.js').PikaDocument} doc
- * @param {{provider: object, prompt: string, signal?: AbortSignal, size?: number}} opts
+ * @param {{provider: object, prompt: string, signal?: AbortSignal, size?: number,
+ *          model?: string, effort?: string}} opts
  * @returns {Promise<Layer>}
  */
 export async function runGenerativeFill(doc, opts) {
@@ -126,7 +127,9 @@ export async function runGenerativeFill(doc, opts) {
 
   let result;
   try {
-    result = await provider.generate({ prompt, image, mask, size, signal: timer.signal });
+    result = await provider.generate({
+      prompt, image, mask, size, model: opts.model || '', effort: opts.effort || '', signal: timer.signal,
+    });
   } catch (err) {
     throw mapThrown(err, provider.name);
   } finally {

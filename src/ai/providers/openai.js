@@ -26,6 +26,42 @@ import { loadImage } from '../../core/util.js';
 const ENDPOINT = 'https://api.openai.com/v1/images/edits';
 
 /**
+ * Quality is the compute dial, and it is the same four values on every GPT
+ * image model.
+ *
+ * **There is no `reasoning_effort` in the images API.** That parameter belongs
+ * to the text models; sending it here is an unknown field. `quality` is the
+ * knob that actually decides how much work the model does, so that is what the
+ * dialog offers and what it is called.
+ */
+const QUALITY = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'low', label: 'Low — fastest, cheapest' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High — slowest, dearest' },
+];
+
+/**
+ * Models that accept an image and a mask on the edits endpoint.
+ *
+ * `gpt-image-2` is the current one and the only one not on a retirement notice;
+ * the other two are kept because they are cheaper and still answer, and because
+ * pinning a single id is what left this file asking for `gpt-image-1` — a model
+ * that retires in October 2026 — long after it stopped being the right default.
+ *
+ * `gpt-image-1-mini` rejects `input_fidelity` and `gpt-image-2` does not allow
+ * it to be changed; Pikado never sends it, so the difference does not surface
+ * here. `response_format` is likewise never sent: it is a dall-e-2 parameter,
+ * GPT image models always answer with base64, and sending it is the classic
+ * migration 400.
+ */
+const MODELS = [
+  { id: 'gpt-image-2', label: 'GPT Image 2 — recommended', efforts: QUALITY, defaultEffort: 'auto' },
+  { id: 'gpt-image-1.5', label: 'GPT Image 1.5', efforts: QUALITY, defaultEffort: 'auto' },
+  { id: 'gpt-image-1-mini', label: 'GPT Image 1 mini — cheapest', efforts: QUALITY, defaultEffort: 'auto' },
+];
+
+/**
  * Pull the image out of a response body.
  *
  * The shape has changed across model generations — `b64_json` for some, `url`
@@ -54,7 +90,7 @@ export function extractImage(json) {
  *
  * @returns {{url: string, init: RequestInit}}
  */
-export function buildRequest({ prompt, imageBlob, maskBlob, size, model = 'gpt-image-1' }) {
+export function buildRequest({ prompt, imageBlob, maskBlob, size, model = MODELS[0].id, quality = '' }) {
   const form = new FormData();
   form.append('model', model);
   form.append('prompt', prompt);
@@ -62,6 +98,7 @@ export function buildRequest({ prompt, imageBlob, maskBlob, size, model = 'gpt-i
   form.append('size', `${size}x${size}`);
   form.append('image', imageBlob, 'image.png');
   form.append('mask', maskBlob, 'mask.png');
+  if (quality) form.append('quality', quality);
   // authorizeRequest is the only thing that can see the key, and it writes it
   // into a header. Nothing above ever holds the string.
   return { url: ENDPOINT, init: authorizeRequest('openai', { method: 'POST', body: form }) };
@@ -76,13 +113,20 @@ registerProvider({
   sizes: [1024],
   // OpenAI replaces wherever the mask is transparent.
   maskPolarity: 'alpha-holes',
+  models: MODELS,
+  defaultModel: MODELS[0].id,
+  effortLabel: 'Quality',
+  effortHint: 'Quality is how much work the model puts into the fill. Image models have no '
+    + 'reasoning-effort setting — this is the equivalent dial.',
 
-  async generate({ prompt, image, mask, size, signal }) {
+  async generate({ prompt, image, mask, size, model, effort, signal }) {
     const [imageBlob, maskBlob] = await Promise.all([
       canvasToPngBlob(image),
       canvasToPngBlob(mask),
     ]);
-    const { url, init } = buildRequest({ prompt, imageBlob, maskBlob, size });
+    const { url, init } = buildRequest({
+      prompt, imageBlob, maskBlob, size, model: model || MODELS[0].id, quality: effort,
+    });
 
     let res;
     try {

@@ -382,3 +382,120 @@ suite('ai / providers stay isolated from Pikado', async (t) => {
     t.ok(typeof p.needsKey === 'boolean', `${p.id} says whether it needs a key`);
   }
 });
+
+suite('ai / every model a provider offers is one it could actually call', async (t) => {
+  const { modelChoices, defaultModelOf, effortChoices } = await import('/src/ai/providers/index.js');
+  await import('/src/ai/providers/openai.js');
+  await import('/src/ai/providers/gemini.js');
+
+  /*
+   * The assertion that catches a pinned dead model id — the failure mode this
+   * whole feature grew out of, since the file shipped asking for gpt-image-1
+   * long after it stopped being the right default, and Gemini's -preview ids
+   * are shut down outright.
+   *
+   * Verified to fail by setting Gemini's defaultModel to
+   * 'gemini-3-pro-image-preview', which was shut down in June 2026 and is not
+   * in the list.
+   */
+  for (const p of listProviders()) {
+    const models = modelChoices(p);
+    if (!models.length) {
+      t.notOk(p.defaultModel, `${p.id} offers no models and claims no default`);
+      continue;
+    }
+    for (const m of models) {
+      t.ok(m.id && m.label, `${p.id}: every model has an id and a label`);
+      t.ok(!m.id.includes('preview'), `${p.id}: ${m.id} is not a preview id`);
+      t.ok(!('efforts' in m) || (Array.isArray(m.efforts) && m.efforts.length),
+        `${p.id}: ${m.id} either has efforts or does not mention them`);
+    }
+    t.ok(models.some((m) => m.id === defaultModelOf(p)), `${p.id}'s default is one it offers`);
+    t.ok(p.effortLabel || !models.some((m) => m.efforts),
+      `${p.id} names its effort dial if it has one`);
+  }
+
+  // Gemini's is the split that matters: the dial exists on two of four.
+  const gem = getProvider('gemini');
+  t.ok(effortChoices(gem, 'gemini-3.1-flash-image').length, '3.1 Flash offers a thinking level');
+  t.eq(effortChoices(gem, 'gemini-2.5-flash-image').length, 0, 'and 2.5 Flash offers none');
+});
+
+suite('ai / the chosen model and effort reach the provider', async (t) => {
+  MOCK_DELAY.ms = 0;
+  const doc = docWithSelection(t);
+  let seen = null;
+  const recorder = registerProvider({
+    id: 'test-recorder',
+    name: 'Test Recorder',
+    needsKey: false,
+    endpoint: '',
+    sizes: [64],
+    maskPolarity: 'alpha-holes',
+    async generate(req) {
+      seen = { model: req.model, effort: req.effort };
+      const cv = createCanvas(64, 64);
+      ctx2d(cv).fillRect(0, 0, 64, 64);
+      return { image: cv };
+    },
+  });
+
+  await runGenerativeFill(doc, { provider: recorder, prompt: 'x', model: 'm2', effort: 'high' });
+  /*
+   * Verified to fail by dropping `model` from the object literal passed to
+   * provider.generate — which is what it looked like before, and which would
+   * have made every one of these controls silently do nothing.
+   */
+  t.eq(seen && seen.model, 'm2', 'the model reaches the adapter');
+  t.eq(seen && seen.effort, 'high', 'and so does the effort');
+});
+
+suite('ai / a model is a preference and a key is still not', async (t) => {
+  const { getModel, setModel, getEffort, setEffort } = await import('/src/ai/model-prefs.js');
+  const { allPrefs, setPrefs, commitPrefs } = await import('/src/ui/dialogs/preferences.js');
+  const { setCredential, forgetAllCredentials } = await import('/src/ai/credentials.js');
+  await import('/src/ai/providers/openai.js');
+  const openai = getProvider('openai');
+
+  const before = { models: allPrefs().aiModels, efforts: allPrefs().aiEfforts };
+  try {
+    setModel('openai', 'gpt-image-1.5');
+    t.eq(getModel(openai), 'gpt-image-1.5', 'a chosen model round-trips through the prefs blob');
+
+    /*
+     * A stored id that the provider no longer offers must not be sent. Dropping
+     * a retired model from the list is how it stops being used — no migration
+     * step, and no request that fails on the model name.
+     * Verified to fail by having getModel return the stored value unchecked.
+     */
+    setModel('openai', 'gpt-image-1');
+    t.eq(getModel(openai), 'gpt-image-2', 'a model no longer offered falls back to the default');
+
+    setEffort('openai', 'gpt-image-2', 'high');
+    t.eq(getEffort(openai, 'gpt-image-2'), 'high', 'so does an effort');
+    t.eq(getEffort(getProvider('mock'), 'anything'), '',
+      'and a provider with no effort dial reports none');
+
+    /*
+     * The rule the whole credentials module exists to keep. Verified to fail by
+     * writing the key into the prefs blob.
+     */
+    const CANARY = 'sk-prefs-canary-should-never-appear';
+    await setCredential('openai', CANARY);
+    t.notOk(JSON.stringify(allPrefs()).includes(CANARY), 'and the key is nowhere in the prefs blob');
+    await forgetAllCredentials();
+
+    /*
+     * Preferences takes a snapshot when it opens, so committing it must merge
+     * rather than assign — otherwise choosing a model in AI Settings while
+     * Preferences is open is silently undone by clicking OK.
+     * Verified to fail by restoring `stored = { ...working }`.
+     */
+    const snapshot = JSON.parse(JSON.stringify(allPrefs()));
+    setModel('openai', 'gpt-image-1-mini');
+    commitPrefs(snapshot, snapshot);
+    t.eq(getModel(openai), 'gpt-image-1-mini', 'a pref written while Preferences was open survives its OK');
+  } finally {
+    setPrefs({ aiModels: before.models || {}, aiEfforts: before.efforts || {} });
+  }
+});

@@ -48,6 +48,11 @@ export const PREF_DEFAULTS = {
      not a secret, so it belongs here — unlike the API key, which is deliberately
      kept out of this blob and lives in IndexedDB (see src/ai/credentials.js). */
   aiConsentHosts: [],
+  /* Which model each AI provider should use, and how hard it should work:
+     { openai: 'gpt-image-2' } and { 'openai:gpt-image-2': 'high' }. Same
+     reasoning as the line above — a model id is a preference, not a secret. */
+  aiModels: {},
+  aiEfforts: {},
   /* Guides & Grid */
   showGuides: true,
   showRulers: true,
@@ -179,6 +184,38 @@ export function allPrefs() {
   return { ...PREF_DEFAULTS, ...stored };
 }
 
+/**
+ * Commit the Preferences dialog's working copy.
+ *
+ * **Writes only what actually changed in the dialog, not the whole copy.** The
+ * working copy is a snapshot taken when Preferences opened, so writing it back
+ * wholesale reverts anything else that changed meanwhile — and things do change
+ * meanwhile: agreeing to send an image to a host writes `aiConsentHosts`, and
+ * the AI settings dialog writes `aiModels` and `aiEfforts`. Both are reachable
+ * with Preferences open, and both used to be silently undone by clicking OK.
+ *
+ * A shallow merge is not enough, which is worth stating because it is the
+ * obvious fix and it does not work: these preferences are objects, so a stale
+ * `aiModels` merged over a fresh one replaces every provider's model at once.
+ * Diffing against the state at open is what makes "only what this dialog
+ * touched" true for nested values as well as flat ones.
+ *
+ * Split out from the dialog so the behaviour can be tested without driving one.
+ *
+ * @param {object} working what the controls have been editing
+ * @param {object} opened  a pristine copy of the same thing, taken at open
+ */
+export function commitPrefs(working, opened = {}) {
+  const patch = {};
+  for (const [key, value] of Object.entries(working || {})) {
+    if (JSON.stringify(value) !== JSON.stringify(opened[key])) patch[key] = value;
+  }
+  Object.assign(stored, patch);
+  persist();
+  applyStoredPreferences();
+  return patch;
+}
+
 /** Write a patch of preferences, persist it and apply it immediately. */
 export function setPrefs(patch) {
   Object.assign(stored, patch);
@@ -301,6 +338,8 @@ app.on('docs-change', () => {
  */
 export async function showPreferencesDialog(categoryId = 'general') {
   const working = allPrefs();
+  // Kept pristine so the commit can tell what this dialog actually changed.
+  const opened = JSON.parse(JSON.stringify(working));
   const dlg = new Dialog({ title: 'Preferences', width: 620, className: 'pkd-prefs-dialog' });
 
   const nav = el('div.pkd-prefs-nav');
@@ -344,9 +383,7 @@ export async function showPreferencesDialog(categoryId = 'general') {
 
   const result = await dlg.open();
   if (!result) return null;
-  stored = { ...result };
-  persist();
-  applyStoredPreferences();
+  commitPrefs(result, opened);
   app.toast('Preferences saved.', 'ok');
   return result;
 }

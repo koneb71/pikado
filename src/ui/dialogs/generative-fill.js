@@ -4,7 +4,8 @@ import { el } from '../../core/util.js';
 import { Dialog } from '../dialog.js';
 import { app } from '../../core/app.js';
 import { runGenerativeFill } from '../../ai/generative-fill.js';
-import { getProvider, listProviders, providerOptions } from '../../ai/providers/index.js';
+import { getProvider, listProviders, providerOptions, effortChoices } from '../../ai/providers/index.js';
+import { getModel, getEffort, setEffort } from '../../ai/model-prefs.js';
 import { hasCredential, scrubSecrets } from '../../ai/credentials.js';
 import { hasConsent, hostOf } from '../../ai/consent.js';
 import { messageFor, mapThrown, GEN_ERRORS } from '../../ai/errors.js';
@@ -61,6 +62,20 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
     ...providerOptions().map((o) => el('option', { value: o.value, text: o.label })));
   providerSel.value = providerId;
 
+  /*
+   * The same setting as in AI Settings, shown again here on purpose. That
+   * dialog is where you configure the provider once; this is the moment the
+   * choice actually costs something, which is where a trade between a quick
+   * look and a final render wants to be made. Both read and write one stored
+   * value, so they cannot disagree.
+   */
+  const effortSel = el('select.pk-input');
+  const effortRow = el('div.pk-field', {}, el('label', { text: 'Effort' }), effortSel);
+  effortSel.addEventListener('change', () => {
+    const p = getProvider(providerSel.value);
+    setEffort(providerSel.value, getModel(p), effortSel.value);
+  });
+
   const status = el('div.pk-genfill-status');
   const note = el('div.pk-hint');
   const bar = el('div.pk-genfill-bar', {}, el('div.pk-genfill-bar-fill'));
@@ -69,6 +84,14 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
   /** Tell the user, before they spend anything, that this will come back soft. */
   const syncNote = () => {
     const p = getProvider(providerSel.value);
+    const modelId = getModel(p);
+    const choices = effortChoices(p, modelId);
+    effortRow.hidden = !choices.length;
+    if (choices.length) {
+      effortRow.querySelector('label').textContent = (p && p.effortLabel) || 'Effort';
+      effortSel.replaceChildren(...choices.map((c) => el('option', { value: c.value, text: c.label })));
+      effortSel.value = getEffort(p, modelId);
+    }
     const size = (p && p.sizes && p.sizes[0]) || 1024;
     const frame = planFrame(bounds, doc.width, doc.height, { size });
     const region = Math.max(frame.crop.width, frame.crop.height);
@@ -78,6 +101,9 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
       bits.push(`Generating at ${size}x${size} for a ${region}px region, so the fill will be softer than the rest of the image.`);
     }
     if (p && !p.needsKey) bits.push('This provider runs without a key and sends nothing anywhere.');
+    // Which model is about to be billed, said where it is spent rather than
+    // only in the settings dialog it was chosen in.
+    if (modelId) bits.push(`Using ${modelId} — change it in Edit > AI Settings.`);
     note.textContent = bits.join(' ');
   };
   providerSel.addEventListener('change', () => { providerId = providerSel.value; syncNote(); });
@@ -88,6 +114,7 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
     bar.hidden = !on;
     prompt.disabled = on;
     providerSel.disabled = on;
+    effortSel.disabled = on;
     status.textContent = label || '';
     status.className = `pk-genfill-status${on ? ' busy' : ''}`;
     dialog.setButtons(on ? busyButtons : idleButtons);
@@ -104,6 +131,7 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
     bar.hidden = true;
     prompt.disabled = false;
     providerSel.disabled = false;
+    effortSel.disabled = false;
     busy = false;
     dialog.setButtons(action === 'key' ? keyButtons : idleButtons);
   };
@@ -115,6 +143,8 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
     if (!text) { app.toast('Describe what should be there first.', 'warn'); return; }
     lastPrompt = text;
     lastProviderId = provider.id;
+    const model = getModel(provider);
+    const effort = getEffort(provider, model);
 
     if (provider.needsKey && !hasCredential(provider.id)) {
       const saved = await showAiKeyDialog(provider.id);
@@ -136,7 +166,7 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
     }, 1000);
 
     try {
-      await runGenerativeFill(doc, { provider, prompt: text, signal: controller.signal });
+      await runGenerativeFill(doc, { provider, prompt: text, model, effort, signal: controller.signal });
       clearInterval(tick);
       dialog.close(true);
     } catch (err) {
@@ -169,6 +199,7 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
   dialog.setBody(
     el('div.pk-field', {}, el('label', { text: 'Describe the fill' }), prompt),
     el('div.pk-field', {}, el('label', { text: 'Provider' }), providerSel),
+    effortRow,
     note,
     bar,
     status,

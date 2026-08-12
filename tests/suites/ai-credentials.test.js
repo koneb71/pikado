@@ -345,3 +345,74 @@ suite('ai credentials / Gemini authenticates by header, not query string', async
     if (prior) await kvSet('ai.credentials', prior);
   }
 });
+
+suite('ai credentials / the chosen model and quality reach the wire, and nothing else does', async (t) => {
+  // buildRequest goes through authorizeRequest, which refuses without one.
+  await setCredential('openai', 'sk-model-test-key');
+  const form = (init) => Object.fromEntries(
+    [...init.body.entries()].filter(([, v]) => typeof v === 'string'));
+
+  const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' });
+  const { init } = buildRequest({
+    prompt: 'a stone path', imageBlob: blob, maskBlob: blob, size: 1024,
+    model: 'gpt-image-1.5', quality: 'high',
+  });
+  const f = form(init);
+
+  /*
+   * Verified to fail by making buildRequest append a constant model instead of
+   * its argument — which is what it did before, pinned to gpt-image-1, a model
+   * that retires in October 2026.
+   */
+  t.eq(f.model, 'gpt-image-1.5', 'the chosen model is what gets asked for');
+  t.eq(f.quality, 'high', 'and so is the chosen quality');
+
+  /*
+   * The two fields that turn a working request into a 400. `response_format` is
+   * a dall-e-2 parameter and GPT image models always answer in base64;
+   * `input_fidelity` is rejected outright by gpt-image-1-mini and cannot be
+   * changed on gpt-image-2. Neither has any business here.
+   * Verified to fail by appending either one.
+   */
+  t.notOk('response_format' in f, 'no response_format rides along');
+  t.notOk('input_fidelity' in f, 'and no input_fidelity');
+  t.notOk('reasoning_effort' in f, 'and no reasoning_effort, which images have no concept of');
+
+  const bare = buildRequest({ prompt: 'x', imageBlob: blob, maskBlob: blob, size: 1024 });
+  const bf = form(bare.init);
+  t.eq(bf.model, 'gpt-image-2', 'the default is the model that is not on a retirement notice');
+  t.notOk('quality' in bf, 'and quality is omitted when nothing asked for one');
+  await forgetAllCredentials();
+});
+
+suite('ai credentials / Gemini carries the model in the path and thinks only where it can', async (t) => {
+  await setCredential('gemini', 'AIza-model-test-key');
+  const args = { prompt: 'a stone path', imageBase64: 'AAAA' };
+
+  const flash = buildGeminiRequest({ ...args, model: 'gemini-3.1-flash-image', thinkingLevel: 'HIGH' });
+  const u = new URL(flash.url);
+  /*
+   * Verified to fail by putting the model in a query parameter: the key header
+   * test next door already forbids a query string, and a model in one would be
+   * the second thing to put in the URL that does not belong there.
+   */
+  t.ok(u.pathname.endsWith('/models/gemini-3.1-flash-image:generateContent'), 'the model is a path segment');
+  t.eq(u.search, '', 'and the URL still carries no query string');
+  t.eq(JSON.parse(flash.init.body).generationConfig.thinkingConfig.thinkingLevel, 'HIGH',
+    'a model that takes a thinking level gets one');
+
+  /*
+   * The real 400 this guards. 2.5 Flash Image rejects a thinking level, and
+   * 3 Pro has no documented control for it, so neither may be sent one.
+   * Verified to fail by emitting thinkingConfig unconditionally.
+   */
+  for (const id of ['gemini-2.5-flash-image', 'gemini-3-pro-image']) {
+    const body = JSON.parse(buildGeminiRequest({ ...args, model: id, thinkingLevel: 'HIGH' }).init.body);
+    t.notOk('thinkingConfig' in body.generationConfig, `${id} is sent no thinking level`);
+  }
+
+  const bare = new URL(buildGeminiRequest(args).url);
+  t.ok(bare.pathname.endsWith('/models/gemini-3.1-flash-image:generateContent'),
+    'and the default model is the current one');
+  await forgetAllCredentials();
+});

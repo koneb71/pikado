@@ -6,8 +6,13 @@ import { createCanvas, ctx2d, loadImage } from '../../core/util.js';
 /**
  * Google Gemini image generation.
  *
- * Two things differ from the OpenAI adapter, and both are worth knowing rather
+ * Three things differ from the OpenAI adapter, and all are worth knowing rather
  * than discovering.
+ *
+ * **The model is part of the URL.** OpenAI takes it as a form field; here it is
+ * a path segment, so the endpoint has to be built per request rather than kept
+ * in a constant. Only the path varies — the host is the same for every model,
+ * which is what keeps consent-by-host correct across a model change.
  *
  * **Authentication is a header, not a query parameter.** Google's own
  * documentation offers `?key=…` as the convenient option, and it is the single
@@ -26,8 +31,53 @@ import { createCanvas, ctx2d, loadImage } from '../../core/util.js';
  * rather than "silently replaced the picture".
  */
 
-const MODEL = 'gemini-2.5-flash-image';
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+const HOST = 'https://generativelanguage.googleapis.com';
+
+const THINKING = [
+  { value: 'MINIMAL', label: 'Minimal — fastest' },
+  { value: 'HIGH', label: 'High — thinks before drawing' },
+];
+
+/**
+ * Models that take an image in and give an image back.
+ *
+ * **`efforts` is per model, and leaving it off is load-bearing.**
+ * `thinkingLevel` is accepted by the 3.1 image models, has no documented level
+ * control on 3 Pro (which thinks by default), and is a documented error on 2.5
+ * Flash Image. A provider-wide effort list would send it to all four and break
+ * two of them, which is why the field lives on the model rather than here.
+ *
+ * The `-preview` ids this file could have grown into — `gemini-3-pro-image-preview`,
+ * `gemini-2.5-flash-image-preview` — are both shut down and would fail on the
+ * model id alone. The GA ids carry no suffix.
+ */
+const MODELS = [
+  { id: 'gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image — recommended', efforts: THINKING, defaultEffort: 'MINIMAL' },
+  { id: 'gemini-3.1-flash-lite-image', label: 'Gemini 3.1 Flash Lite Image — cheapest', efforts: THINKING, defaultEffort: 'MINIMAL' },
+  { id: 'gemini-3-pro-image', label: 'Gemini 3 Pro Image — always thinks' },
+  { id: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (legacy)' },
+];
+
+const DEFAULT_MODEL = MODELS[0].id;
+
+/**
+ * The model rides in the URL path, not in the body and not in a query string.
+ *
+ * Only the path varies, so the *host* is fixed — which is what keeps consent
+ * meaningful: the user agreed to send pictures to generativelanguage.googleapis.com,
+ * and switching models does not change who receives them, so it correctly does
+ * not ask again.
+ */
+function endpointFor(model) {
+  return `${HOST}/v1beta/models/${model || DEFAULT_MODEL}:generateContent`;
+}
+
+/** Whether this model accepts a thinking level at all. */
+function thinkingFor(model, level) {
+  const m = MODELS.find((x) => x.id === model);
+  if (!m || !m.efforts || !level) return null;
+  return m.efforts.some((e) => e.value === level) ? level : null;
+}
 
 /** Base64 payload of a canvas, without the data-URL preamble. */
 function toBase64(canvas) {
@@ -104,7 +154,8 @@ export function extractImage(json) {
  *
  * @returns {{url: string, init: RequestInit}}
  */
-export function buildRequest({ prompt, imageBase64, mimeType = 'image/png' }) {
+export function buildRequest({ prompt, imageBase64, mimeType = 'image/png', model = DEFAULT_MODEL, thinkingLevel = '' }) {
+  const level = thinkingFor(model, thinkingLevel);
   const body = JSON.stringify({
     contents: [{
       parts: [
@@ -116,10 +167,16 @@ export function buildRequest({ prompt, imageBase64, mimeType = 'image/png' }) {
         { inline_data: { mime_type: mimeType, data: imageBase64 } },
       ],
     }],
-    generationConfig: { responseModalities: ['IMAGE'] },
+    generationConfig: {
+      responseModalities: ['IMAGE'],
+      // Present only when the chosen model accepts it. 2.5 Flash Image rejects
+      // a thinking level outright, so an unconditional field would turn a
+      // working legacy model into a hard failure.
+      ...(level ? { thinkingConfig: { thinkingLevel: level } } : {}),
+    },
   });
   return {
-    url: ENDPOINT,
+    url: endpointFor(model),
     init: authorizeRequest('gemini', {
       method: 'POST',
       body,
@@ -133,14 +190,22 @@ registerProvider({
   id: 'gemini',
   name: 'Gemini',
   needsKey: true,
-  endpoint: ENDPOINT,
+  // Only ever read for its host, which every model shares — see endpointFor.
+  endpoint: endpointFor(DEFAULT_MODEL),
   keyHint: 'AIza… — from aistudio.google.com/apikey',
   sizes: [1024],
   maskPolarity: 'alpha-holes',
+  models: MODELS,
+  defaultModel: DEFAULT_MODEL,
+  effortLabel: 'Thinking',
+  effortHint: 'Thinking lets the model plan before it draws. Only the 3.1 models take a level; '
+    + '3 Pro always thinks and 2.5 Flash cannot.',
 
-  async generate({ prompt, image, mask, signal }) {
+  async generate({ prompt, image, mask, model, effort, signal }) {
     const composited = punchMask(image, mask);
-    const { url, init } = buildRequest({ prompt, imageBase64: toBase64(composited) });
+    const { url, init } = buildRequest({
+      prompt, imageBase64: toBase64(composited), model: model || DEFAULT_MODEL, thinkingLevel: effort,
+    });
 
     let res;
     try {

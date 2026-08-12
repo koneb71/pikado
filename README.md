@@ -231,6 +231,23 @@ that can send your work anywhere.** So it is built to be refused easily:
   before it builds a request, and that check lives in the AI layer rather than
   the dialog, so calling the command directly cannot get around it.
 
+- **You pick the model, and how hard it works.** Edit > AI Settings holds both,
+  per provider. OpenAI offers GPT Image 2 (the default), 1.5 and 1 mini with a
+  **Quality** of auto, low, medium or high; Gemini offers 3.1 Flash Image, 3.1
+  Flash Lite, 3 Pro and the legacy 2.5 Flash, with a **Thinking** level on the
+  two that accept one. The effort control also appears in the Generative Fill
+  dialog itself, since that is the moment the choice costs something — it is the
+  same stored setting, not a second one.
+
+  Two things about that are deliberate. **There is no "reasoning effort" here,
+  because image models do not have one** — that is a text-model parameter, and
+  sending it would simply be an unknown field. Quality and thinking level are
+  the real dials, so those are the names used. And the effort control is
+  attached to the *model*, not the provider: Gemini takes a thinking level on
+  its 3.1 image models, has no documented control for it on 3 Pro, and rejects
+  it outright on 2.5 Flash — so the control disappears on the models that cannot
+  take it rather than sending a field that fails.
+
 One difference between the two is worth knowing: OpenAI's edit endpoint takes a
 real mask, and Gemini's does not — so for Gemini the selected region is knocked
 out of the image before sending and the prompt asks for it back. Gemini may

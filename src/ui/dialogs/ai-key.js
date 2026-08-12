@@ -6,11 +6,16 @@ import {
   setCredential, forgetCredential, forgetAllCredentials, hasCredential,
   redactedCredential, credentialScope, configuredProviders,
 } from '../../ai/credentials.js';
-import { getProvider, listProviders } from '../../ai/providers/index.js';
+import { getProvider, listProviders, modelChoices, effortChoices } from '../../ai/providers/index.js';
+import { getModel, setModel, getEffort, setEffort } from '../../ai/model-prefs.js';
 import { consentedHosts, revokeAllConsent } from '../../ai/consent.js';
 
 /**
- * API key entry, one provider at a time.
+ * API key entry and per-provider settings, one provider at a time.
+ *
+ * The key is the sensitive half and never leaves through the promise; the model
+ * and effort next to it are ordinary preferences, written to the prefs blob the
+ * moment they change rather than on Save — see the comment where they are built.
  *
  * Hand-built rather than `paramDialog`, for two reasons that both matter.
  * `buildForm`'s text control renders a plain `<input type=text>` — no password
@@ -36,7 +41,7 @@ export async function showAiKeyDialog(providerId = 'openai') {
   const id = provider.id;
   const host = provider.endpoint ? new URL(provider.endpoint).host : '';
 
-  const dialog = new Dialog({ title: `${provider.name} API key`, width: 480 });
+  const dialog = new Dialog({ title: `${provider.name} settings`, width: 480 });
 
   const input = el('input.pk-input', {
     type: 'password',
@@ -77,7 +82,74 @@ export async function showAiKeyDialog(providerId = 'openai') {
     ? el('div.pk-hint', { text: `Images may be sent without asking to: ${agreed.join(', ')}.` })
     : null;
 
+  /*
+   * Which provider is being configured.
+   *
+   * Edit > AI Settings could only ever open OpenAI's, which was survivable while
+   * this dialog held nothing but a key — Gemini's was reachable from the
+   * Generative Fill dialog when it asked for one. It stops being survivable once
+   * the dialog also holds the model, because Gemini's would then be unreachable.
+   * Switching re-opens rather than rebuilding: everything here is per provider,
+   * so there is nothing worth keeping across the change.
+   */
+  const providerSel = keyed.length > 1
+    ? el('select.pk-input', {}, ...keyed.map((p) => el('option', { value: p.id, text: p.name })))
+    : null;
+  if (providerSel) {
+    providerSel.value = id;
+    providerSel.addEventListener('change', () => {
+      const next = providerSel.value;
+      dialog.close(false);
+      showAiKeyDialog(next);
+    });
+  }
+
+  /*
+   * Model and effort, which are preferences rather than secrets and so are
+   * written straight to the prefs blob.
+   *
+   * **They persist on `change`, not on Save.** Save is gated on a non-empty key
+   * field, so a user who opened this only to switch model would otherwise be
+   * told to "paste a key first, or cancel" and lose the change either way.
+   */
+  const models = modelChoices(provider);
+  const modelSel = models.length
+    ? el('select.pk-input', {}, ...models.map((m) => el('option', { value: m.id, text: m.label })))
+    : null;
+  if (modelSel) modelSel.value = getModel(provider);
+
+  const effortSel = el('select.pk-input');
+  const effortRow = el('div.pk-field', {},
+    el('label', { text: provider.effortLabel || 'Effort' }), effortSel);
+
+  /*
+   * Rebuilt whenever the model changes, because the effort dial is a property
+   * of the model and not of the provider: two of Gemini's four image models
+   * take a thinking level and two do not, and offering it on the two that do
+   * not would send a field one of them rejects outright.
+   */
+  const syncEffort = () => {
+    const modelId = modelSel ? modelSel.value : getModel(provider);
+    const choices = effortChoices(provider, modelId);
+    effortRow.hidden = !choices.length;
+    if (!choices.length) return;
+    effortSel.replaceChildren(...choices.map((c) => el('option', { value: c.value, text: c.label })));
+    effortSel.value = getEffort(provider, modelId);
+  };
+  syncEffort();
+
+  if (modelSel) {
+    modelSel.addEventListener('change', () => {
+      setModel(id, modelSel.value);
+      syncEffort();
+    });
+  }
+  effortSel.addEventListener('change', () => {
+    setEffort(id, modelSel ? modelSel.value : getModel(provider), effortSel.value);
+  });
+
   dialog.setBody(
+    ...(providerSel ? [el('div.pk-field', {}, el('label', { text: 'Provider' }), providerSel)] : []),
     el('div.pk-field', {},
       el('div.pk-hint', {
         text: host
@@ -92,6 +164,11 @@ export async function showAiKeyDialog(providerId = 'openai') {
         + 'plain text — anyone who can use this browser profile, and any script that runs on '
         + 'this page, can read it. Use a key with a spending limit you could afford to lose.',
     }),
+    ...(modelSel ? [el('div.pk-field', {}, el('label', { text: 'Model' }), modelSel)] : []),
+    effortRow,
+    // Declared by the provider, not branched on here — the dialog stays free of
+    // `if (id === 'openai')`, which is what lets a new provider be data only.
+    ...(provider.effortHint ? [el('div.pk-hint', { text: provider.effortHint })] : []),
     ...(current ? [current] : []),
     ...(summary ? [summary] : []),
     ...(consentNote ? [consentNote] : []),
@@ -135,6 +212,17 @@ export async function showAiKeyDialog(providerId = 'openai') {
     onClick: async (dlg) => {
       const value = input.value.trim();
       if (!value) {
+        /*
+         * An empty field is not necessarily a mistake now that this dialog holds
+         * more than a key: someone who came to change the model has already had
+         * that saved, and telling them to paste a key would be asking for
+         * something they do not need. Only nag when there is no key at all,
+         * which is the one case where leaving empty-handed accomplishes nothing.
+         */
+        if (hasCredential(id)) {
+          dlg.close(false);
+          return false;
+        }
         app.toast('Paste a key first, or cancel.', 'warn');
         return false;
       }

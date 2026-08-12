@@ -1070,6 +1070,7 @@ key is the user's, and Pikado ships none.
 src/ai/
   credentials.js       key handling. No raw getter — see below.
   consent.js           per-host agreement to upload; enforced here, not in the UI
+  model-prefs.js       which model, and how hard it works. Prefs blob, not secrets.
   errors.js            GenerationError + mapHttpError/mapThrown/messageFor (pure)
   geometry.js          planFrame / cropToRequest / requestMask / patchFromResult (pure)
   generative-fill.js   composite → geometry → provider → new masked layer → commit
@@ -1106,6 +1107,35 @@ deliberately not the `pikado.prefs` localStorage blob, which is what people past
 into bug reports. `hasCredential()` must stay synchronous: `isEnabled` does
 `return !!c.enabled()`, and a Promise is truthy, so an async version would
 silently enable every AI menu item with no key present.
+
+**Model and effort are declared by the provider, not branched on by the UI.** A
+provider may carry `models: [{id, label, efforts?, defaultEffort?}]`,
+`defaultModel`, `effortLabel` and `effortHint`; the dialogs render whatever is
+there and hide the row when it is empty, so adding a provider stays a data
+change. `modelChoices`, `effortChoices`, `defaultModelOf` and `defaultEffortOf`
+in `providers/index.js` are the only readers.
+
+**`efforts` hangs off the model, not the provider, and that is not tidiness.**
+The dial is genuinely per model: OpenAI's `quality` applies to every GPT image
+model, but Gemini's `thinkingLevel` is taken by its 3.1 image models, has no
+documented control on 3 Pro, and is rejected outright by 2.5 Flash Image. A
+provider-wide list would send it to all four and break two. `gemini.js` also
+guards this in `buildRequest`, so the wire is safe even if a caller passes a
+level for a model that cannot take one.
+
+**There is no reasoning-effort parameter for image generation.** It is a
+text-model concept; the images APIs have `quality` (OpenAI) and
+`thinkingLevel` (Gemini). Do not add one — it would be an unknown field. For the
+same reason `openai.js` must never send `response_format` (a dall-e-2 parameter;
+GPT image models always answer in base64) or `input_fidelity` (rejected by
+gpt-image-1-mini, unchangeable on gpt-image-2). `ai-credentials.test.js` asserts
+all three are absent from the outgoing form.
+
+**A stored model id is validated against the list before use.** `getModel` falls
+back to the provider's default when the stored id is no longer offered, so
+dropping a retired model from the array is the whole of the migration — there is
+no stored value that can outlive the model it names, and no request that fails on
+the model name.
 
 **Providers are isolated.** Nothing under `providers/` may import from
 `src/core/`, `src/ui/` or `src/render/`, except `src/core/util.js`.
