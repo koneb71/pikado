@@ -565,7 +565,15 @@ Stated plainly so you don't find out by clicking:
   on a 12-megapixel image). None of that is unsolvable; it is just much larger
   than it looks, and a half-migrated pipeline would be worse than none.
 
-  What *is* done is the part that needed no storage work: **LUT-based ICC
+  Two pieces are done, both chosen because they needed no storage work. The
+  first is where 8 bits actually hurt: a per-channel adjustment composed with a
+  master one — the ordinary way to use Levels and Curves — used to round its
+  intermediate to a byte, quantising the tones twice on the way to one pixel.
+  That intermediate is now carried at full precision and the second table read
+  between its entries, which is most of what a deeper pipeline would buy for
+  stacked adjustments, without one.
+
+  The second: **LUT-based ICC
   profiles are read** — `A2B0` tables in `mft1`/`mft2` form, Lab or XYZ
   connection space, multilinear interpolation over the grid. Scanner and press
   profiles now convert correctly instead of being dropped to sRGB. Only that

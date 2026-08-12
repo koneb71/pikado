@@ -1,5 +1,5 @@
 import './basic.css';
-import { registerAdjustment, buildLUT, applyLUT } from './registry.js';
+import { registerAdjustment, buildLUT, buildLUTf, sampleLUT, applyLUT } from './registry.js';
 import { el, clamp, clamp255 } from '../core/util.js';
 import { parseColor } from '../core/color.js';
 import { curveParam, applyCurves, defaultCurves, curveToLUT } from '../ui/curve-editor.js';
@@ -200,19 +200,29 @@ function isIdentityLevels(L) {
 function levelsLUT(L) {
   const range = Math.max(1, L.iw - L.ib);
   const inv = 1 / Math.max(0.01, L.ig);
-  return buildLUT((i) => {
+  // Unrounded: this table is usually fed into the master table below, and
+  // rounding here would quantise the tones twice on the way to one pixel.
+  return buildLUTf((i) => {
     let t = (i - L.ib) / range;
     t = t < 0 ? 0 : t > 1 ? 1 : t;
     if (inv !== 1) t = Math.pow(t, inv);
-    return Math.round(L.ob + t * (L.ow - L.ob));
+    return L.ob + t * (L.ow - L.ob);
   });
 }
 
+/**
+ * Per-channel levels, then the master.
+ *
+ * The intermediate is read at its true value rather than rounded to a byte
+ * first. Rounding twice is what puts visible steps in a gradient that has had
+ * both a channel and a master adjustment — the exact case a deeper pipeline
+ * would fix, available here without one.
+ */
 function composeLUT(a, b) {
   if (!a) return b;
   if (!b) return a;
-  const out = new Uint8ClampedArray(256);
-  for (let i = 0; i < 256; i++) out[i] = b[a[i]];
+  const out = new Float32Array(256);
+  for (let i = 0; i < 256; i++) out[i] = sampleLUT(b, a[i]);
   return out;
 }
 

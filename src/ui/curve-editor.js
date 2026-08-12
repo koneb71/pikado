@@ -1,5 +1,6 @@
 import './curve-editor.css';
 import { el, clamp } from '../core/util.js';
+import { sampleLUT } from '../adjustments/registry.js';
 import { drawHistogram, setupHiDPI, currentHistogram, emptyHistogram } from './histogram.js';
 
 /**
@@ -186,12 +187,18 @@ export function evaluateCurve(points, x) {
 
 /**
  * Sample a curve into a 256-entry lookup table.
+ *
+ * Unrounded, because a per-channel curve is normally composed with the master
+ * curve below and rounding to a byte in between quantises the tones twice.
+ * Assigning one of these into `ImageData.data` still rounds, so nothing
+ * downstream changes.
+ *
  * @param {{x:number,y:number}[]} points
- * @returns {Uint8ClampedArray}
+ * @returns {Float32Array}
  */
 export function curveToLUT(points) {
   const pts = sanitize(points);
-  const lut = new Uint8ClampedArray(256);
+  const lut = new Float32Array(256);
   const m = tangents(pts);
   const last = pts.length - 1;
   let seg = 0;
@@ -199,17 +206,24 @@ export function curveToLUT(points) {
     if (x <= pts[0].x) { lut[x] = pts[0].y; continue; }
     if (x >= pts[last].x) { lut[x] = pts[last].y; continue; }
     while (seg < last - 1 && x > pts[seg + 1].x) seg++;
-    lut[x] = Math.round(hermite(pts, m, seg, x));
+    lut[x] = hermite(pts, m, seg, x);
   }
   return lut;
 }
 
+/**
+ * A channel curve, then the master.
+ *
+ * The intermediate is read at its true value rather than rounded to a byte
+ * first — rounding twice is what puts visible steps into a gradient that has
+ * had both a channel and a master curve applied.
+ */
 function composeLUT(first, second) {
   if (!first && !second) return null;
   if (!second) return first;
   if (!first) return second;
-  const out = new Uint8ClampedArray(256);
-  for (let i = 0; i < 256; i++) out[i] = second[first[i]];
+  const out = new Float32Array(256);
+  for (let i = 0; i < 256; i++) out[i] = sampleLUT(second, first[i]);
   return out;
 }
 

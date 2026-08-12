@@ -76,6 +76,38 @@ export function buildLUT(fn) {
   return lut;
 }
 
+/**
+ * The same table, kept unrounded.
+ *
+ * A `Uint8ClampedArray` rounds on every write, which is right for a table that
+ * is about to be applied to pixels and wrong for one that is about to be fed
+ * into another table. Two adjustments composed through an 8-bit intermediate
+ * quantise twice — and adjusting a channel and then the master curve is the
+ * ordinary way to use Levels and Curves, not a corner case.
+ *
+ * Assigning one of these into `ImageData.data` still rounds, because that array
+ * is `Uint8ClampedArray`, so `applyLUT` needs no change.
+ */
+export function buildLUTf(fn) {
+  const lut = new Float32Array(256);
+  for (let i = 0; i < 256; i++) lut[i] = fn(i);
+  return lut;
+}
+
+/**
+ * Read a table at a fractional index.
+ *
+ * The point of keeping the first table unrounded is lost if the second is then
+ * indexed by a rounded value, so this interpolates between its neighbours.
+ */
+export function sampleLUT(lut, x) {
+  const t = x <= 0 ? 0 : x >= 255 ? 255 : x;
+  const i = Math.floor(t);
+  const f = t - i;
+  if (f === 0 || i >= 255) return lut[i];
+  return lut[i] + (lut[i + 1] - lut[i]) * f;
+}
+
 /** Apply per-channel LUTs (any may be null to leave a channel untouched). */
 export function applyLUT(imageData, rLut, gLut = rLut, bLut = rLut) {
   const d = imageData.data;

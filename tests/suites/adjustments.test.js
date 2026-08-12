@@ -517,3 +517,77 @@ suite('adjustments / auto tone, contrast and color', async (t) => {
   run('equalize', low, {});
   t.eq(valueRange(low), [0, 255], 'equalize also stretches a low-contrast image to the full range');
 });
+
+suite('adjustments / composing two tables quantises once, not twice', async (t) => {
+  const { buildLUT, buildLUTf, sampleLUT, composeLUT } = await import('/src/adjustments/registry.js')
+    .then(async (reg) => ({ ...reg, composeLUT: (await import('/src/adjustments/basic.js')).composeLUT }));
+
+  /*
+   * The ordinary way to use Levels and Curves is a per-channel adjustment and
+   * then the master — two tables, one pixel. Composing them through an 8-bit
+   * intermediate rounds twice, and the second rounding has no information left
+   * to work with: that is what puts visible steps into a gradient that has had
+   * both.
+   */
+  const f = (i) => i * 0.5 + 20;      // a gentle contrast pull
+  const g = (i) => 255 * ((i / 255) ** 0.75);  // a gamma lift
+
+  const exact = (i) => g(f(i));
+
+  // What the old code did: round the first table before indexing the second.
+  const rounded = buildLUT(f);
+  const second = buildLUT(g);
+  const oldWay = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++) oldWay[i] = second[rounded[i]];
+
+  const newWay = composeLUT(buildLUTf(f), second);
+
+  let oldErr = 0;
+  let newErr = 0;
+  for (let i = 0; i < 256; i++) {
+    oldErr += Math.abs(oldWay[i] - exact(i));
+    newErr += Math.abs(Math.round(newWay[i]) - exact(i));
+  }
+  oldErr /= 256;
+  newErr /= 256;
+
+  /*
+   * Verified to fail by restoring `out[i] = b[a[i]]` in composeLUT: the two
+   * paths become identical and the error stops improving.
+   */
+  t.lt(newErr, oldErr, `composing at full precision is closer to the exact result (${newErr.toFixed(4)} vs ${oldErr.toFixed(4)})`);
+  t.lt(newErr, 0.5, 'and within half a level of it, which is all 8-bit output allows');
+
+  /*
+   * Reading the second table at a fractional index is the half that matters:
+   * keeping the first unrounded buys nothing if the second is still indexed by
+   * a rounded value. Verified to fail by having sampleLUT floor its input.
+   */
+  const lut = buildLUT((i) => i);
+  t.eq(sampleLUT(lut, 128.5), 128.5, 'a table is read between its entries');
+  t.eq(sampleLUT(lut, 0), 0, 'the bottom end is exact');
+  t.eq(sampleLUT(lut, 255), 255, 'and so is the top');
+  t.eq(sampleLUT(lut, 300), 255, 'out of range clamps rather than reading past the end');
+  t.eq(sampleLUT(lut, -5), 0, 'at both ends');
+});
+
+suite('adjustments / an unrounded table still applies to pixels correctly', async (t) => {
+  const { buildLUTf, applyLUT } = await import('/src/adjustments/registry.js');
+
+  /*
+   * `ImageData.data` is a Uint8ClampedArray, so assigning a float into it
+   * rounds and clamps — which is why applyLUT needed no change when the tables
+   * became unrounded. Worth pinning, because it is the assumption the whole
+   * change rests on.
+   * Verified to fail by having applyLUT truncate with `| 0`.
+   */
+  const id = new ImageData(4, 1);
+  [0, 100, 200, 255].forEach((v, i) => {
+    id.data[i * 4] = v; id.data[i * 4 + 1] = v; id.data[i * 4 + 2] = v; id.data[i * 4 + 3] = 255;
+  });
+  // +0.6 per level: every result must round up, not truncate down.
+  applyLUT(id, buildLUTf((i) => i + 0.6));
+  t.eq(id.data[0], 1, 'a fractional table value rounds rather than truncating');
+  t.eq(id.data[4], 101, 'consistently across the range');
+  t.eq(id.data[12], 255, 'and clamps at the top rather than wrapping');
+});
