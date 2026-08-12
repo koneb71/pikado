@@ -2,6 +2,7 @@ import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { LayerType, translateLayerGeometry } from '../core/layer.js';
 import { createCanvas, cloneCanvas, uid, el } from '../core/util.js';
+import { solveSnap, snapThreshold } from '../core/snap.js';
 import { iconEl } from '../ui/icons.js';
 import {
   isTransforming, startTransform, commitTransform, cancelTransform,
@@ -34,7 +35,7 @@ function movableTargets(list, { warn = false } = {}) {
       for (const c of l.children || []) walk(c);
       return;
     }
-    if (!l.canvas) return;
+    if (!l.pixelKey()) return;
     if (l.locked.all || l.locked.position) { blocked++; return; }
     if (!out.includes(l)) out.push(l);
   };
@@ -61,17 +62,29 @@ function shiftCanvas(cv, dx, dy) {
 const boundsCache = new WeakMap();
 
 function contentBoundsOf(layer) {
-  if (!layer.canvas) return null;
-  if (boundsCache.has(layer.canvas)) return boundsCache.get(layer.canvas);
+  /*
+   * Keyed on `pixelKey()`, not `layer.canvas`.
+   *
+   * Reading `.canvas` materialises a compact layer into a document-sized buffer,
+   * and snapping asks for the bounds of EVERY layer in the document so it has
+   * something to align against. Keyed the old way, one drag would expand the
+   * whole document — a 60-layer 4000x3000 PSD goes from 99 MB to 3.6 GB.
+   * `contentBounds()` is already tile-aware and answers in document space either
+   * way; this just stops the cache key undoing that.
+   */
+  const key = layer.pixelKey();
+  if (!key) return null;
+  if (boundsCache.has(key)) return boundsCache.get(key);
   const b = layer.contentBounds();
-  boundsCache.set(layer.canvas, b);
+  boundsCache.set(key, b);
   return b;
 }
 
 /** Record where a known bounding box landed after a translation. */
 function cacheShiftedBounds(layer, b, dx, dy) {
-  if (!layer.canvas) return;
-  boundsCache.set(layer.canvas, b ? { ...b, x: b.x + dx, y: b.y + dy } : null);
+  const key = layer.pixelKey();
+  if (!key) return;
+  boundsCache.set(key, b ? { ...b, x: b.x + dx, y: b.y + dy } : null);
 }
 
 /** Offset a layer's pixels (and its mask when linked). Needs beginEdit first. */
@@ -92,6 +105,21 @@ function offsetLayer(layer, dx, dy) {
 function alphaAt(canvas, x, y) {
   if (!canvas || x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return 0;
   return canvas.getContext('2d', { willReadFrequently: true }).getImageData(x, y, 1, 1).data[3];
+}
+
+/**
+ * Alpha at a document coordinate, reading the compact form when there is one.
+ *
+ * Hit testing runs on every click and over every layer until one answers, so
+ * going through `.canvas` here would expand the whole document the first time
+ * somebody clicked the canvas. A tile answers the same question by translating
+ * the point into its own space; outside the tile there are no pixels by
+ * definition, which is the cheapest possible miss.
+ */
+function layerAlphaAt(layer, x, y) {
+  const t = layer.tile;
+  if (!t) return alphaAt(layer.pixelKey(), x, y);
+  return alphaAt(t.canvas, x - t.x, y - t.y);
 }
 
 function maskValueAt(layer, x, y) {
@@ -119,9 +147,9 @@ function chainVisible(layer) {
 export function pickLayerAt(doc, x, y, kind = 'layer') {
   const px = Math.floor(x), py = Math.floor(y);
   for (const l of doc.flatLayers()) {
-    if (l.type === LayerType.GROUP || !l.visible || !l.canvas) continue;
+    if (l.type === LayerType.GROUP || !l.visible || !l.pixelKey()) continue;
     if (!chainVisible(l)) continue;
-    if (alphaAt(l.canvas, px, py) < 8) continue;
+    if (layerAlphaAt(l, px, py) < 8) continue;
     if (l.mask && l.maskEnabled && maskValueAt(l, px, py) < 8) continue;
     if (kind === 'group' && l.parent) {
       let top = l;
@@ -147,9 +175,9 @@ export function layersUnderPoint(doc, x, y, limit = 10) {
   const out = [];
   if (!doc) return out;
   for (const l of doc.flatLayers()) {
-    if (l.type === LayerType.GROUP || !l.visible || !l.canvas) continue;
+    if (l.type === LayerType.GROUP || !l.visible || !l.pixelKey()) continue;
     if (!chainVisible(l)) continue;
-    if (alphaAt(l.canvas, px, py) < 8) continue;
+    if (layerAlphaAt(l, px, py) < 8) continue;
     if (l.mask && l.maskEnabled && maskValueAt(l, px, py) < 8) continue;
     out.push(l);
     if (out.length >= limit) break;
@@ -477,6 +505,20 @@ class MoveTool extends Tool {
     if (e.shiftKey) {
       if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0;
     }
+    /*
+     * Snap after the Shift constraint and before the drag is applied.
+     *
+     * Order matters both ways round: constraining first means an axis-locked
+     * drag still snaps along the axis it is allowed to move on, and snapping
+     * before `applyDrag` means the pixels land on the guide rather than being
+     * blitted twice. Ctrl/Cmd suspends it, which is the Photoshop convention and
+     * the way to put something one pixel off a guide on purpose.
+     */
+    const snapped = this.snapDrag(d, dx, dy, e);
+    dx = snapped.dx;
+    dy = snapped.dy;
+    d.snapLines = snapped.lines;
+
     dx = Math.round(dx);
     dy = Math.round(dy);
     if (dx === d.dx && dy === d.dy) return;
@@ -485,6 +527,38 @@ class MoveTool extends Tool {
     d.moved = d.moved || dx !== 0 || dy !== 0;
     this.applyDrag();
     d.doc.touch('move');
+  }
+
+  /**
+   * Nudge a drag onto whatever it is near.
+   *
+   * The bounds of every OTHER layer are the smart-guide candidates. Gathering
+   * them goes through `contentBoundsOf`, which is cached and — since it is keyed
+   * on `pixelKey()` — does not expand a compact layer just to measure it.
+   *
+   * @returns {{dx:number, dy:number, lines:Array}}
+   */
+  snapDrag(d, dx, dy, e) {
+    const none = { dx, dy, lines: [] };
+    if (!app.snap || (e && (e.ctrlKey || e.metaKey))) return none;
+    const base = d.boxBounds || layersBounds(d.layers);
+    if (!base) return none;
+
+    const doc = d.doc;
+    const moving = new Set(d.layers);
+    const rects = [];
+    for (const l of doc.flatLayers()) {
+      if (moving.has(l) || l.type === LayerType.GROUP || !l.visible) continue;
+      const b = contentBoundsOf(l);
+      if (b) rects.push(b);
+    }
+
+    const r = solveSnap(
+      { x: base.x + dx, y: base.y + dy, width: base.width, height: base.height },
+      { guides: doc.guides, gridSize: app.gridSize, docWidth: doc.width, docHeight: doc.height, rects },
+      { threshold: snapThreshold(app.viewport.scale) },
+    );
+    return { dx: dx + r.dx, dy: dy + r.dy, lines: r.lines };
   }
 
   applyDrag() {

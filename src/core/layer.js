@@ -163,6 +163,22 @@ export class Layer {
     return this;
   }
 
+  /**
+   * The buffer object currently holding this layer's pixels, whichever form it
+   * is in — a stable identity for caching against, without materialising.
+   *
+   * Copy-on-write makes this a sound invalidation key: `beginEdit` replaces
+   * whichever buffer exists, so a new object means new pixels. Callers that key
+   * a cache on `layer.canvas` instead would expand every layer they merely
+   * measured, which is how snapping a layer into place could otherwise cost a
+   * document its compact form.
+   *
+   * @returns {HTMLCanvasElement|null}
+   */
+  pixelKey() {
+    return this._full || (this._tile ? this._tile.canvas : null);
+  }
+
   /** Bytes of pixel buffer this layer holds, without materialising anything. */
   pixelBytes() {
     if (this._full) return this._full.width * this._full.height * 4;

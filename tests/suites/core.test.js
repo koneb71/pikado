@@ -604,3 +604,237 @@ suite('core / editing a compact layer keeps history correct', async (t) => {
   t.pixel(getComposite(doc), 140, 100, '0,255,0,255', 'and the compact layer with it');
   t.ok(back.tile || back.canvas, 'the restored layer has its pixels in one form or the other');
 });
+
+/* ------------------------------------------------------------------ */
+/* Snapping                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The snap solver.
+ *
+ * Pikado had guides, a grid, a layout dialog and a Snap toggle, and nothing that
+ * consumed any of them — `app.snap` had exactly one reader, and it only snapped a
+ * guide being dragged out of the ruler. These tests pin the solver that fills
+ * that gap, and they are all offline because the solver takes a rectangle and a
+ * bag of lines and returns a number.
+ */
+suite('core / snapping finds the nearest line', async (t) => {
+  const { solveSnap } = await import('/src/core/snap.js');
+  const doc = { docWidth: 1000, docHeight: 800 };
+  const box = { x: 98, y: 300, width: 50, height: 40 };
+
+  const hit = solveSnap(box, { ...doc, guides: [{ axis: 'v', pos: 100 }] }, { threshold: 6 });
+  t.eq(hit.dx, 2, 'a guide 2 away pulls the rectangle onto it');
+  /*
+   * Verified to fail by dropping guides from candidatesFor: dx becomes 0, which
+   * is exactly the bug this whole feature exists to fix.
+   */
+  const noGuide = solveSnap(box, doc, { threshold: 6 });
+  t.eq(noGuide.dx, 0, 'and with no guide there is nothing to snap to');
+
+  const near = solveSnap({ ...box, x: 101 },
+    { ...doc, guides: [{ axis: 'v', pos: 100 }, { axis: 'v', pos: 104 }] }, { threshold: 6 });
+  t.eq(near.dx, -1, 'the nearest of two guides wins');
+
+  const far = solveSnap({ ...box, x: 93 }, { ...doc, guides: [{ axis: 'v', pos: 100 }] }, { threshold: 6 });
+  t.eq(far.dx, 0, 'a guide beyond the tolerance is ignored');
+
+  const both = solveSnap({ x: 98, y: 197, width: 50, height: 40 },
+    { ...doc, guides: [{ axis: 'v', pos: 100 }, { axis: 'h', pos: 200 }] }, { threshold: 6 });
+  t.eq(`${both.dx},${both.dy}`, '2,3', 'the two axes solve independently');
+});
+
+suite('core / snapping uses all three edges of the moving rectangle', async (t) => {
+  const { solveSnap } = await import('/src/core/snap.js');
+  const doc = { docWidth: 2000, docHeight: 2000 };
+
+  // Leading edge.
+  t.eq(solveSnap({ x: 98, y: 0, width: 200, height: 10 },
+    { ...doc, guides: [{ axis: 'v', pos: 100 }] }, { threshold: 6 }).dx, 2,
+  'the leading edge snaps');
+
+  // Centre: a 200-wide box at x=0 has its centre at 100.
+  t.eq(solveSnap({ x: 3, y: 0, width: 200, height: 10 },
+    { ...doc, guides: [{ axis: 'v', pos: 100 }] }, { threshold: 6 }).dx, -3,
+  'the centre snaps, which is what makes centring on a guide possible');
+
+  // Trailing edge: a 200-wide box at x=0 ends at 200.
+  t.eq(solveSnap({ x: -2, y: 0, width: 200, height: 10 },
+    { ...doc, guides: [{ axis: 'v', pos: 198 }] }, { threshold: 6 }).dx, 0,
+  'the trailing edge snaps too');
+});
+
+suite('core / snapping ranks guides above the grid', async (t) => {
+  const { solveSnap } = await import('/src/core/snap.js');
+  const doc = { docWidth: 1000, docHeight: 1000 };
+
+  /*
+   * Both are 2 away. A guide is something the user placed deliberately, so it
+   * has to win — otherwise a guide sitting a unit off a grid line would be
+   * unreachable. Verified to fail by giving both the same priority.
+   */
+  const tie = solveSnap({ x: 98, y: 500, width: 10, height: 10 },
+    { ...doc, gridSize: 100, guides: [{ axis: 'v', pos: 96 }] }, { threshold: 6 });
+  t.eq(tie.dx, -2, 'with a guide and a grid line equidistant, the guide wins');
+
+  const gridOnly = solveSnap({ x: 98, y: 500, width: 10, height: 10 },
+    { ...doc, gridSize: 100 }, { threshold: 6 });
+  t.eq(gridOnly.dx, 2, 'the grid still snaps when nothing outranks it');
+
+  /*
+   * The document's own edges and centre are structural and outrank a layer.
+   * A zero-size rect so there is one moving edge rather than three, which makes
+   * the two candidates genuinely equidistant and leaves priority as the only
+   * thing that can decide.
+   */
+  const docCentre = solveSnap({ x: 98, y: 10, width: 0, height: 0 },
+    { docWidth: 200, docHeight: 200, rects: [{ x: 96, y: 0, width: 0, height: 0 }] },
+    { threshold: 6 });
+  t.eq(docCentre.dx, 2, 'the document centre outranks an equally close layer edge');
+});
+
+suite('core / snapping reports the lines it matched', async (t) => {
+  const { solveSnap } = await import('/src/core/snap.js');
+  const r = solveSnap({ x: 98, y: 198, width: 20, height: 20 }, {
+    docWidth: 1000, docHeight: 1000,
+    guides: [{ axis: 'v', pos: 100 }, { axis: 'h', pos: 200 }],
+  }, { threshold: 6 });
+
+  // The overlay draws these; without them a snap is invisible and feels like a
+  // glitch rather than a feature.
+  t.eq(r.lines.length, 2, 'both matched lines come back');
+  t.ok(r.lines.some((l) => l.axis === 'v' && l.pos === 100), 'the vertical guide is reported');
+  t.ok(r.lines.some((l) => l.axis === 'h' && l.pos === 200), 'and the horizontal one');
+  t.ok(r.lines.every((l) => l.kind === 'guide'), 'each line says what kind it is');
+
+  t.eq(solveSnap({ x: 0, y: 0, width: 10, height: 10 }, { docWidth: 1000, docHeight: 1000 },
+    { threshold: 0 }).lines.length, 0, 'a zero tolerance matches nothing');
+});
+
+suite('core / the snap tolerance is a screen distance, not a document one', async (t) => {
+  const { snapThreshold, solveSnap, snapPosition } = await import('/src/core/snap.js');
+
+  /*
+   * The bug this prevents: a fixed document-space tolerance is an invisible
+   * twitch at 800% zoom and a 60-unit leap at 10%. Verified to fail by returning
+   * a constant.
+   */
+  t.eq(snapThreshold(1), 6, 'at 100% zoom, 6 screen pixels is 6 document units');
+  t.eq(snapThreshold(0.1), 60, 'at 10% zoom the same 6 pixels spans 60 document units');
+  t.close(snapThreshold(8), 0.75, 1e-9, 'and at 800% it is well under a unit');
+  t.eq(snapThreshold(0), 6, 'a nonsense scale falls back to 1:1 rather than dividing by zero');
+
+  // Zoomed out, a guide 40 units away is still within reach.
+  const zoomedOut = solveSnap({ x: 60, y: 0, width: 10, height: 10 },
+    { docWidth: 1000, docHeight: 1000, guides: [{ axis: 'v', pos: 100 }] },
+    { threshold: snapThreshold(0.1) });
+  // 30, not 40: the box ends at 70, so its trailing edge is the nearest thing to
+  // the guide. At 100% zoom this guide would be far out of reach entirely.
+  t.eq(zoomedOut.dx, 30, 'so a distant guide still catches when zoomed out');
+  t.eq(solveSnap({ x: 60, y: 0, width: 10, height: 10 },
+    { docWidth: 1000, docHeight: 1000, guides: [{ axis: 'v', pos: 100 }] },
+    { threshold: snapThreshold(1) }).dx, 0, 'and does not when zoomed in');
+
+  // The ruler drag path: a bare position rather than a rectangle.
+  t.eq(snapPosition(98, 'v', { gridSize: 100 }, 6), 100, 'a dragged guide snaps to the grid');
+  t.eq(snapPosition(90, 'v', { gridSize: 100 }, 6), 90, 'and is left alone beyond the tolerance');
+});
+
+suite('core / dragging a layer snaps it to a guide', async (t) => {
+  const { app } = await import('/src/core/app.js');
+  const { createRasterLayer } = await import('/src/core/layer.js');
+  await import('/src/tools/move.js');
+
+  const setup = () => {
+    const doc = t.doc(600, 400, '#ffffff', 'snapdrag');
+    doc.guides = [{ axis: 'v', pos: 200 }];
+    const l = createRasterLayer(600, 400, 'block');
+    const c = l.canvas.getContext('2d');
+    c.fillStyle = '#ff0000';
+    c.fillRect(150, 100, 60, 60);
+    doc.addLayer(l, { above: doc.layers[0] });
+    doc.selectedLayerIds = [l.id];
+    doc.activeLayerId = l.id;
+    app.setTool('move');
+    return { doc, id: l.id };
+  };
+  // Drag right by 48: the left edge lands at 198, two short of the guide.
+  const drag = (mods = {}) => {
+    const base = { shiftKey: false, ctrlKey: false, metaKey: false, button: 0, ...mods };
+    app.tool.onPointerDown({ ...base, x: 180, y: 130 });
+    app.tool.onPointerMove({ ...base, x: 228, y: 130 });
+    app.tool.onPointerUp({ ...base, x: 228, y: 130 });
+  };
+
+  const wasSnapping = app.snap;
+  try {
+    app.snap = true;
+    let s = setup();
+    drag();
+    /*
+     * The whole point of the feature. Verified to fail by removing the snapDrag
+     * call from onPointerMove: it lands on 198, which is what it did for the
+     * entire life of the project before this.
+     */
+    t.eq(s.doc.findLayer(s.id).contentBounds().x, 200, 'the layer lands on the guide, not two short of it');
+
+    s = setup();
+    drag({ ctrlKey: true });
+    t.eq(s.doc.findLayer(s.id).contentBounds().x, 198, 'holding Ctrl places it exactly where you dropped it');
+
+    app.snap = false;
+    s = setup();
+    drag();
+    t.eq(s.doc.findLayer(s.id).contentBounds().x, 198, 'and View > Snap turned off does the same');
+  } finally {
+    app.snap = wasSnapping;
+  }
+});
+
+suite('core / aligning against other layers does not expand them', async (t) => {
+  const { app } = await import('/src/core/app.js');
+  const { Layer, LayerType } = await import('/src/core/layer.js');
+  const { createCanvas, ctx2d } = await import('/src/core/util.js');
+  await import('/src/tools/move.js');
+
+  /*
+   * Smart guides need the bounds of every OTHER layer to align against. Gathering
+   * those through `layer.canvas` would materialise the whole document on the
+   * first drag — a 60-layer 4000x3000 PSD would go from 99 MB to 3.6 GB. The
+   * bounds cache is keyed on `pixelKey()` for exactly this reason.
+   *
+   * Verified to fail by keying `contentBoundsOf` on `layer.canvas` again: every
+   * layer expands, not just the one being dragged.
+   */
+  const doc = t.doc(2000, 1500, '#ffffff', 'compactdrag');
+  doc.guides = [{ axis: 'v', pos: 500 }];
+  for (let i = 0; i < 8; i += 1) {
+    const tile = createCanvas(80, 80);
+    ctx2d(tile).fillStyle = `hsl(${i * 40} 70% 50%)`;
+    ctx2d(tile).fillRect(0, 0, 80, 80);
+    const layer = new Layer({ type: LayerType.RASTER, name: `t${i}` });
+    layer.setTile(tile, 100 + i * 90, 200, 2000, 1500);
+    doc.addLayer(layer, { above: doc.layers[0] });
+  }
+
+  const target = doc.layers[0];
+  doc.selectedLayerIds = [target.id];
+  doc.activeLayerId = target.id;
+  const others = () => doc.flatLayers().filter((l) => l !== target && l.name.startsWith('t'));
+  t.eq(others().filter((l) => l.tile).length, 7, 'the other layers start compact');
+
+  const wasSnapping = app.snap;
+  try {
+    app.snap = true;
+    app.setTool('move');
+    const base = { shiftKey: false, ctrlKey: false, metaKey: false, button: 0 };
+    app.tool.onPointerDown({ ...base, x: 140, y: 240 });
+    app.tool.onPointerMove({ ...base, x: 200, y: 240 });
+    app.tool.onPointerUp({ ...base, x: 200, y: 240 });
+
+    t.eq(others().filter((l) => l.tile).length, 7,
+      'and are still compact after a drag that measured every one of them');
+  } finally {
+    app.snap = wasSnapping;
+  }
+});
