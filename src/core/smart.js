@@ -806,6 +806,7 @@ export function createSmartObject(doc, layers) {
   const smart = new Layer({ type: LayerType.SMART, name });
   smart.smart = {
     source,
+    linkId: newLinkId(),
     sourceWidth: doc.width,
     sourceHeight: doc.height,
     sourceVersion: 1,
@@ -818,6 +819,62 @@ export function createSmartObject(doc, layers) {
   doc.addLayer(smart, { parent, index: Math.min(index, target.length) });
   doc.commit('Convert to Smart Object');
   return smart;
+}
+
+/* ------------------------------------------------------------------ */
+/* Linked instances                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Instances of one Smart Object are identified by a shared `linkId`, not by a
+ * shared `source` object.
+ *
+ * That distinction is the whole design. A contents edit *replaces* the source
+ * document rather than mutating it, which is what makes history correct — a
+ * snapshot holding the previous document really is the previous state — and it
+ * is exactly why sharing the object reference would not work: the first edit
+ * would leave every other instance pointing at the document as it used to be,
+ * silently. Finding instances by id and updating them together survives that.
+ */
+export function newLinkId() {
+  return `sl_${uid()}`;
+}
+
+/** Every layer in `doc` that is an instance of the same Smart Object. */
+export function linkedInstances(doc, linkId) {
+  if (!doc || !linkId) return [];
+  return doc.flatLayers().filter((l) => l.smart && l.smart.linkId === linkId);
+}
+
+/** How many instances share this layer's contents, including itself. */
+export function linkCount(doc, layer) {
+  if (!isSmartLayer(layer) || !layer.smart.linkId) return 1;
+  return Math.max(1, linkedInstances(doc, layer.smart.linkId).length);
+}
+
+/**
+ * Break a layer away from its siblings: its own copy of the contents, its own
+ * id. Everything else — transform, filters, mask — is untouched, because this
+ * is a statement about the contents and nothing else.
+ */
+export function unlinkSmartObject(doc, layer) {
+  if (!isSmartLayer(layer)) {
+    app.toast('Select a Smart Object layer first.');
+    return false;
+  }
+  if (linkCount(doc, layer) < 2) {
+    app.toast('This Smart Object is already independent.', 'info');
+    return false;
+  }
+  doc.beginEdit(layer);
+  setPayload(layer, {
+    linkId: newLinkId(),
+    source: cloneSourceDocument(layer.smart.source, layer.smart.source.name),
+  });
+  invalidateSmartCache(layer);
+  renderSmartObject(layer, doc);
+  doc.commit('Unlink Smart Object');
+  return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -924,6 +981,46 @@ function endSession(key, { flush = false } = {}) {
   if (flush && s.pending) pushContents(s);
 }
 
+/**
+ * Push an edited contents document into a Smart Object and every instance
+ * linked to it.
+ *
+ * Exported because it is the whole of what "linked" means and the only part
+ * worth testing on its own — the surrounding session machinery is a tab
+ * lifecycle, and driving that to assert propagation would test the wrong thing.
+ *
+ * Each instance gets its *own* fresh copy of the edited document. Sharing one
+ * object would be smaller but wrong: a source is replaced rather than mutated
+ * precisely so a history snapshot holding the previous document is genuinely
+ * the previous state, and that only holds if nobody is writing into a document
+ * somebody else's snapshot points at.
+ *
+ * @param {import('./document.js').PikaDocument} doc the parent document
+ * @param {Layer} layer any one instance
+ * @param {import('./document.js').PikaDocument} child the edited contents
+ * @returns {number} how many instances were updated
+ */
+export function applySmartContents(doc, layer, child) {
+  if (!doc || !isSmartLayer(layer) || !child) return 0;
+  const instances = layer.smart.linkId ? linkedInstances(doc, layer.smart.linkId) : [layer];
+  const name = layer.smart.source ? layer.smart.source.name : child.name;
+  doc.beginEdit(instances);
+  for (const inst of instances) {
+    setPayload(inst, {
+      source: cloneSourceDocument(child, name),
+      sourceWidth: child.width,
+      sourceHeight: child.height,
+      sourceVersion: (inst.smart.sourceVersion || 0) + 1,
+    });
+    invalidateSmartCache(inst);
+    renderSmartObject(inst, doc);
+  }
+  doc.commit(instances.length > 1
+    ? `Edit Smart Contents (${instances.length} linked)`
+    : 'Edit Smart Contents');
+  return instances.length;
+}
+
 /** Copy the child tab's current state back into the parent smart layer. */
 function pushContents(s) {
   s.pending = false;
@@ -938,16 +1035,7 @@ function pushContents(s) {
     app.toast('The Smart Object layer is gone — contents were not saved back.', 'warn');
     return;
   }
-  doc.beginEdit(layer);
-  setPayload(layer, {
-    source: cloneSourceDocument(s.child, layer.smart.source.name),
-    sourceWidth: s.child.width,
-    sourceHeight: s.child.height,
-    sourceVersion: (layer.smart.sourceVersion || 0) + 1,
-  });
-  invalidateSmartCache(layer);
-  renderSmartObject(layer, doc);
-  doc.commit('Edit Smart Contents');
+  applySmartContents(doc, layer, s.child);
 }
 
 /**

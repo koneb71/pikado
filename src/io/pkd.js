@@ -85,10 +85,22 @@ function createEncoder() {
  * back into the parent document and recurse forever — so the contents get an
  * explicit `__pk:'smartdoc'` node holding the embedded layer tree.
  */
-function encodeSmart(smart, enc, encodeLayer) {
+/**
+ * @param {Map<string, true>} [written] link ids whose contents are already in
+ *   the file. Linked instances share one Smart Object, so the contents are
+ *   stored once and every instance after the first carries a reference — which
+ *   both keeps the file small and makes it impossible for two instances of one
+ *   Smart Object to be saved holding different contents.
+ */
+function encodeSmart(smart, enc, encodeLayer, written) {
   if (!smart) return null;
   const { source, ...rest } = smart;
   const out = enc.encode(rest) || {};
+  if (written && smart.linkId && written.has(smart.linkId)) {
+    out.source = { __pk: 'smartref', linkId: smart.linkId };
+    return out;
+  }
+  if (written && smart.linkId) written.set(smart.linkId, true);
   if (source && Array.isArray(source.layers)) {
     out.source = {
       __pk: 'smartdoc',
@@ -191,6 +203,8 @@ function decodeProfile(stored) {
 
 export async function savePKD(doc) {
   const enc = createEncoder();
+  /** Link ids whose Smart Object contents have already been written. */
+  const smartLinks = new Map();
 
   const encodeLayer = (layer) => ({
     id: layer.id,
@@ -216,7 +230,7 @@ export async function savePKD(doc) {
     text: enc.encode(layer.text),
     shape: enc.encode(layer.shape),
     adjustment: enc.encode(layer.adjustment),
-    smart: encodeSmart(layer.smart, enc, encodeLayer),
+    smart: encodeSmart(layer.smart, enc, encodeLayer, smartLinks),
     children: layer.children ? layer.children.map(encodeLayer) : null,
   });
 
@@ -388,11 +402,32 @@ export async function loadPKD(arrayBuffer) {
     return layer;
   };
 
+  /**
+   * Contents already rebuilt, by link id — so the second and later instances of
+   * one Smart Object resolve to the same document rather than to copies that
+   * could drift apart.
+   */
+  const smartSources = new Map();
+
   /** Rebuild a smart-object payload, including its embedded document. */
   const decodeSmart = (node) => {
     if (!node) return null;
     const { source, ...rest } = node;
     const out = decode(rest) || {};
+    if (source && source.__pk === 'smartref') {
+      const shared = smartSources.get(source.linkId);
+      // A reference whose contents are missing (a truncated or hand-edited
+      // file) must not produce a smart layer with no source at all.
+      if (!shared) return out;
+      out.source = shared.doc;
+      out.sourceWidth = out.sourceWidth || shared.width;
+      out.sourceHeight = out.sourceHeight || shared.height;
+      out.sourceVersion = out.sourceVersion || 1;
+      if (!out.transform || !Array.isArray(out.transform.matrix)) out.transform = { matrix: [1, 0, 0, 1, 0, 0] };
+      if (!Array.isArray(out.filters)) out.filters = [];
+      delete out.canvas;
+      return out;
+    }
     let layers = null;
     if (source && source.__pk === 'smartdoc' && Array.isArray(source.layers)) {
       layers = source.layers.map((n) => decodeLayer(n, null));
@@ -415,6 +450,7 @@ export async function loadPKD(arrayBuffer) {
     sd.selectedLayerIds = [layers[0].id];
     sd.history.clear('Smart Object');
     out.source = sd;
+    if (out.linkId) smartSources.set(out.linkId, { doc: sd, width: w, height: h });
     out.sourceWidth = w;
     out.sourceHeight = h;
     out.sourceVersion = out.sourceVersion || 1;

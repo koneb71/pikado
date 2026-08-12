@@ -567,13 +567,22 @@ Stated plainly so you don't find out by clicking:
   adjustments; the other 18 open there as correctly named, correctly masked but
   inert layers, and round-trip exactly through Pikado via a private block
   Photoshop safely ignores.
-- **Linked Smart Objects.** Duplicating a Smart Object produces an
-  **independent** copy, not Photoshop's linked one where editing either updates
-  both. Everything else about them is non-destructive: `layer.smart.source` is a
+- **Smart Objects** are non-destructive: `layer.smart.source` is a
   real embedded `PikaDocument`, every render restarts from it, and scaling to 10%
   and back is *pixel-exact* (measured mean absolute difference 0.0000, versus ~32
   for the equivalent destructive resample) — including when a perspective or a
   warp mesh is applied on top.
+
+  Duplicating one gives a **linked** copy, as in Photoshop: edit either
+  instance's contents and both update. The instances are found by a shared id
+  rather than by sharing one document object, which is what makes it work — a
+  contents edit *replaces* the source rather than mutating it (so a history
+  snapshot holding the previous document really is the previous state), and a
+  shared reference would therefore leave every other instance pointing at the
+  contents as they used to be. Appearance stays per instance: transform,
+  filters and mask are yours alone. **New Smart Object via Copy** makes an
+  independent one, and **Unlink Contents** separates an instance you have
+  already duplicated.
 
   Skew Y reads back as Skew Y, which takes a little care: an affine matrix has
   one shear degree of freedom and centre, scale and rotation spend the other

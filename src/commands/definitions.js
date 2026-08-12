@@ -1669,6 +1669,34 @@ registerCommands([
     run: () => smart.exportSmartContents(D(), activeLayer()),
   },
   {
+    /*
+     * Photoshop's Cmd+J on a Smart Object makes a *linked* copy, and so does
+     * ours — this is the one that deliberately does not, for when you want the
+     * two to go their own way.
+     */
+    id: 'layer.smart.copy-unlinked', label: 'New Smart Object via Copy',
+    enabled: () => { const l = activeLayer(); return !!(l && l.smart); },
+    run: () => {
+      const doc = D();
+      const layer = activeLayer();
+      if (!doc || !layer) return;
+      const copy = doc.duplicateLayer(layer, { link: false });
+      copy.name = `${layer.name} copy`;
+      doc.commit('New Smart Object via Copy');
+    },
+  },
+  {
+    id: 'layer.smart.unlink', label: 'Unlink Contents',
+    enabled: () => {
+      const l = activeLayer();
+      return !!(l && l.smart && l.smart.linkId);
+    },
+    run: async () => {
+      const { unlinkSmartObject } = await import('../core/smart.js');
+      unlinkSmartObject(D(), activeLayer());
+    },
+  },
+  {
     id: 'layer.smart.rasterize', label: 'Rasterize Smart Object',
     enabled: () => !!layerOfType(LayerType.SMART),
     run: () => ops.rasterizeLayer(D(), activeLayer()),
@@ -2118,6 +2146,8 @@ export const MENU_TREE = [
         items: [
           'layer.smart.convert', '---',
           'layer.smart.edit', 'layer.smart.transform', 'layer.smart.replace', 'layer.smart.export',
+          '---',
+          'layer.smart.copy-unlinked', 'layer.smart.unlink',
           '---', 'layer.smart.rasterize',
         ],
       },

@@ -16,15 +16,27 @@ export function setSmartSourceCloner(fn) {
 /**
  * Copy a smart payload for `Layer.clone()`.
  *
- * The duplicate gets its own source document and its own filter stack, so
- * editing one copy never changes the other. (Photoshop's Cmd+J makes *linked*
- * copies; we deliberately do not, because contents edits here install a fresh
- * source object, which would leave "linked" copies silently diverging.)
+ * **Linked by default**, which is what Photoshop's Cmd+J does: the copy keeps
+ * the same `linkId`, so editing either instance's contents updates both.
+ *
+ * The identity is the `linkId`, deliberately *not* the shared `source` object.
+ * A contents edit installs a fresh source rather than mutating the old one —
+ * which is what makes history correct, since a snapshot holding the previous
+ * document is genuinely the previous state — and that same property is what
+ * would make reference-sharing diverge silently. Instances are found by id and
+ * updated together instead.
+ *
+ * `link: false` is the independent copy: a new id and its own source, so the
+ * two go their own way from that point.
  */
-function cloneSmartPayload(smart) {
+function cloneSmartPayload(smart, link = true) {
+  const source = link
+    ? smart.source
+    : (smart.source && smartSourceCloner ? smartSourceCloner(smart.source) : smart.source);
   return {
     ...smart,
-    source: smart.source && smartSourceCloner ? smartSourceCloner(smart.source) : smart.source,
+    linkId: link ? smart.linkId : `sl_${Math.random().toString(36).slice(2, 10)}`,
+    source,
     transform: smart.transform ? { ...smart.transform, matrix: [...(smart.transform.matrix || [])] } : smart.transform,
     filters: (smart.filters || []).map((f) => ({ ...f, params: { ...f.params } })),
   };
@@ -296,7 +308,12 @@ export class Layer {
   /* ------------------------------------------------------------------ */
 
   /** Deep-ish clone. Pixel buffers are copied so the clone is independent. */
-  clone(newIds = true) {
+  /**
+   * @param {boolean} [newIds]
+   * @param {boolean} [link] for a Smart Object: keep the link to its siblings
+   *   (the default, matching Photoshop) or make an independent copy.
+   */
+  clone(newIds = true, link = true) {
     const l = new Layer({
       id: newIds ? undefined : this.id,
       type: this.type,
@@ -317,13 +334,13 @@ export class Layer {
       text: this.text ? structuredClone(this.text) : null,
       shape: this.shape ? structuredClone(this.shape) : null,
       adjustment: this.adjustment ? structuredClone(this.adjustment) : null,
-      smart: this.smart ? cloneSmartPayload(this.smart) : null,
+      smart: this.smart ? cloneSmartPayload(this.smart, link) : null,
       isBackground: this.isBackground,
       expanded: this.expanded,
     });
     if (this.children) {
       l.children = this.children.map((c) => {
-        const cc = c.clone(newIds);
+        const cc = c.clone(newIds, link);
         cc.parent = l;
         return cc;
       });

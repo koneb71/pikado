@@ -250,8 +250,13 @@ export class PikaDocument extends Emitter {
     this.emit('structure');
   }
 
-  duplicateLayer(layer) {
-    const copy = layer.clone(true);
+  /**
+   * @param {Layer} layer
+   * @param {{link?:boolean}} [opts] for a Smart Object, whether the copy stays
+   *   linked to the original. Linked is the default, as in Photoshop.
+   */
+  duplicateLayer(layer, opts = {}) {
+    const copy = layer.clone(true, opts.link !== false);
     copy.name = `${layer.name} copy`;
     copy.isBackground = false;
     const loc = this.locate(layer);

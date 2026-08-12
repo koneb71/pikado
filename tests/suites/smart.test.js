@@ -360,60 +360,86 @@ suite('smart / undo and redo walk the filter stack and the transform', async (t)
     'the older snapshot still holds its own transform (payloads are never mutated in place)');
 });
 
-suite('smart / a duplicate is fully independent', async (t) => {
+suite('smart / a duplicate is linked, and can be made independent', async (t) => {
+  const { unlinkSmartObject, linkCount } = await import('/src/core/smart.js');
   const { doc, smart } = smartFromDetail(t, 120, 'sdup');
   const id = smart.id;
   addSmartFilter(doc, doc.findLayer(id), 'gaussian-blur', { radius: 4 });
 
+  /*
+   * Photoshop's Cmd+J on a Smart Object makes a linked copy, and so does this.
+   * The identity is the shared `linkId`, deliberately not a shared `source`
+   * object: a contents edit replaces the source rather than mutating it — which
+   * is what keeps history correct — so instances are found by id and updated
+   * together. Verified to fail by cloning with `link: false` here.
+   */
   const copy = doc.duplicateLayer(doc.findLayer(id));
   doc.commit('Duplicate Layer');
   const copyId = copy.id;
   t.eq(copy.type, LayerType.SMART, 'the duplicate is still a Smart Object');
-  t.ne(copyId, id, 'the duplicate has its own layer id');
-  t.ok(copy.smart.source instanceof PikaDocument, 'the duplicate has a source document');
-  t.notOk(copy.smart.source === doc.findLayer(id).smart.source, 'it is NOT the same source object');
-  t.notOk(copy.smart.filters === doc.findLayer(id).smart.filters, 'and NOT the same filters array');
+  t.ne(copyId, id, 'with its own layer id');
+  t.eq(copy.smart.linkId, doc.findLayer(id).smart.linkId, 'and the same link');
+  t.eq(linkCount(doc, copy), 2, 'so the pair counts as two instances');
+  t.notOk(copy.smart.filters === doc.findLayer(id).smart.filters,
+    'the filter stacks are still separate — a link is about contents, not appearance');
   t.eq(t.mad(t.bytes(copy.canvas), t.bytes(doc.findLayer(id).canvas)), 0,
-    'the duplicate renders identically to start with');
+    'and it renders identically to start with');
 
   const origRender = t.bytes(doc.findLayer(id).canvas);
   const copyRender = t.bytes(copy.canvas);
-  const origSource = t.bytes(doc.findLayer(id).smart.source.layers[0].canvas);
-  const copySource = t.bytes(copy.smart.source.layers[0].canvas);
 
-  // --- direction 1: filter the copy ---
+  // Appearance stays per instance: filtering one must not touch the other.
   addSmartFilter(doc, doc.findLayer(copyId), 'mosaic', { cellSize: 10 });
   t.eq(getSmartFilters(doc.findLayer(copyId)).length, 2, 'the copy now has two filters');
   t.eq(getSmartFilters(doc.findLayer(id)).length, 1, 'the original still has one');
   t.gt(t.mad(t.bytes(doc.findLayer(copyId).canvas), copyRender), 2, 'the copy re-rendered');
   t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), origRender), 0, 'the original render did not move');
 
-  // --- direction 2: paint into the copy's embedded source ---
-  const copySrc = doc.findLayer(copyId).smart.source;
-  const copySrcLayer = copySrc.layers[0];
-  copySrc.beginEdit(copySrcLayer);
-  t.fill(copySrcLayer, '#ff00ff');
-  copySrc.commit('Paint contents');
-  renderSmartObject(doc.findLayer(copyId), doc);
-  t.eq(t.px(doc.findLayer(copyId).smart.source.layers[0].canvas, 60, 60), '255,0,255,255',
-    'the copy\'s embedded pixels changed');
-  t.eq(t.mad(t.bytes(doc.findLayer(id).smart.source.layers[0].canvas), origSource), 0,
-    'the original\'s embedded pixels are untouched');
-  t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), origRender), 0, 'and its render is untouched');
+  /*
+   * Unlinking is the escape hatch, and it is about contents alone: the layer
+   * keeps its transform, filters and mask, and gains its own copy of the
+   * source. Verified to fail by having unlinkSmartObject keep the link id.
+   */
+  unlinkSmartObject(doc, doc.findLayer(copyId));
+  t.ne(doc.findLayer(copyId).smart.linkId, doc.findLayer(id).smart.linkId, 'the copy now has its own link id');
+  t.eq(linkCount(doc, doc.findLayer(id)), 1, 'and the original is alone again');
+  t.notOk(doc.findLayer(copyId).smart.source === doc.findLayer(id).smart.source,
+    'with a source document of its own');
+  t.eq(getSmartFilters(doc.findLayer(copyId)).length, 2, 'its filters survived the unlink');
 
-  // --- direction 3: and the other way round ---
-  const origSrc = doc.findLayer(id).smart.source;
-  const origSrcLayer = origSrc.layers[0];
-  origSrc.beginEdit(origSrcLayer);
-  t.fill(origSrcLayer, '#00ffff');
-  origSrc.commit('Paint contents');
-  renderSmartObject(doc.findLayer(id), doc);
-  t.eq(t.px(doc.findLayer(id).smart.source.layers[0].canvas, 60, 60), '0,255,255,255',
-    'the original\'s embedded pixels changed');
+  // Now they really are independent: painting into one changes only that one.
+  const copySrc = doc.findLayer(copyId).smart.source;
+  copySrc.beginEdit(copySrc.layers[0]);
+  t.fill(copySrc.layers[0], '#ff00ff');
+  copySrc.commit('Paint contents');
   t.eq(t.px(doc.findLayer(copyId).smart.source.layers[0].canvas, 60, 60), '255,0,255,255',
-    'the copy\'s embedded pixels kept their own value');
-  t.gt(t.mad(t.bytes(doc.findLayer(copyId).smart.source.layers[0].canvas), copySource), 20,
-    'precondition: the copy\'s source really had been changed away from the shared original');
+    "the unlinked copy's embedded pixels changed");
+  t.ne(t.px(doc.findLayer(id).smart.source.layers[0].canvas, 60, 60), '255,0,255,255',
+    "and the original's did not");
+});
+
+suite('smart / an unlinked copy is independent from the start', async (t) => {
+  const { doc, smart } = smartFromDetail(t, 120, 'sunlinked');
+  const id = smart.id;
+
+  /*
+   * Layer > Smart Objects > New Smart Object via Copy. Verified to fail by
+   * dropping the `link: false` option, which gives back the linked duplicate.
+   */
+  const copy = doc.duplicateLayer(doc.findLayer(id), { link: false });
+  doc.commit('New Smart Object via Copy');
+  t.ne(copy.smart.linkId, doc.findLayer(id).smart.linkId, 'it has its own link id');
+  t.notOk(copy.smart.source === doc.findLayer(id).smart.source, 'and its own source document');
+  t.eq(t.mad(t.bytes(copy.canvas), t.bytes(doc.findLayer(id).canvas)), 0,
+    'while still rendering identically to start with');
+
+  const origSource = t.bytes(doc.findLayer(id).smart.source.layers[0].canvas);
+  const src = copy.smart.source;
+  src.beginEdit(src.layers[0]);
+  t.fill(src.layers[0], '#00ffff');
+  src.commit('Paint contents');
+  t.eq(t.mad(t.bytes(doc.findLayer(id).smart.source.layers[0].canvas), origSource), 0,
+    "the original's embedded pixels are untouched");
 });
 
 suite('smart / editing the embedded source is picked up', async (t) => {
@@ -739,4 +765,73 @@ suite('smart / Skew Y reads back as Skew Y', async (t) => {
   const rl = reopened.flatLayers().find((l) => l.smart);
   const after = authoredParams(rl.smart, getSmartTransform(rl), rl.smart.sourceWidth, rl.smart.sourceHeight);
   t.ok(after && Math.abs(after.skewY - authored.skewY) < 1e-6, 'and survives a round trip through .pkd');
+});
+
+
+suite('smart / editing linked contents updates every instance', async (t) => {
+  const { linkedInstances, applySmartContents } = await import('/src/core/smart.js');
+  const { doc, smart } = smartFromDetail(t, 120, 'slinked');
+  const id = smart.id;
+  const copyId = doc.duplicateLayer(doc.findLayer(id)).id;
+  doc.commit('Duplicate Layer');
+
+  const linkId = doc.findLayer(id).smart.linkId;
+  t.eq(linkedInstances(doc, linkId).length, 2, 'both layers are instances of one Smart Object');
+
+  const beforeA = t.bytes(doc.findLayer(id).canvas);
+  const beforeB = t.bytes(doc.findLayer(copyId).canvas);
+
+  // Stand in for the contents tab: edit the source, then push it back.
+  const child = doc.findLayer(id).smart.source;
+  child.beginEdit(child.layers[0]);
+  t.fill(child.layers[0], '#ff8800');
+  child.commit('Paint contents');
+
+  /*
+   * What "linked" has to mean. Verified to fail by having applySmartContents
+   * update only the layer it was handed: the sibling keeps rendering the old
+   * contents and the two drift apart silently, which is exactly the failure
+   * that made linked copies a bad idea before there was a link id to find them
+   * by.
+   */
+  const n = applySmartContents(doc, doc.findLayer(id), child);
+  t.eq(n, 2, 'both instances were updated');
+  t.gt(t.mad(t.bytes(doc.findLayer(id).canvas), beforeA), 5, 'the edited instance re-rendered');
+  t.gt(t.mad(t.bytes(doc.findLayer(copyId).canvas), beforeB), 5, 'and so did its linked sibling');
+  t.eq(t.mad(t.bytes(doc.findLayer(id).canvas), t.bytes(doc.findLayer(copyId).canvas)), 0,
+    'both now show the same contents');
+
+  /*
+   * Each holds its own copy. A shared object would be smaller and wrong: a
+   * source is replaced rather than mutated so that a history snapshot pointing
+   * at the previous document really is the previous state.
+   * Verified to fail by assigning `child` itself to every instance.
+   */
+  t.notOk(doc.findLayer(id).smart.source === doc.findLayer(copyId).smart.source,
+    'each instance holds its own copy of the contents');
+  t.notOk(doc.findLayer(id).smart.source === child, 'and none of them is the edited document itself');
+});
+
+suite('smart / a link survives a save', async (t) => {
+  const { linkCount } = await import('/src/core/smart.js');
+  const { savePKD, loadPKD } = await import('/src/io/pkd.js');
+  const { doc, smart } = smartFromDetail(t, 96, 'slinksave');
+  doc.duplicateLayer(doc.findLayer(smart.id));
+  doc.commit('Duplicate Layer');
+
+  const bytes = await (await savePKD(doc)).arrayBuffer();
+  const reopened = await loadPKD(bytes);
+  const smarts = reopened.flatLayers().filter((l) => l.smart);
+  t.eq(smarts.length, 2, 'both instances came back');
+
+  /*
+   * Without this the file stores two full copies of the contents and reopens
+   * them as two independent Smart Objects — the link would be a session-only
+   * illusion that quietly vanished on save.
+   * Verified to fail by dropping the linkId from the encoded payload.
+   */
+  t.eq(smarts[0].smart.linkId, smarts[1].smart.linkId, 'still sharing one link id');
+  t.eq(linkCount(reopened, smarts[0]), 2, 'so they are still two instances of one object');
+  t.ok(smarts[0].smart.source && smarts[1].smart.source, 'and both have contents');
+  t.eq(smarts[0].smart.sourceWidth, smarts[1].smart.sourceWidth, 'of the same size');
 });
