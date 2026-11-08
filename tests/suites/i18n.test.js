@@ -613,3 +613,38 @@ suite('i18n: a command is named as its menu item says it', async (t) => {
     await loadLanguage('en');
   }
 });
+
+suite('i18n: a submenu and what it holds can be different words', async (t) => {
+  // Filter › Blur holds a filter called Blur, and the Layer menu makes a Layer:
+  // one English word each time, two in German and Russian — Weichzeichnungs-
+  // filter › Weichzeichnen, Слои › Слой. Verified to fail: with each submenu
+  // titled by its bare name, the Filter menu read Weichzeichnen › Weichzeichnen.
+  const { tr, msg } = t.app.i18n;
+  const { MENU_TREE } = await import('/src/commands/definitions.js');
+  const { labelOf } = await import('/src/commands/registry.js');
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+  t.doc(16, 16, '#ffffff');
+  await withLanguage(t, 'xx', {
+    'Blur|filter menu': 'Weichzeichnungsfilter', Blur: 'Weichzeichnen',
+    'Layer|menu': 'Слои', Layer: 'Слой',
+  }, async () => {
+    // The menu bar's own titles are built at boot, in English; what opens is built now.
+    const button = [...document.querySelectorAll('#menubar .pk-menu-btn')].find((b) => b.textContent === 'Filter');
+    button.click();
+    await settle();
+    const menu = [...document.querySelectorAll('.pk-menu')].pop();
+    const row = [...menu.querySelectorAll(':scope > .pk-menu-item')]
+      .find((n) => n.querySelector('.pk-menu-label').textContent === 'Weichzeichnungsfilter');
+    t.ok(row, 'the submenu is titled as the Filter menu says it');
+    const before = new Set(document.querySelectorAll('.pk-menu'));
+    if (row) row.dispatchEvent(new MouseEvent('mouseenter'));
+    await settle();
+    const sub = [...document.querySelectorAll('.pk-menu')].find((m) => !before.has(m));
+    const inside = sub ? [...sub.querySelectorAll('.pk-menu-label')].map((n) => n.textContent) : [];
+    t.ok(inside.includes('Weichzeichnen'), 'and holds the filter under the filter’s own name', inside.join(', '));
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+
+    const layerMenu = MENU_TREE.find((m) => String(msg(m.label)) === 'Layer');
+    t.eq([tr(layerMenu.label), labelOf('layer.new')], ['Слои', 'Слой'], 'the Layer menu, and the layer it makes');
+  });
+});

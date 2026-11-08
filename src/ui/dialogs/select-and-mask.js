@@ -43,7 +43,7 @@ const WORK_PIXELS = 260000;
 const VIEW_MODES = [
   { value: 'onion', label: 'Onion Skin', hint: 'Unselected areas fade out' },
   { value: 'ants', label: 'Marching Ants', hint: 'The classic dashed outline' },
-  { value: 'overlay', label: 'Overlay', hint: 'Unselected areas tinted, like Quick Mask' },
+  { value: 'overlay', label: 'Overlay|view', hint: 'Unselected areas tinted, like Quick Mask' },
   { value: 'black', label: 'On Black', hint: 'The selection over black' },
   { value: 'white', label: 'On White', hint: 'The selection over white' },
   { value: 'mask', label: 'Black & White', hint: 'The mask itself' },

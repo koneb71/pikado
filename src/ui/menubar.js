@@ -5,7 +5,7 @@ import { icon } from './icons.js';
 import {
   getCommand, isChecked, isEnabled, labelOf, formatAccel, runCommand,
 } from '../commands/registry.js';
-import { FILTER_MENUS, filtersByMenu } from '../filters/registry.js';
+import { FILTER_MENUS, FILTER_MENU_TITLES, filtersByMenu } from '../filters/registry.js';
 import { listAdjustments } from '../adjustments/registry.js';
 import { applyFilterCommand, applyAdjustmentCommand } from '../filters/run.js';
 import { addAdjustmentLayer } from '../layers/ops.js';
@@ -354,7 +354,7 @@ function filterItems() {
     if (!list.length) return;
     seen.add(name);
     out.push({
-      label: tr(name),
+      label: tr(FILTER_MENU_TITLES[name] || name),
       children: list.map((f) => ({
         label: tr(f.name),
         enabled: hasDoc,

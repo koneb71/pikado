@@ -1708,7 +1708,7 @@ registerCommands([
     enabled: () => !!layerOfType(LayerType.SMART),
     run: () => ops.rasterizeLayer(D(), activeLayer()),
   },
-  { id: 'layer.rasterize.type', label: 'Type', enabled: () => !!layerOfType(LayerType.TEXT), run: () => ops.rasterizeLayer(D()) },
+  { id: 'layer.rasterize.type', label: 'Type|text layer', enabled: () => !!layerOfType(LayerType.TEXT), run: () => ops.rasterizeLayer(D()) },
   { id: 'layer.rasterize.shape', label: 'Shape', enabled: () => !!layerOfType(LayerType.SHAPE), run: () => ops.rasterizeLayer(D()) },
   {
     id: 'layer.rasterize.style', label: 'Layer Style',
@@ -2110,7 +2110,7 @@ export const MENU_TREE = [
     ],
   },
   {
-    label: 'Layer',
+    label: 'Layer|menu',
     items: [
       {
         label: 'New',

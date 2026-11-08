@@ -479,7 +479,7 @@ registerFilter({
     { key: 'scaleH', label: 'Horizontal Scale', type: 'slider', min: 0, max: 100, step: 1, default: 100, unit: '%' },
     { key: 'scaleV', label: 'Vertical Scale', type: 'slider', min: 0, max: 100, step: 1, default: 100, unit: '%' },
     {
-      key: 'type', label: 'Type', type: 'radio', default: 'sine',
+      key: 'type', label: 'Type|kind', type: 'radio', default: 'sine',
       options: [{ value: 'sine', label: 'Sine' }, { value: 'triangle', label: 'Triangle' }, { value: 'square', label: 'Square' }],
     },
     { key: 'undefinedAreas', label: 'Undefined Areas', type: 'radio', default: 'repeat', options: UNDEFINED_AREAS },

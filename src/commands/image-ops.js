@@ -893,7 +893,7 @@ export async function showColorRangeDialog(doc) {
   dlg.setBody(
     el('div.pkd-cols', {},
       el('div.pkd-col.grow', {},
-        el('div.pk-field', {}, el('label', { text: tr('Select') }), kindSelect),
+        el('div.pk-field', {}, el('label', { text: tr('Select|color range') }), kindSelect),
         el('div.pk-field', {}, el('label', { text: tr('Fuzziness') }), el('div.pk-slider-row', {}, fuzzRange, fuzzNum)),
         el('label.pk-check', {}, localizedInput, el('span', { text: tr('Localized Color Clusters') })),
         rangeRow,

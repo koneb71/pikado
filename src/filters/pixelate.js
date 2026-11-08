@@ -374,7 +374,7 @@ registerFilter({
   name: 'Mezzotint...',
   menu: 'Pixelate',
   params: [
-    { key: 'type', label: 'Type', type: 'select', default: 'medium-dots', options: [
+    { key: 'type', label: 'Type|kind', type: 'select', default: 'medium-dots', options: [
       { value: 'fine-dots', label: 'Fine dots' },
       { value: 'medium-dots', label: 'Medium dots' },
       { value: 'grainy-dots', label: 'Grainy dots' },

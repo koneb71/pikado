@@ -303,7 +303,7 @@ function buildLayersPanel(bodyEl) {
     if (kind === 'kind') {
       return [
         { value: 'all', label: 'All' }, { value: 'pixel', label: 'Pixel' },
-        { value: 'adjustment', label: 'Adjustment' }, { value: 'type', label: 'Type' },
+        { value: 'adjustment', label: 'Adjustment' }, { value: 'type', label: 'Type|text layer' },
         { value: 'shape', label: 'Shape' }, { value: 'smart', label: 'Smart Object' },
         { value: 'group', label: 'Group' },
       ];

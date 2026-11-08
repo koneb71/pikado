@@ -17,6 +17,7 @@
  * `apply` receives the *layer's* pixels. Selection masking, undo and history
  * are handled by the caller (src/filters/run.js), so filters stay pure.
  */
+import { msg } from '../core/i18n.js';
 
 /** @type {Map<string, object>} */
 export const filters = new Map();
@@ -32,6 +33,22 @@ export const FILTER_MENUS = [
   'Stylize',
   'Other',
 ];
+
+/**
+ * Each submenu's title. It has a key of its own because it is not always the
+ * word for what it holds: Filter › Blur holds a filter called Blur, and in
+ * German the submenu is Weichzeichnungsfilter and the filter Weichzeichnen.
+ */
+export const FILTER_MENU_TITLES = {
+  Blur: msg('Blur|filter menu'),
+  Distort: msg('Distort|filter menu'),
+  Noise: msg('Noise|filter menu'),
+  Pixelate: msg('Pixelate|filter menu'),
+  Render: msg('Render|filter menu'),
+  Sharpen: msg('Sharpen|filter menu'),
+  Stylize: msg('Stylize|filter menu'),
+  Other: msg('Other|filter menu'),
+};
 
 export function registerFilter(def) {
   if (!def || !def.id) throw new Error('Filter needs an id');

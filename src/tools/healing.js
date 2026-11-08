@@ -342,7 +342,7 @@ class SpotHealingTool extends BrushToolBase {
       strokeLabel: 'Spot Healing Brush',
       options: [
         ...tweakDefaults(brushOptionDescriptors({ opacity: false, flow: false, airbrush: false }), { size: 30, hardness: 100 }),
-        { key: 'type', label: 'Type', type: 'radio', default: 'content-aware',
+        { key: 'type', label: 'Type|kind', type: 'radio', default: 'content-aware',
           options: [
             { value: 'content-aware', label: 'Content-Aware' },
             { value: 'texture', label: 'Create Texture' },
