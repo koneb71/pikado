@@ -249,7 +249,10 @@ export async function showExportDialog(doc = app.activeDoc) {
         : ratio > 1 ? tr('Estimated size ≈ {size} (extrapolated)', { size: bytes })
           : animated ? tr('Estimated size ≈ {size} per frame', { size: bytes })
             : tr('Estimated size ≈ {size}', { size: bytes });
-    info.replaceChildren(
+    // replaceChildren() is the DOM's own and writes a null child out as the
+    // text "null" (el() skips it), so the frame line is filtered in, not passed
+    // as null — which showed "null" under every export but an animated GIF.
+    info.replaceChildren(...[
       el('div', {}, el('b', { text: `${w} × ${h} px` }), ` · ${tr(fmt.label)}`),
       el('div', { text: estimated }),
       el('div', { text: state.allLayers ? trn('Exports {count} layer as separate files', 'Exports {count} layers as separate files', doc.flatLayers().filter((l) => l.visible && l.type !== 'adjustment').length) : tr('Single file: {file}', { file: `${state.filename || baseName(doc)}.${fmt.ext}` }) }),
@@ -259,8 +262,8 @@ export async function showExportDialog(doc = app.activeDoc) {
             ? trn('Animated: {count} frame, {plays}', 'Animated: {count} frames, {plays}', frameCount, { plays: trn('{count} play', '{count} plays', doc.loopCount) })
             : trn('Animated: {count} frame, looping forever', 'Animated: {count} frames, looping forever', frameCount),
         })
-        : null
-    );
+        : null,
+    ].filter(Boolean));
   }, 220);
 
   function drawPreview() {

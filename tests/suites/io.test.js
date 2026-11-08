@@ -993,3 +993,27 @@ suite('io / opening a 16-bit file says the depth was lost', async (t) => {
    */
   t.ok(seen.some((m) => /16-bit/.test(m)), `the depth loss is reported (${seen.join(' | ') || 'nothing'})`);
 });
+
+suite('io: Export As shows no stray "null" in its readout', async (t) => {
+  // The readout was rebuilt with info.replaceChildren(…, animated ? el(…) : null).
+  // replaceChildren is the native DOM API and turns null into the text "null"
+  // — unlike el(), which skips it — so every export that was not an animated
+  // GIF showed a line reading "null" under its size estimate.
+  // Verified to fail: without the fix the readout's lines end in "null".
+  const { showExportDialog } = await import('/src/ui/dialogs/export.js');
+  const doc = t.doc(64, 48, '#ffffff');
+  const before = new Set(document.querySelectorAll('.pk-dialog-overlay'));
+  const pending = showExportDialog(doc);
+  let readout = null;
+  for (let i = 0; i < 150; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    const overlay = [...document.querySelectorAll('.pk-dialog-overlay')].find((o) => !before.has(o));
+    readout = overlay && overlay.querySelector('.pkd-readout');
+    if (readout && readout.childNodes.length) break;
+  }
+  const lines = readout ? [...readout.childNodes].map((n) => n.textContent.trim()) : [];
+  t.gt(lines.length, 0, 'the readout was filled in');
+  t.notOk(lines.includes('null'), `no line reads "null" (${JSON.stringify(lines)})`);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  await pending;
+});
