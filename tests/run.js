@@ -31,6 +31,7 @@ import './suites/color-management.test.js';
 import './suites/apple-formats.test.js';
 import './suites/ai.test.js';
 import './suites/ai-credentials.test.js';
+import './suites/i18n.test.js';
 import './suites/perf.test.js';
 
 const out = document.getElementById('out');

@@ -4,9 +4,7 @@ import { el } from '../../core/util.js';
 import { app } from '../../core/app.js';
 import { Dialog, confirmDialog } from '../dialog.js';
 import { iconEl } from '../icons.js';
-import {
-  FONT_FAMILIES, fontStack, googleNameFor, normalizeFontId, GOOGLE_PREFIX,
-} from '../../text/fonts.js';
+import { FONT_FAMILIES, fontStack, googleNameFor, normalizeFontId, GOOGLE_PREFIX, familyDisplayName } from '../../text/fonts.js';
 import { loadCatalog, searchFamilies, catalogCategories, catalogSize } from '../../text/font-catalog.js';
 import {
   installedFamilies, isInstalled, downloadFamily, removeFamily, hydrateInstalledFonts, webfontsAllowed,
@@ -125,7 +123,8 @@ export async function showFontsDialog(opts = {}) {
 
   const rowNode = () => {
     const name = el('div.pkf-name.pk-truncate');
-    const spec = el('div.pkf-spec');
+    // The specimen is sample text in the face, not interface prose.
+    const spec = el('div.pkf-spec', { translate: 'no' });
     const action = el('div.pkf-action');
     const row = el('button.pkf-row', { type: 'button', role: 'option' }, name, spec, action);
     row.addEventListener('click', () => {
@@ -139,7 +138,9 @@ export async function showFontsDialog(opts = {}) {
     n.row.dataset.index = String(index);
     n.row.id = `pkf-opt-${index}`;
     n.row.classList.toggle('active', index === active);
-    n.name.textContent = entry.family;
+    // A family's name is its own — except the two built-ins that describe a kind of face.
+    n.name.textContent = entry.builtin ? familyDisplayName(entry.id, entry.family) : entry.family;
+    n.name.translate = entry.builtin && n.name.textContent !== entry.family;
 
     const st = entry.builtin || isInstalled(entry.id) ? 'ready' : previewState(entry.family);
     n.spec.textContent = sample || 'The quick brown fox';

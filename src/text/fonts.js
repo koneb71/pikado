@@ -69,6 +69,11 @@ export const FONT_FAMILY_OPTIONS = FONT_FAMILIES.map((f) => ({ value: f.id, labe
  */
 const DESCRIPTIVE_FAMILIES = new Set(['system', 'mono']);
 
+/** A built-in family's name as a picker shows it: translated only if it describes rather than names. */
+export function familyDisplayName(id, name) {
+  return DESCRIPTIVE_FAMILIES.has(id) ? tr(name) : name;
+}
+
 /**
  * Every family the user can pick right now: the built-ins, plus whatever has
  * been downloaded, plus the layer's own family when it is neither.
@@ -92,7 +97,7 @@ const DESCRIPTIVE_FAMILIES = new Set(['system', 'mono']);
 export const BROWSE_FONTS = '\u0000browse';
 
 export function fontFamilyOptions(current = '', installed = []) {
-  const out = FONT_FAMILY_OPTIONS.map((o) => (DESCRIPTIVE_FAMILIES.has(o.value) ? { ...o, label: tr(o.label) } : o));
+  const out = FONT_FAMILY_OPTIONS.map((o) => ({ ...o, label: familyDisplayName(o.value, o.label) }));
   for (const f of installed) {
     if (!out.some((o) => o.value === f.id)) out.push({ value: f.id, label: f.name });
   }

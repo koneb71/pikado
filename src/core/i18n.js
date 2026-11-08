@@ -11,6 +11,7 @@
  *   tr('Layer "{name}" is locked.', { name })          named placeholders
  *   trn('{count} layer', '{count} layers', n)          plurals, per the language's own rules
  *   msg('Fade {action}', { action: msg(label) })       a message translated when it is shown
+ *   tr('Delete|key')                                   with a context, shown in English as "Delete"
  *
  * `tr`, not the more usual `t`: sixty-odd modules here already use `t` for a
  * curve parameter or a loop variable, and a translator shadowed by one fails
@@ -67,11 +68,34 @@ export const PSEUDO_LANGUAGE = 'en-XA';
  */
 export const LANGUAGES = [
   { tag: 'en', name: 'English' },
+  { tag: 'de', name: 'Deutsch', load: () => import('../locales/de.json') },
+  { tag: 'es', name: 'Español', load: () => import('../locales/es.json') },
+  { tag: 'fr', name: 'Français', load: () => import('../locales/fr.json') },
+  { tag: 'pt-BR', name: 'Português (Brasil)', load: () => import('../locales/pt-BR.json') },
+  { tag: 'ru', name: 'Русский', load: () => import('../locales/ru.json') },
+  { tag: 'ja', name: '日本語', load: () => import('../locales/ja.json') },
+  { tag: 'ko', name: '한국어', load: () => import('../locales/ko.json') },
   { tag: 'zh-CN', name: '简体中文', load: () => import('../locales/zh-CN.json') },
+  { tag: 'zh-TW', name: '繁體中文', load: () => import('../locales/zh-TW.json') },
 ];
 
 /** Matches a trailing ellipsis, either spelling, and what comes before it. */
 const ELLIPSIS = /^([\s\S]*?)(\.\.\.|…)$/;
+
+/**
+ * A context: `'Delete|key'`. One English word can be two words elsewhere —
+ * "Delete" the key on a German keyboard is Entf, "Delete" the command is
+ * Löschen — so the source can say which it means. The catalogue key keeps
+ * the context, so a translator sees it; English, and any language without
+ * the entry, shows the text before the bar.
+ */
+const CONTEXT = /^([\s\S]*?)\|([a-z][a-z -]*)$/;
+
+/** Source text without its context, which is how English shows it. */
+function plain(text) {
+  const m = CONTEXT.exec(text);
+  return m ? m[1] : text;
+}
 
 let current = SOURCE_LANGUAGE;
 /** @type {Map<string, string|object>|null} the active catalogue; null for English */
@@ -115,7 +139,7 @@ export class Message {
   }
 
   toString() {
-    return fill(this.text, this.params, String);
+    return fill(plain(this.text), this.params, String);
   }
 }
 
@@ -172,12 +196,12 @@ export function trn(one, other, count, params) {
 }
 
 function translate(text) {
-  if (pseudo) return text.startsWith('⟦') ? text : accent(text);
-  if (!table) return text;
+  if (pseudo) return text.startsWith('⟦') ? text : accent(plain(text));
+  if (!table) return plain(text);
   const found = lookup(text);
   if (found !== undefined) return found;
   note(text);
-  return text;
+  return plain(text);
 }
 
 /**

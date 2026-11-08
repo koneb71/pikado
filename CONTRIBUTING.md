@@ -76,6 +76,31 @@ implementation, delete or rewrite the comment that explained the old one — and
 if the old approach failed for an interesting reason, keep *that* as history,
 which is genuinely useful, but make clear it is history.
 
+## Interface text
+
+Pikado speaks more than English (see [Translating Pikado](#translating-pikado)),
+so text a person reads follows three habits. The full contract is under
+*Interface language* in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+- **Declared text stays plain English.** A command's `label`, a tool's or
+  filter's `name`, a panel's `title`, a ParamDescriptor's `label`/`hint`/`unit`
+  and a literal `options` array are translated by whatever draws them. Write
+  them as you always have.
+- **Text you compose for someone now goes through `tr()`** — a toast, a dialog
+  title or button, a menu built when it opens, an error the user will see, a
+  default name like "Layer 3". Whole sentences, with named placeholders:
+  `tr('Layer "{name}" is locked.', { name })`, never `'Layer "' + name + '"…'`,
+  and `trn()` for anything with a count. A history label stays a plain English
+  literal — the History panel translates it — unless it is interpolated, in
+  which case it is a `msg()`.
+- **A user's data never goes through `tr()`**, and an option list that holds
+  data (layer names, fonts) is a function rather than an array.
+
+Run the app with `?lang=en-XA` to check your change: every translated string
+comes back as `⟦Åççéñţéð···⟧`, so anything still plain English escaped. You do
+not need to translate what you add — an untranslated string falls back to the
+English, and translators pick it up from `node scripts/i18n.mjs`.
+
 ## Style
 
 Match the code around you — comment density, naming, and idiom. A few specifics
@@ -109,6 +134,45 @@ that are not obvious:
   you fixed a bug, give the concrete failing case with real values. Look at
   `git log` for the house style; it is unusually detailed on purpose, because
   the reasoning is the part that is expensive to reconstruct.
+
+## Translating Pikado
+
+A language is one JSON file, `src/locales/<tag>.json`, mapping the English
+text to yours, plus one line in `LANGUAGES` in `src/core/i18n.js` naming the
+language in itself. Nothing else needs to know it exists.
+
+```bash
+node scripts/i18n.mjs                    # how complete every language is
+node scripts/i18n.mjs missing zh-CN      # what is still English, and where each string is used
+node scripts/i18n.mjs sync zh-CN --fill  # add every missing key, empty, to translate in place
+node scripts/i18n.mjs sync zh-CN         # tidy: source order, empty and stale entries dropped
+node scripts/i18n.mjs check              # placeholders, plural forms, keys no longer used
+```
+
+- **Use Photoshop's own terms** in your language. Pikado's users know
+  Photoshop; someone looking for 高斯模糊 or *Flou gaussien* should find exactly
+  that.
+- **Keep every `{placeholder}`** — rearrange them as your grammar needs, but
+  do not rename, add or drop one. Keep a trailing `...`: it means a dialog
+  follows. "Levels..." and "Levels" share one translation, so give it once.
+- **Plurals** are an object of your language's
+  [CLDR plural categories](https://www.unicode.org/cldr/charts/latest/supplemental/language_plural_rules.html):
+  `{"one": "{count} слой", "few": "{count} слоя", "many": "{count} слоёв", "other": "{count} слоя"}`.
+  A language with one form writes a plain string.
+- **A key that should stay as it is** ("sRGB IEC61966-2.1", "4K UHD") is
+  copied as its own translation, so it counts as done.
+- **A key ending in `|something`** carries a context, telling one meaning
+  of an English word from another: `"Delete|key"` is the key on the keyboard
+  (Entf in German), `"Delete"` the command (Löschen). Translate only the text
+  before the bar.
+- **Check it in place**: open Pikado with `?lang=<tag>` to see your language
+  without changing your preference, click around, then run
+  `pikado.i18n.missing()` in the browser console to list what that showed you
+  in English.
+
+An empty or missing entry falls back to English, so a partial translation is
+safe to ship. Right-to-left languages need the layout mirrored as well, which
+Pikado does not do yet.
 
 ## Reporting bugs
 

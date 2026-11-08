@@ -232,7 +232,7 @@ export async function showKeyboardShortcutsDialog() {
     });
 
     return el('tr', {},
-      el('td', {}, el('div', { text: String(labelOf(cmd.id)) }), el('div.pk-hint', { text: cmd.id })),
+      el('td', {}, el('div', { text: String(labelOf(cmd.id)) }), el('div.pk-hint', { text: cmd.id, translate: 'no' })),
       el('td', {}, btn),
       el('td', {}, clearBtn)
     );

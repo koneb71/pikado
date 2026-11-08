@@ -347,8 +347,8 @@ function expressionEnd(toks, start) {
 }
 
 /**
- * Functions that take interface text as an argument, by name, with the
- * argument's position.
+ * Functions that take interface text as an argument, with the argument's
+ * position.
  *
  * `.commit('Brush Stroke')` and `{ label: 'Radius' }` are easy to find, but
  * plenty of text travels through a helper first — a history label through
@@ -358,21 +358,40 @@ function expressionEnd(toks, start) {
  * when it reaches `.commit()`, `tr()` or `msg()`, a text property such as
  * `label` (shorthand `{ key, label }` included), or the text position of
  * another such function; found to a fixed point, since helpers call helpers.
+ *
+ * A helper counts in its own file, and in others only if it is exported —
+ * otherwise one file's little `push(label)` would make every `push('…')`
+ * everywhere look like interface text, which is exactly what it did to the
+ * PSD writer's EngineData lines.
+ *
+ * @returns {{positions(name: string, file: number): Set<number>}}
  */
 function labelTakers(fileToks) {
   const fns = [];
-  for (const toks of fileToks) {
+  fileToks.forEach((toks, file) => {
+    const exportedNames = new Set();
+    for (let k = 0; k < toks.length; k++) {
+      // export { a, b as c }
+      if (toks[k].value === 'export' && toks[k + 1] && toks[k + 1].value === '{') {
+        for (let m = k + 2; m < toks.length && toks[m].value !== '}'; m++) if (toks[m].type === 'id' && toks[m - 1].value !== 'as') exportedNames.add(toks[m].value);
+      }
+    }
     for (let k = 0; k < toks.length; k++) {
       const tok = toks[k];
       if (tok.type !== 'id' || NOT_FUNCTIONS.has(tok.value)) continue;
       const prev = toks[k - 1];
       let open = -1;
-      if (prev && prev.type === 'id' && prev.value === 'function' && toks[k + 1] && toks[k + 1].value === '(') open = k + 1;
-      else if (toks[k + 1] && (toks[k + 1].value === '=' || toks[k + 1].value === ':')) {
+      let exported = exportedNames.has(tok.value);
+      if (prev && prev.type === 'id' && prev.value === 'function' && toks[k + 1] && toks[k + 1].value === '(') {
+        open = k + 1;
+        const before = toks[k - 2] && toks[k - 2].value === 'async' ? toks[k - 3] : toks[k - 2];
+        exported = exported || !!(before && before.value === 'export');
+      } else if (toks[k + 1] && (toks[k + 1].value === '=' || toks[k + 1].value === ':')) {
         // name = (…) =>   name = async (…) =>   name: (…) =>
         let m = k + 2;
         if (toks[m] && toks[m].value === 'async') m++;
         if (toks[m] && toks[m].value === '(' && toks[closing(toks, m) + 1] && toks[closing(toks, m) + 1].value === '=>') open = m;
+        exported = exported || !!(toks[k - 2] && toks[k - 2].value === 'export');
       } else if (toks[k + 1] && toks[k + 1].value === '(' && prev && prev.type === 'punct' && ['{', '}', ';', ','].includes(prev.value)) {
         // method shorthand: name(…) { … }
         if (toks[closing(toks, k + 1) + 1] && toks[closing(toks, k + 1) + 1].value === '{') open = k + 1;
@@ -384,16 +403,26 @@ function labelTakers(fileToks) {
       if (toks[bodyStart] && toks[bodyStart].value === '=>') bodyStart++;
       const opener = toks[bodyStart] && toks[bodyStart].value;
       const bodyEnd = opener === '{' || opener === '(' ? closing(toks, bodyStart) : expressionEnd(toks, bodyStart);
-      if (params.some(Boolean)) fns.push({ name: tok.value, params, toks, bodyStart, bodyEnd });
+      if (params.some(Boolean)) fns.push({ name: tok.value, params, toks, file, exported, bodyStart, bodyEnd });
     }
-  }
+  });
 
-  const SINKS = ['commit', 'record', 'replaceTop', 'tr', 'msg'];
-  const takers = new Map(SINKS.map((n) => [n, new Set([0])]));
+  const SINKS = new Map(['commit', 'record', 'replaceTop', 'tr', 'msg'].map((n) => [n, new Set([0])]));
+  const global = new Map();
+  const local = new Map(); // `${file}:${name}` → positions
+  const EMPTY = new Set();
+  const positions = (name, file) => {
+    const a = SINKS.get(name) || global.get(name);
+    const b = local.get(`${file}:${name}`);
+    if (!b) return a || EMPTY;
+    return a ? new Set([...a, ...b]) : b;
+  };
   const mark = (f, p) => {
-    if (!takers.has(f.name)) takers.set(f.name, new Set());
-    if (takers.get(f.name).has(p)) return false;
-    takers.get(f.name).add(p);
+    const store = f.exported ? global : local;
+    const key = f.exported ? f.name : `${f.file}:${f.name}`;
+    if (!store.has(key)) store.set(key, new Set());
+    if (store.get(key).has(p)) return false;
+    store.get(key).add(p);
     return true;
   };
   for (let round = 0, changed = true; changed && round < 8; round++) {
@@ -420,9 +449,11 @@ function labelTakers(fileToks) {
           continue;
         }
         // commit(param), tr(param), helper(…, param, …)
-        if (!takers.has(tok.value) || !next || next.value !== '(') continue;
+        if (!next || next.value !== '(') continue;
+        const takes = positions(tok.value, f.file);
+        if (!takes.size) continue;
         const { args } = argRanges(f.toks, k + 1);
-        for (const i of takers.get(tok.value)) {
+        for (const i of takes) {
           const range = args[i];
           if (!range) continue;
           for (let m = range[0]; m < range[1]; m++) {
@@ -433,8 +464,8 @@ function labelTakers(fileToks) {
       }
     }
   }
-  for (const k of SINKS) takers.delete(k); // found directly
-  return takers;
+  // The sinks themselves are found directly, as calls and methods.
+  return { positions: (name, file) => (SINKS.has(name) ? EMPTY : positions(name, file)) };
 }
 
 export { labelTakers as _labelTakers };
@@ -469,7 +500,7 @@ export function extract(files) {
   const tokenized = files.map(({ path, source }) => ({ path, toks: tokenize(source) }));
   const takers = labelTakers(tokenized.map((f) => f.toks));
 
-  for (const { path, toks } of tokenized) {
+  tokenized.forEach(({ path, toks }, file) => {
     const at = (tok) => `${path}:${tok.line}`;
 
     for (let k = 0; k < toks.length; k++) {
@@ -504,9 +535,10 @@ export function extract(files) {
       }
 
       // A history label on its way to .commit() through a helper.
-      if (takers.has(tok.value) && next && next.value === '(' && !(prev && prev.type === 'id' && prev.value === 'function')) {
+      const takes = next && next.value === '(' && !(prev && prev.type === 'id' && prev.value === 'function') ? takers.positions(tok.value, file) : null;
+      if (takes && takes.size) {
         const { args } = argRanges(toks, k + 1);
-        for (const i of takers.get(tok.value)) {
+        for (const i of takes) {
           if (!args[i]) continue;
           for (const v of valueStrings(toks, args[i][0])) {
             const vs = text(v);
@@ -562,7 +594,7 @@ export function extract(files) {
         }
       }
     }
-  }
+  });
   return { strings, literals, problems };
 }
 

@@ -105,11 +105,13 @@ export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test
 
 /**
  * Key names as the keyboard prints them. A German keyboard says Strg, Umschalt
- * and Entf, and so do its menus; the bindings themselves never change.
+ * and Entf, and so do its menus; the bindings themselves never change. Delete
+ * carries a context because the command of the same name is a different word
+ * in most languages.
  */
 const KEY_NAMES = {
   Ctrl: msg('Ctrl'), Shift: msg('Shift'), Alt: msg('Alt'), Esc: msg('Esc'), Enter: msg('Enter'),
-  Delete: msg('Delete'), Backspace: msg('Backspace'), PageUp: msg('PageUp'), PageDown: msg('PageDown'),
+  Delete: msg('Delete|key'), Backspace: msg('Backspace'), PageUp: msg('PageUp'), PageDown: msg('PageDown'),
 };
 const KEY_NAME_RE = new RegExp(`\\b(${Object.keys(KEY_NAMES).join('|')})\\b`, 'g');
 

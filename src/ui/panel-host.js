@@ -469,7 +469,8 @@ let openMenu = null;
  * Items: `{label, run, checked, disabled, accel}`, `{separator:true}`,
  * `{header:'Text'}`. Labels are shown as given: menus are built at the moment
  * they open, so the caller translates — and a menu that lists layers or
- * documents is listing the user's names, which must not be.
+ * documents is listing the user's names, which must not be. Mark such an item
+ * `verbatim: true` and a browser's own page translation leaves it alone too.
  *
  * @param {Array<object>} items
  * @param {number} x viewport px
@@ -507,7 +508,7 @@ export function popupMenu(items, x, y, opts = {}) {
       },
     },
       el('span.pk-menu-check', { html: it.checked ? icon('check', { size: 12 }) : '' }),
-      el('span.pk-menu-label', { text: it.label }),
+      el('span.pk-menu-label', { text: it.label, translate: it.verbatim ? 'no' : null }),
       it.accel ? el('span.pk-menu-accel', { text: it.accel }) : null
     );
     menu.appendChild(btn);

@@ -604,6 +604,7 @@ class MoveTool extends Tool {
       for (const l of hits) {
         items.push({
           label: l.name,
+          verbatim: true,
           checked: !!active && active.id === l.id,
           run: () => doc.setActiveLayer(l.id),
         });
