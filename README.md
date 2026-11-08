@@ -157,7 +157,9 @@ Traditional, Singapore Simplified, and one is never served for the other.
 
 Changing language reloads Pikado. Your open documents come straight back from
 autosave, but their undo history does not, and it says so before it happens;
-with nothing open it just switches.
+with nothing open it just switches. If this browser cannot keep your documents
+just then, Pikado says so and stays, and the new language waits for the next
+start.
 
 Your names stay yours. A layer, document, font or pattern name is never
 translated — not by Pikado, and not by a browser's own page translation either,
@@ -211,8 +213,10 @@ key and asks before it sends anything.
   that, the least recently touched projects are evicted, and anything currently
   open is never evicted. Removing a project from the start screen deletes the
   stored copy for good, behind a confirmation. Some private-browsing modes refuse
-  IndexedDB entirely — then autosave stays off, and the refresh confirmation
-  prompt comes back, because in that one case a refresh really would lose work.
+  IndexedDB entirely, and then autosave stays off. A save can also fail — the
+  browser's storage full, say — and then Pikado says so, once rather than at
+  every retry. In either case the browser's own confirmation comes back before a
+  refresh or a close, because then a refresh really would lose work.
 
 ## Offline, and installable
 
