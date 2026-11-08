@@ -1045,3 +1045,50 @@ suite('io: names outside Latin-1 survive a PSD round trip', async (t) => {
   t.eq(out.paths.map((p) => p.name), ['路径 1'], 'a path name in Chinese');
   t.eq(t.px(out.alphaChannels[0].canvas, 15, 8), '255,255,255,255', 'and the channel still carries its pixels');
 });
+
+suite('io: a failing autosave says so once, and a refresh asks first', async (t) => {
+  // Autosave failures went to the console and nowhere else. With the
+  // browser's storage full, every save failed silently while the interface
+  // went on promising that open work would come back after a refresh — and
+  // the browser's leave-page prompt, kept for when autosave is off, stayed
+  // quiet. Verified to fail: on the old code there is no toast and no prompt.
+  const { saveDocNow, isKept } = await import('/src/io/session.js');
+  const doc = t.doc(48, 32, '#ffffff', 'Kept?');
+  doc.dirty = true;
+  const toasts = [];
+  const off = t.app.on('toast', (m) => { if (m.kind === 'warn') toasts.push(m.message); });
+  const unload = () => {
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    return e.defaultPrevented;
+  };
+  const put = IDBObjectStore.prototype.put;
+  try {
+    t.eq(await saveDocNow(doc, { force: true }), true, 'with room to spare, the save goes through');
+    t.ok(isKept(doc) && !unload(), 'and a refresh needs no warning');
+
+    IDBObjectStore.prototype.put = function () {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    };
+    t.eq(await saveDocNow(doc, { force: true }), false, 'with storage full, it fails');
+    t.eq(toasts.length, 1, 'which is said');
+    t.ok(/storage is full/.test(toasts[0] || '') && (toasts[0] || '').includes('Kept?'), 'naming the cause and the document', toasts[0]);
+    t.notOk(isKept(doc), 'the document is no longer being kept');
+    t.ok(unload(), 'so leaving the page now asks first');
+    await saveDocNow(doc, { force: true });
+    t.eq(toasts.length, 1, 'a save that fails again is not said again');
+
+    IDBObjectStore.prototype.put = put;
+    t.eq(await saveDocNow(doc, { force: true }), true, 'once there is room, the next save goes through');
+    t.ok(isKept(doc) && !unload(), 'and leaving is quiet again');
+    IDBObjectStore.prototype.put = function () { throw new DOMException('Gone.', 'UnknownError'); };
+    await saveDocNow(doc, { force: true });
+    t.eq(toasts.length, 2, 'a new failure after a success is said anew');
+    t.ok(/could not be kept/.test(toasts[1] || ''), 'with the general message for any other cause', toasts[1]);
+  } finally {
+    IDBObjectStore.prototype.put = put;
+    off();
+    doc.dirty = false;
+  }
+  await saveDocNow(doc, { force: true });
+});

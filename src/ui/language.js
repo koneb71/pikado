@@ -5,8 +5,7 @@ import {
 } from '../core/i18n.js';
 import { confirmDialog } from './dialog.js';
 import { iconEl } from './icons.js';
-import { flushAll } from '../io/session.js';
-import { storageAvailable } from '../io/store.js';
+import { flushAll, isKept } from '../io/session.js';
 import './language.css';
 
 /**
@@ -84,7 +83,7 @@ export async function applyLanguagePreference(preference) {
 
   const name = (languageInfo(target) || {}).name || target;
   if (app.docs.length) {
-    const kept = storageAvailable();
+    const kept = app.docs.every(isKept);
     const ok = await confirmDialog(
       kept
         ? tr('Pikado reloads to change language. Your open documents come back as they are, but not their undo history.')
@@ -98,7 +97,13 @@ export async function applyLanguagePreference(preference) {
       return false;
     }
     // Saves run on a debounce; make sure the newest edit is on disk before the page goes.
-    await flushAll().catch(() => { /* reload regardless: the documents are as safe as they were */ });
+    await flushAll().catch(() => { /* judged below, by what was kept */ });
+    // That save failing would make the reload lose what the dialog said would
+    // come back, so stay — the preference is saved, and takes effect next time.
+    if (kept && !app.docs.every(isKept)) {
+      app.toast(tr('Your documents could not be kept in this browser, so Pikado has not reloaded. {language} will be used the next time it starts.', { language: name }), 'warn', 8000);
+      return false;
+    }
   }
 
   // A `?lang=` in the address outranks the preference, so it has to go or the

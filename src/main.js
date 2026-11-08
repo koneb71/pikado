@@ -78,8 +78,7 @@ import { installShortcuts } from './ui/shortcuts.js';
 import { installFileDrop, openFiles } from './io/open.js';
 import { installCanvasMenu } from './ui/canvas-menu.js';
 import { installWelcome } from './ui/welcome.js';
-import { installSession, restoreSession } from './io/session.js';
-import { storageAvailable } from './io/store.js';
+import { installSession, restoreSession, isKept } from './io/session.js';
 import { installOffline } from './io/offline.js';
 import { tools } from './tools/base.js';
 import { getPref } from './ui/dialogs/preferences.js';
@@ -154,10 +153,10 @@ function boot() {
   prefetchLazyChunks();
 
   // Work is continuously autosaved locally, so a refresh is not destructive and
-  // does not warrant a browser confirmation prompt. Only warn when persistence
-  // is unavailable and a document really would be lost.
+  // does not warrant a browser confirmation prompt. Only warn when a document
+  // really would be lost: autosave is off, or its saves are failing.
   window.addEventListener('beforeunload', (e) => {
-    if (!storageAvailable() && app.docs.some((d) => d.dirty)) {
+    if (app.docs.some((d) => d.dirty && !isKept(d))) {
       e.preventDefault();
       e.returnValue = '';
     }
