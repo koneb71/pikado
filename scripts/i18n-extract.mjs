@@ -56,6 +56,7 @@ const HISTORY_METHODS = new Set(['commit', 'record', 'replaceTop', 'clear']);
 /** Tokens after which a `/` begins a regular expression rather than dividing. */
 const REGEX_AFTER_PUNCT = new Set(['${', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^', '=>', '&&', '||', '??', '==', '===', '!=', '!==', '<=', '>=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '**', '...']);
 const OPENERS = new Set(['(', '[', '{', '${']);
+const COMPARISONS = new Set(['===', '!==', '==', '!=']);
 const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete', 'void', 'throw', 'yield', 'await', 'instanceof']);
 
 const PUNCT = ['>>>=', '...', '===', '!==', '**=', '<<=', '>>=', '>>>', '&&=', '||=', '??=',
@@ -271,6 +272,9 @@ function isText(s) {
   return typeof s === 'string' && /\p{L}/u.test(s);
 }
 function looksLikeIdentifier(s) {
+  // '#Prc', '#Pxl': the unit codes of a PSD descriptor, which the writer passes
+  // as `unit` just as a descriptor passes 'px'.
+  if (/^#[A-Za-z]{3}$/.test(s)) return true;
   return !/\s/.test(s) && !/\p{Lu}/u.test(s) && !/[^\x00-\x7f]/.test(s);
 }
 
@@ -282,6 +286,8 @@ function looksLikeIdentifier(s) {
 function valueStrings(toks, start) {
   const found = [];
   let depth = 0;
+  // A string compared is a condition, never the value: `kind === 'handle' ? 'Edit Handle' : …`.
+  const compared = (k) => [toks[k - 1], toks[k + 1]].some((n) => n && n.type === 'punct' && COMPARISONS.has(n.value));
   for (let k = start; k < toks.length; k++) {
     const tok = toks[k];
     if (tok.type === 'punct') {
@@ -292,7 +298,7 @@ function valueStrings(toks, start) {
       } else if ((tok.value === ',' || tok.value === ';') && depth === 0) break;
       continue;
     }
-    if (depth === 0) {
+    if (depth === 0 && !compared(k)) {
       const s = text(tok);
       if (s != null) found.push(tok);
     }

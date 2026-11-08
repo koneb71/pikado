@@ -260,6 +260,9 @@ suite('i18n: the extractor reads JavaScript, not text that looks like it', async
     "const rotateTwice = (doc, why) => { rotateLayers(doc, 'cw', why); };",
     "rotateTwice(doc, 'Rotate Twice'); rotateLayers(doc, 'ccw', 'Rotate Back');",
     "doc.commit(handle ? 'Edit Handle' : 'Move Points');",
+    "doc.commit(matte === 'black' ? 'Remove Black Matte' : 'Remove White Matte');",
+    "el('b', { text: tr(typeof o === 'object' ? o.label : String(o)) });",
+    "const DESC = { untf(unit, v) { return { t: 'UntF', unit, v }; } }; DESC.untf('#Prc', 50);",
   ].join('\n');
   const toks = tokenize(src);
   t.ok(toks.some((k) => k.type === 'regex' && k.value.includes("'quoted'")), 'a regex literal is one token');
@@ -285,6 +288,11 @@ suite('i18n: the extractor reads JavaScript, not text that looks like it', async
   t.ok(found.includes('Rotate Twice'), 'and through a helper that calls a helper');
   t.notOk(found.includes('cw') || found.includes('ccw'), 'but not the helper’s other arguments');
   t.ok(found.includes('Edit Handle') && found.includes('Move Points'), 'both branches of a ternary label');
+  // Verified to fail: without it, 'black' and 'object' were in every catalogue,
+  // and each language had to decide how to translate a word nobody is shown.
+  t.ok(found.includes('Remove Black Matte') && !found.includes('black'), 'but not a string the condition compares');
+  t.notOk(found.includes('object'), 'not even inside tr()');
+  t.notOk(found.includes('#Prc'), 'and a PSD unit code is not a unit anyone reads');
 });
 
 suite('i18n: every catalogue agrees with the source', async (t) => {
