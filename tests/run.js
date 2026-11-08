@@ -89,8 +89,12 @@ function renderSummary(report, done) {
 
 // Boot the app, then run.
 (async () => {
-  // main.js boots on DOMContentLoaded; give it a frame to finish registering.
+  // main.js boots once the interface language has loaded (immediately, for the
+  // English the page pins); wait for it to say so rather than for a guess.
   await new Promise((r) => setTimeout(r, 60));
+  for (let i = 0; i < 400 && !(window.pikado && window.pikado.ready); i++) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
 
   const report = await runAll({
     onProgress: (entry, rep) => {

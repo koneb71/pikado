@@ -1,5 +1,6 @@
 import '../ui/dialogs/dialogs.css';
 import { app } from '../core/app.js';
+import { msg, tr } from '../core/i18n.js';
 import { createCanvas, cloneCanvas, el, clamp, clamp255, deg2rad, uid } from '../core/util.js';
 import { Selection } from '../core/selection.js';
 import { Layer, LayerType } from '../core/layer.js';
@@ -445,14 +446,17 @@ export function canFade(doc) {
 export async function showFadeDialog(doc) {
   const layer = doc.activeLayer();
   const before = previousPixels(doc, layer);
-  if (!before) { app.toast('There is nothing to fade.'); return; }
+  if (!before) { app.toast(tr('There is nothing to fade.')); return; }
   const after = layer.canvas;
-  const label = doc.history.states[doc.history.index].label;
+  // What is being faded, kept as a message so the new step can be shown in
+  // whichever language the History panel is in.
+  const entry = doc.history.states[doc.history.index];
+  const action = entry.message || msg(entry.label);
 
   const build = (s) => blendCanvases(before, after, s.blendMode, s.opacity / 100);
 
   const result = await paramDialog({
-    title: `Fade ${label}`,
+    title: tr('Fade {action}', { action }),
     width: 380,
     state: { opacity: 100, blendMode: 'normal' },
     params: [
@@ -471,7 +475,7 @@ export async function showFadeDialog(doc) {
   const faded = build(result);
   doc.beginEdit(layer);
   layer.canvas = faded;
-  doc.commit(`Fade ${label}`);
+  doc.commit(msg('Fade {action}', { action }));
 }
 
 /* ------------------------------------------------------------------ */

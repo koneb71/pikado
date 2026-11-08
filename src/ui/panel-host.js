@@ -1,4 +1,5 @@
 import { el, clamp } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { icon } from './icons.js';
 import './panels/panels.css';
 
@@ -105,7 +106,7 @@ function setVisible(p, v) {
  *
  * @param {object} def
  * @param {string} def.id                 unique id ('layers', 'color', …)
- * @param {string} def.title              tab caption
+ * @param {string} def.title              tab caption — English; translated where it is drawn
  * @param {string} def.icon               key in ui/icons.js
  * @param {string} def.group              'top' | 'mid' | 'bottom' (or your own)
  * @param {number} def.order              position inside the group
@@ -277,7 +278,7 @@ function buildGroup(g) {
   for (const p of g.panels) {
     const tab = el('button.pk-ptab', {
       type: 'button',
-      title: p.title,
+      title: tr(p.title),
       onclick: () => {
         const pr = groupPrefs(g.id);
         if (pr.active === p.id && !pr.collapsed) return;
@@ -288,7 +289,7 @@ function buildGroup(g) {
       },
     },
       el('span.pk-ptab-ico', { html: icon(p.icon, { size: 13 }) }),
-      el('span.pk-ptab-label', { text: p.title })
+      el('span.pk-ptab-label', { text: tr(p.title) })
     );
     tabs.set(p.id, tab);
     tabStrip.appendChild(tab);
@@ -296,7 +297,7 @@ function buildGroup(g) {
 
   const menuBtn = el('button.pk-pgroup-menu.pk-icon-btn', {
     type: 'button',
-    title: 'Panel menu',
+    title: tr('Panel menu'),
     html: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 5h10M3 8h10M3 11h10"/></svg>',
     onclick: (e) => {
       e.stopPropagation();
@@ -310,7 +311,7 @@ function buildGroup(g) {
 
   const chevron = el('button.pk-pgroup-collapse.pk-icon-btn', {
     type: 'button',
-    title: 'Collapse',
+    title: tr('Collapse'),
     html: icon('chevron', { size: 14 }),
     onclick: (e) => {
       e.stopPropagation();
@@ -364,7 +365,7 @@ function sync() {
       }
     }
     n.menuBtn.hidden = !active || !panelMenuItems(active).length;
-    n.chevron.title = collapsed ? 'Expand' : 'Collapse';
+    n.chevron.title = collapsed ? tr('Expand') : tr('Collapse');
   }
   savePrefs();
 }
@@ -377,7 +378,7 @@ function ensureBuilt(p) {
   } catch (err) {
     console.error(`[panel:${p.id}] build`, err);
     p.api = null;
-    p.node.appendChild(el('div.pk-panel-error', { text: `${p.title} could not be built.` }));
+    p.node.appendChild(el('div.pk-panel-error', { text: tr('{panel} could not be built.', { panel: tr(p.title) }) }));
   }
 }
 
@@ -466,7 +467,9 @@ let openMenu = null;
 /**
  * Show a floating menu at viewport coordinates.
  * Items: `{label, run, checked, disabled, accel}`, `{separator:true}`,
- * `{header:'Text'}`.
+ * `{header:'Text'}`. Labels are shown as given: menus are built at the moment
+ * they open, so the caller translates — and a menu that lists layers or
+ * documents is listing the user's names, which must not be.
  *
  * @param {Array<object>} items
  * @param {number} x viewport px

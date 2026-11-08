@@ -1,4 +1,6 @@
 import { app } from '../core/app.js';
+import { msg, tr } from '../core/i18n.js';
+import { historyLabel } from '../core/history.js';
 import { el, uid, createCanvas, formatBytes, clamp } from '../core/util.js';
 import { registerCommand, registerCommands, getCommand } from './registry.js';
 import { Dialog, confirmDialog, paramDialog, promptDialog } from '../ui/dialog.js';
@@ -1285,8 +1287,8 @@ registerCommands([
     id: 'edit.undo', label: 'Undo', accel: 'Ctrl+Z',
     dynamicLabel: () => {
       const d = D();
-      if (!d || !d.history.canUndo) return 'Undo';
-      return `Undo ${d.history.states[d.history.index].label}`;
+      if (!d || !d.history.canUndo) return tr('Undo');
+      return tr('Undo {action}', { action: historyLabel(d.history.states[d.history.index]) });
     },
     enabled: () => !!(D() && D().history.canUndo),
     run: () => D().history.undo(),
@@ -1295,8 +1297,8 @@ registerCommands([
     id: 'edit.redo', label: 'Redo', accel: 'Ctrl+Shift+Z',
     dynamicLabel: () => {
       const d = D();
-      if (!d || !d.history.canRedo) return 'Redo';
-      return `Redo ${d.history.states[d.history.index + 1].label}`;
+      if (!d || !d.history.canRedo) return tr('Redo');
+      return tr('Redo {action}', { action: historyLabel(d.history.states[d.history.index + 1]) });
     },
     enabled: () => !!(D() && D().history.canRedo),
     run: () => D().history.redo(),
@@ -1315,8 +1317,8 @@ registerCommands([
     id: 'edit.fade', label: 'Fade…', accel: 'Shift+Ctrl+F',
     dynamicLabel: () => {
       const d = D();
-      if (!d || !img.canFade(d)) return 'Fade…';
-      return `Fade ${d.history.states[d.history.index].label}…`;
+      if (!d || !img.canFade(d)) return tr('Fade…');
+      return tr('Fade {action}…', { action: historyLabel(d.history.states[d.history.index]) });
     },
     enabled: () => img.canFade(D()),
     run: () => img.showFadeDialog(D()),
@@ -1837,7 +1839,7 @@ registerCommands([
   /* --- Filter ----------------------------------------------------- */
   {
     id: 'filter.last', label: 'Last Filter', accel: 'Ctrl+F',
-    dynamicLabel: () => (app.lastFilter ? app.lastFilter.label : 'Last Filter'),
+    dynamicLabel: () => tr(app.lastFilter ? app.lastFilter.label : 'Last Filter'),
     enabled: () => hasLayer() && !!app.lastFilter,
     run: () => repeatLastFilter(),
   },

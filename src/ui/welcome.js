@@ -1,5 +1,6 @@
 import { el } from '../core/util.js';
 import { app } from '../core/app.js';
+import { language, tr, trn } from '../core/i18n.js';
 import { brandMark, BRAND } from './brand.js';
 import { icon } from './icons.js';
 import { confirmDialog } from './dialog.js';
@@ -7,6 +8,8 @@ import { IS_MAC } from '../commands/registry.js';
 import {
   listRecent, openRecent, forgetRecent, storageUsage, sessionEvents,
 } from '../io/session.js';
+import { getPref, setPrefs } from './dialogs/preferences.js';
+import { languagePicker, applyLanguagePreference } from './language.js';
 import './welcome.css';
 
 /**
@@ -18,9 +21,13 @@ import './welcome.css';
  *
  * Everything it lists comes from local storage (src/io/session.js), so it is
  * also the place the app admits where your work actually lives: in this browser.
+ *
+ * It is also the first thing anyone sees, which is why the language picker is
+ * here and not only in Preferences: someone who cannot read English has to be
+ * able to get out of it without reading English.
  */
 
-/** Sizes people actually start from, not a catalogue. */
+/** Sizes people actually start from, not a catalogue. Names are English, translated when drawn. */
 const TEMPLATES = [
   { name: 'Desktop', width: 1920, height: 1080 },
   { name: 'Square post', width: 1080, height: 1080 },
@@ -84,29 +91,30 @@ function calendarDaysAgo(then, now) {
  * Minutes and hours win under six hours even across midnight — being told that
  * something you touched 90 minutes ago happened "yesterday" is technically true
  * and useless.
+ *
+ * The phrases come from `Intl.RelativeTimeFormat` in the interface language,
+ * which already knows that Russian has three plurals and that Chinese has
+ * "昨天": a catalogue entry per unit and count would only be a worse copy of
+ * that table. Only "just now" is ours, since the browser's word for a zero
+ * offset ("now") reads as a timestamp rather than as reassurance.
  */
 function relativeTime(ms) {
   const now = Date.now();
   const diff = Math.max(0, now - ms);
-  if (diff < 45000) return 'just now';
+  if (diff < 45000) return tr('just now');
+  const rtf = new Intl.RelativeTimeFormat(language(), { numeric: 'auto' });
   const min = Math.round(diff / 60000);
-  if (min < 2) return 'a minute ago';
-  if (min < 60) return `${min} minutes ago`;
+  if (min < 60) return rtf.format(-min, 'minute');
   const hr = Math.round(diff / 3600000);
-  if (diff < 6 * 3600000) return hr < 2 ? 'an hour ago' : `${hr} hours ago`;
+  if (diff < 6 * 3600000) return rtf.format(-hr, 'hour');
   const days = calendarDaysAgo(ms, now);
-  if (days <= 0) return `${hr} hours ago`;
-  if (days === 1) return 'yesterday';
-  if (days < 7) return `${days} days ago`;
+  if (days <= 0) return rtf.format(-hr, 'hour');
+  if (days < 7) return rtf.format(-days, 'day');
   const d = new Date(ms);
   const sameYear = d.getFullYear() === new Date(now).getFullYear();
-  return d.toLocaleDateString(undefined, sameYear
+  return d.toLocaleDateString(language(), sameYear
     ? { day: 'numeric', month: 'short' }
     : { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-function plural(n, word) {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -125,17 +133,17 @@ function header() {
       el('span.pk-wc-mark', { html: brandMark({ size: 56, title: BRAND.name }) }),
       el('div', {},
         el('div.pk-wc-word', { text: BRAND.name }),
-        el('div.pk-wc-tag', { text: BRAND.tagline })
+        el('div.pk-wc-tag', { text: tr(BRAND.tagline) })
       )
     ),
     el('p.pk-wc-lede', {
-      text: 'A layered image editor that runs entirely on your machine. '
-        + 'Start a blank canvas, open a photo, or pick up where you left off.',
+      text: tr('A layered image editor that runs entirely on your machine. '
+        + 'Start a blank canvas, open a photo, or pick up where you left off.'),
     }),
     el('div.pk-wc-actions', {},
-      el('button.pk-btn.primary', { type: 'button', text: 'New document', onclick: newDoc }),
-      el('button.pk-btn', { type: 'button', text: 'Open file…', onclick: openFile }),
-      el('span.pk-wc-drop', { text: 'or drop a file — or an image from another tab — anywhere on this window' })
+      el('button.pk-btn.primary', { type: 'button', text: tr('New document'), onclick: newDoc }),
+      el('button.pk-btn', { type: 'button', text: tr('Open file…'), onclick: openFile }),
+      el('span.pk-wc-drop', { text: tr('or drop a file — or an image from another tab — anywhere on this window') })
     )
   );
 }
@@ -149,20 +157,23 @@ function templateCard(t) {
   const w = Math.max(9, Math.round(t.width * s));
   const h = Math.max(9, Math.round(t.height * s));
 
+  // The template's name becomes the document's, so it is named in the language
+  // it was made in — after that it is the user's, and stays as it is.
+  const name = tr(t.name);
   return el('button.pk-wc-tpl', {
     type: 'button',
-    title: `New ${t.width} × ${t.height} document`,
-    onclick: () => app.newDocument({ width: t.width, height: t.height, name: t.name, fill: '#ffffff' }),
+    title: tr('New {width} × {height} document', { width: t.width, height: t.height }),
+    onclick: () => app.newDocument({ width: t.width, height: t.height, name, fill: '#ffffff' }),
   },
   el('span.pk-wc-tpl-stage', {},
     el('span.pk-wc-tpl-rect', { style: { width: `${w}px`, height: `${h}px` } })),
-  el('span.pk-wc-tpl-name', { text: t.name }),
+  el('span.pk-wc-tpl-name', { text: name }),
   el('span.pk-wc-tpl-dim.pk-tabular', { text: `${t.width} × ${t.height}` }));
 }
 
 function templates() {
   return el('section.pk-wc-sec', {},
-    sectionLabel('Start from a template'),
+    sectionLabel(tr('Start from a template')),
     el('div.pk-wc-tpls', {}, ...TEMPLATES.map(templateCard)));
 }
 
@@ -182,24 +193,24 @@ function recentCard(rec) {
   const stamp = new Date(rec.updatedAt);
   const open = el('button.pk-wc-open', {
     type: 'button',
-    title: `${rec.name} — last saved ${stamp.toLocaleString()}`,
+    title: tr('{name} — last saved {time}', { name: rec.name, time: stamp.toLocaleString(language()) }),
     onclick: () => { openRecent(rec.id); },
   },
   el('span.pk-wc-thumb', {}, thumbnail(rec)),
   el('span.pk-wc-body', {},
     el('span.pk-wc-name.pk-truncate', { text: rec.name }),
-    el('span.pk-wc-sub.pk-tabular', { text: `${rec.width} × ${rec.height} · ${plural(rec.layers || 1, 'layer')}` }),
+    el('span.pk-wc-sub.pk-tabular', { text: `${rec.width} × ${rec.height} · ${trn('{count} layer', '{count} layers', rec.layers || 1)}` }),
     el('span.pk-wc-sub.pk-tabular', { text: `${relativeTime(rec.updatedAt)} · ${formatSize(rec.bytes)}` })));
 
   const forget = el('button.pk-wc-forget', {
     type: 'button',
-    title: 'Remove from this browser',
-    'aria-label': `Remove ${rec.name} from this browser`,
+    title: tr('Remove from this browser'),
+    'aria-label': tr('Remove {name} from this browser', { name: rec.name }),
     html: icon('close', { size: 12 }),
     onclick: async () => {
       const ok = await confirmDialog(
-        `Remove "${rec.name}" from this browser? The stored copy is deleted and cannot be recovered.`,
-        'Remove project', 'Remove', { danger: true });
+        tr('Remove "{name}" from this browser? The stored copy is deleted and cannot be recovered.', { name: rec.name }),
+        tr('Remove project'), tr('Remove'), { danger: true });
       if (ok) await forgetRecent(rec.id);
     },
   });
@@ -222,7 +233,7 @@ function paintRecents(list) {
   if (!list.length) {
     recentsHost.className = 'pk-wc-empty';
     recentsHost.appendChild(el('p.pk-wc-none', {
-      text: 'No projects yet — anything you make is kept here automatically as you work.',
+      text: tr('No projects yet — anything you make is kept here automatically as you work.'),
     }));
     return;
   }
@@ -232,12 +243,12 @@ function paintRecents(list) {
 
 function paintStorage(u) {
   const line = u.count
-    ? `${plural(u.count, 'project')} · ${formatSize(u.bytes)} kept in this browser`
-    : 'Your work is kept in this browser as you go';
+    ? trn('{count} project · {size} kept in this browser', '{count} projects · {size} kept in this browser', u.count, { size: formatSize(u.bytes) })
+    : tr('Your work is kept in this browser as you go');
   storageEl.textContent = line;
   storageEl.title = u.quota && u.quota.quota
-    ? `This site is using ${formatSize(u.quota.used)} of about ${formatSize(u.quota.quota)} available. Nothing leaves your machine.`
-    : 'Projects are stored locally. Nothing leaves your machine.';
+    ? tr('This site is using {used} of about {available} available. Nothing leaves your machine.', { used: formatSize(u.quota.used), available: formatSize(u.quota.quota) })
+    : tr('Projects are stored locally. Nothing leaves your machine.');
 }
 
 /**
@@ -283,12 +294,21 @@ function keyHint(keys, label) {
 
 function footer() {
   storageEl = el('span.pk-wc-storage');
-  const mod = IS_MAC ? '⌘' : 'Ctrl';
+  const mod = IS_MAC ? '⌘' : tr('Ctrl');
+  // Nothing is open while this screen shows, so switching reloads at once with
+  // nothing to lose and nothing to ask.
+  const picker = languagePicker({
+    value: getPref('language', 'auto'),
+    onChange: (preference) => {
+      setPrefs({ language: preference });
+      applyLanguagePreference(preference);
+    },
+  });
   return el('footer.pk-wc-foot', {},
     el('span.pk-wc-keys', {},
-      keyHint([mod, 'N'], 'New document'),
-      keyHint([mod, 'O'], 'Open file')),
-    storageEl);
+      keyHint([mod, 'N'], tr('New document')),
+      keyHint([mod, 'O'], tr('Open file'))),
+    el('span.pk-wc-foot-end', {}, storageEl, picker));
 }
 
 /**
@@ -305,7 +325,7 @@ export function installWelcome(areaEl) {
     el('div.pk-wc-inner', {},
       header(),
       templates(),
-      el('section.pk-wc-sec', {}, sectionLabel('Recent projects'), recentsHost),
+      el('section.pk-wc-sec', {}, sectionLabel(tr('Recent projects')), recentsHost),
       footer()));
   areaEl.appendChild(root);
 

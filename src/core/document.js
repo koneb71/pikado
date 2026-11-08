@@ -293,7 +293,7 @@ export class PikaDocument extends Emitter {
     this.dirty = true;
     this.invalidate();
     this.history.record(label);
-    this.emit('change', { reason: label });
+    this.emit('change', { reason: String(label) });
   }
 
   /** Notify listeners without touching history (live drag previews). */
