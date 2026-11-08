@@ -216,7 +216,7 @@ suite('i18n: keyboard names follow the language', async (t) => {
     t.eq(formatAccel('Alt+Ctrl+I'), 'Alt+Strg+I', 'in any order');
     t.eq(formatAccel('F7'), 'F7', 'a function key is left alone');
   });
-  await withLanguage(t, 'xx', { Delete: 'Entf', Backspace: 'Rück' }, () => {
+  await withLanguage(t, 'xx', { 'Delete|key': 'Entf', Backspace: 'Rück' }, () => {
     t.eq(formatAccel('Delete'), 'Entf', 'and so are named keys');
     t.eq(formatAccel('Alt+Backspace'), 'Alt+Rück', 'after a modifier too');
   });
