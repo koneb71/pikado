@@ -86,6 +86,7 @@ tr('Layer "{name}" is locked.', { name })       // named placeholders; values ar
 tr('Delete|key')                                // a context: English shows "Delete"
 trn('{count} layer', '{count} layers', n)       // both English forms; the language picks its own
 msg('Fade {action}', { action: msg(label) })    // translated when shown; String(m) is English
+commandName('Threshold...')                     // a command's name: translated, then trimmed of its dots
 ```
 
 English is the source language and the key: a string with no translation
@@ -105,7 +106,7 @@ before a catalogue can load, so they hold English and their renderers translate:
 | Declared English | Translated by |
 |---|---|
 | command `label` | `labelOf()` (a `dynamicLabel` translates itself) |
-| `MENU_TREE` labels, filter `name`/`menu`, adjustment `name`, tool `name` | `menubar.js`, `toolbar.js`, `statusbar.js`, the filter runner |
+| `MENU_TREE` labels, filter `name`, adjustment `name`, tool `name`; each Filter submenu by `FILTER_MENU_TITLES` | `menubar.js`, `toolbar.js`, `statusbar.js`, the filter runner |
 | panel `title` | `panel-host.js` |
 | ParamDescriptor `label`, `hint`, `unit`, a literal `options` array | `buildForm` and the options bar |
 | history labels (`doc.commit('Brush Stroke')`) | the History panel, through `historyLabel(entry)` |
@@ -137,13 +138,23 @@ Three rules, each of which exists because its absence is a bug:
 Default names that become the user's — `tr('Layer {number}')`, `tr('Group
 {number}')`, `tr('Background')`, `tr('Untitled-{number}')` — are translated
 once, when created, as Photoshop names a new layer in your language. A trailing
-ellipsis is folded: "Levels..." and "Levels" share one translation. Key names
+ellipsis is folded where the source uses only one form: "Gaussian Blur..."
+finds "Gaussian Blur", and the other way round. Where a command's name stands
+for the command — a history step, a dialog's title, a layer named after an
+adjustment — it is `commandName(label)`: the menu label translated first and
+trimmed after, never the other way round, because the bare word can be a
+different word (in Japanese the Threshold slider is しきい値, the adjustment
+2 階調化; in German the Layers panel's Fill is Fläche, Edit › Fill Fläche füllen). Key names
 in accelerators (`Ctrl`, `Shift`, `Delete`…) go through the catalogue in
 `formatAccel`, so a German menu reads `Strg+Umschalt+S`; the bindings never
 change. When one English word means two things — the Delete key is Entf in
 German, the Delete command Löschen — add a context after a bar:
 `msg('Delete|key')`. The catalogue key keeps it, so translators see which
-meaning it is; English shows only the part before the bar.
+meaning it is; English shows only the part before the bar. The context names
+the use that differs from the word's usual one: `'Type|kind'` beside the Type
+menu, `'Stroke…|edit menu'` beside the layer style, `'Normal|blend mode'`, and
+`'Blur|filter menu'` for each Filter submenu, which in German is not the word
+for the filter inside it.
 
 **Choosing and changing.** `chooseLanguage()` takes, in order: a pin
 (`?lang=` in the address, or `<meta name="pikado-language">` in the page), the

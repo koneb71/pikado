@@ -93,6 +93,15 @@ so text a person reads follows three habits. The full contract is under
   and `trn()` for anything with a count. A history label stays a plain English
   literal — the History panel translates it — unless it is interpolated, in
   which case it is a `msg()`.
+- **A command's name, where it stands for the command** — a history step, a
+  dialog's title, a layer named after an adjustment — is
+  `commandName(label)`, given the menu label dots and all. It translates first
+  and trims after, because the bare word can be another word: "Threshold" on
+  its own is a slider, しきい値 in Japanese, and the adjustment is 2 階調化.
+- **One English word, two words in Photoshop?** Give the use that is not the
+  word's usual one a context after a bar — `'Type|kind'` for a filter's Type
+  option, beside the Type menu's `'Type'` — and English shows only the part
+  before it.
 - **A user's data never goes through `tr()`**, and an option list that holds
   data (layer names, fonts) is a function rather than an array.
 
@@ -154,7 +163,10 @@ node scripts/i18n.mjs check              # placeholders, plural forms, keys no l
   that.
 - **Keep every `{placeholder}`** — rearrange them as your grammar needs, but
   do not rename, add or drop one. Keep a trailing `...`: it means a dialog
-  follows. "Levels..." and "Levels" share one translation, so give it once.
+  follows. Where the source only ever uses a word with its dots, the bare word
+  finds the same translation; where it uses both they are two keys, and can be
+  two words — "Levels..." is the adjustment, "Levels" alone the Posterize
+  slider (Tonwertkorrektur… and Stufen in German).
 - **Plurals** are an object of your language's
   [CLDR plural categories](https://www.unicode.org/cldr/charts/latest/supplemental/language_plural_rules.html):
   `{"one": "{count} слой", "few": "{count} слоя", "many": "{count} слоёв", "other": "{count} слоя"}`.
