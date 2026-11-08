@@ -1017,3 +1017,31 @@ suite('io: Export As shows no stray "null" in its readout', async (t) => {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   await pending;
 });
+
+suite('io: names outside Latin-1 survive a PSD round trip', async (t) => {
+  // PSD's Pascal strings were written Latin-1, with '?' for anything else, so
+  // an alpha channel or a path named in Chinese came back as "?? 1" — and
+  // since new channels and paths are named in the interface language, that is
+  // every default name for a Chinese user. Alpha channels now also carry
+  // Photoshop's Unicode names (resource 1045), which the reader prefers; a
+  // Pascal string that cannot be Latin-1 is written as UTF-8 and read back.
+  // Verified to fail: before, both names came back "?? 1".
+  const doc = t.doc(40, 30, '#ffffff');
+  const chan = createCanvas(40, 30);
+  const cc = ctx2d(chan);
+  cc.fillStyle = '#000000';
+  cc.fillRect(0, 0, 40, 30);
+  cc.fillStyle = '#ffffff';
+  cc.fillRect(10, 5, 12, 9);
+  doc.alphaChannels = [
+    { id: 'chan_cn', name: '通道 1', canvas: chan },
+    { id: 'chan_fr', name: 'Café', canvas: chan },
+  ];
+  const path = createPath('路径 1');
+  path.subpaths = [{ closed: true, points: [[5, 5], [30, 5], [30, 25], [5, 25]].map(([x, y]) => ({ x, y, in: { x, y }, out: { x, y } })) }];
+  doc.paths = [path];
+  const out = await psdRoundTrip(doc);
+  t.eq(out.alphaChannels.map((c) => c.name), ['通道 1', 'Café'], 'alpha channel names, Chinese and Latin-1 alike');
+  t.eq(out.paths.map((p) => p.name), ['路径 1'], 'a path name in Chinese');
+  t.eq(t.px(out.alphaChannels[0].canvas, 15, 8), '255,255,255,255', 'and the channel still carries its pixels');
+});

@@ -128,12 +128,29 @@ export class ByteWriter {
     return this;
   }
 
-  /** Length byte + text, padded so (1 + length) is a multiple of `pad`. */
+  /**
+   * Length byte + text, padded so (1 + length) is a multiple of `pad`.
+   *
+   * Latin-1 whenever the text fits it, which is what every PSD reader expects.
+   * Text that does not fit is written as UTF-8 instead of the '?' each such
+   * character used to become — a path or channel named in Chinese, which is
+   * every default name for a Chinese user, came back "?? 1". psd-read accepts
+   * UTF-8 only when it decodes to something Latin-1 could not have said, which
+   * is exactly when this writes it. (Alpha channels get Unicode names in 1045
+   * as well; a path's name has nowhere else to go.)
+   */
   pascal(s, pad = 2) {
-    const bytes = [];
-    for (let i = 0; i < s.length && bytes.length < 255; i++) {
-      const c = s.charCodeAt(i);
-      bytes.push(c < 256 ? c : 63); // '?' for anything outside Latin-1
+    let bytes = [];
+    if (/[^\u0000-\u00ff]/.test(s)) {
+      bytes = Array.from(new TextEncoder().encode(s));
+      if (bytes.length > 255) {
+        // At most 255 bytes, and never half a character.
+        let n = 255;
+        while (n > 0 && (bytes[n] & 0xc0) === 0x80) n--;
+        bytes = bytes.slice(0, n);
+      }
+    } else {
+      for (let i = 0; i < s.length && bytes.length < 255; i++) bytes.push(s.charCodeAt(i));
     }
     this.byte(bytes.length);
     this.bytes(Uint8Array.from(bytes));
@@ -645,10 +662,17 @@ function writeResolutionResource(w, resolution) {
   });
 }
 
-/** 1006 — the alpha channel names, packed Pascal strings with no padding. */
+/**
+ * 1006 — the alpha channel names, packed Pascal strings with no padding — and
+ * 1045, the same names as Unicode strings, which is how Photoshop itself keeps a
+ * channel name that is not Latin-1 and what readers prefer when both are there.
+ */
 function writeAlphaNamesResource(w, channels) {
   writeResource(w, 1006, '', (b) => {
     for (const ch of channels) b.pascal(ch.name || 'Alpha', 1);
+  });
+  writeResource(w, 1045, '', (b) => {
+    for (const ch of channels) b.unicodeStringZ(ch.name || 'Alpha');
   });
 }
 

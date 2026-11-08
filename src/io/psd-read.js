@@ -26,6 +26,30 @@ const BACKGROUND_NAMES = new Set([
   'фон', 'achtergrond', 'tło', 'pozadí', 'arka plan', 'háttér', 'bakgrund', 'baggrund', 'bakgrunn', 'tausta',
 ]);
 
+/**
+ * A Pascal string's bytes as text. Latin-1, as PSD means them — unless they
+ * are valid UTF-8 that says something Latin-1 cannot, which is how psd-write
+ * stores a name with characters outside Latin-1 (see `pascal()` there). A
+ * Latin-1 name such as "Café" is not valid UTF-8, and a legacy name in a
+ * system code page almost never is, so both read as they always have.
+ */
+const UTF8 = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8', { fatal: true }) : null;
+function decodePascal(bytes) {
+  let latin = '';
+  let high = false;
+  for (let i = 0; i < bytes.length; i++) {
+    latin += String.fromCharCode(bytes[i]);
+    if (bytes[i] >= 0x80) high = true;
+  }
+  if (!high || !UTF8) return latin;
+  try {
+    const utf8 = UTF8.decode(bytes);
+    return /[^\u0000-\u00ff]/.test(utf8) ? utf8 : latin;
+  } catch {
+    return latin;
+  }
+}
+
 function isBackgroundName(name) {
   const n = String(name || '').trim().toLowerCase();
   return BACKGROUND_NAMES.has(n) || n === tr('Background').toLowerCase();
@@ -115,7 +139,7 @@ export class ByteReader {
   /** Length-prefixed string padded so (1 + length) is a multiple of `pad`. */
   readPascalString(pad = 2) {
     const len = this.readUint8();
-    const s = this.readString(len);
+    const s = decodePascal(this.readBytes(len));
     const total = len + 1;
     const rem = total % pad;
     if (rem) this.skip(pad - rem);
@@ -586,6 +610,8 @@ function parseImageResources(r, ctx) {
       if (hRes > 0 && hRes < 100000) out.resolution = Math.round(hRes * 100) / 100;
     } else if (id === 1006) {
       out.alphaNames = safe(() => readAlphaNames(new ByteReader(r.buf, dataStart, size)), []);
+    } else if (id === 1045) {
+      out.unicodeAlphaNames = safe(() => readUnicodeNames(new ByteReader(r.buf, dataStart, size)), []);
     } else if (id === 1032) {
       out.guides = safe(() => readGuides(new ByteReader(r.buf, dataStart, size)), []);
     } else if (id === 1037) {
@@ -598,7 +624,20 @@ function parseImageResources(r, ctx) {
     }
     r.seek(dataStart + size + (size & 1));
   }
+  // Photoshop's Unicode names, where it wrote them, over the Latin-1 ones —
+  // as long as they name the same channels, since 1006's count is what the
+  // merged section's channel layout is read by.
+  const unicode = out.unicodeAlphaNames || [];
+  if (unicode.length && (unicode.length === out.alphaNames.length || !out.alphaNames.length)) out.alphaNames = unicode;
+  delete out.unicodeAlphaNames;
   return out;
+}
+
+/** 1045 — the alpha channel names as Unicode strings, one after another. */
+function readUnicodeNames(r) {
+  const names = [];
+  while (r.remaining >= 4 && names.length < 256) names.push(r.readUnicodeString());
+  return names;
 }
 
 /** 1006 — packed Pascal strings, one per alpha channel, no padding. */
