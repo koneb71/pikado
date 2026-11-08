@@ -533,3 +533,18 @@ suite('i18n: a context separates one English word with two meanings', async (t) 
     t.eq(tr('Delete|key'), 'Delete', 'an untranslated context falls back to English, not to the other meaning');
   });
 });
+
+suite('i18n: a new adjustment layer is named in the interface language', async (t) => {
+  // Verified to fail: before adjustment layers were named after their
+  // adjustment, this came out "levels" in every language.
+  const { addAdjustmentLayer } = await import('/src/layers/ops.js');
+  const { historyLabel } = await import('/src/core/history.js');
+  const doc = t.doc(20, 20, '#ffffff');
+  await withLanguage(t, 'xx', { Levels: 'Niveaux', 'New {name} Layer': 'Nouveau calque {name}' }, () => {
+    const l = addAdjustmentLayer(doc, 'levels');
+    t.eq(l.name, 'Niveaux 1', 'named in the language it was made in');
+    const step = doc.history.states[doc.history.index];
+    t.eq(step.label, 'New Levels Layer', 'its history step is stored in English');
+    t.eq(historyLabel(step), 'Nouveau calque Niveaux', 'and shown in the language');
+  });
+});

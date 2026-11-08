@@ -3,7 +3,7 @@ import { createCanvas, cloneCanvas } from '../core/util.js';
 import { compositeDocument, flattenLayers, getComposite } from '../render/compositor.js';
 import { rasterizeTextLayer } from '../text/text-render.js';
 import { rasterizeShapeLayer } from '../vector/path.js';
-import { defaultParams } from '../adjustments/registry.js';
+import { defaultParams, getAdjustment } from '../adjustments/registry.js';
 import { createSmartObject, renderSmartObject, isSmartLayer } from '../core/smart.js';
 import { app } from '../core/app.js';
 import { msg, tr } from '../core/i18n.js';
@@ -401,8 +401,27 @@ export function toggleMaskEnabled(doc, layer) {
 /* Adjustment layers                                                   */
 /* ------------------------------------------------------------------ */
 
+/** An adjustment's English name without the dots that say a dialog follows: 'Levels', 'Hue/Saturation'. */
+function adjustmentName(kind) {
+  const a = getAdjustment(kind);
+  return a && a.name ? a.name.replace(/(\.\.\.|…)$/, '') : kind;
+}
+
+/**
+ * "Levels 1", "Levels 2", "Curves 1" — numbered per kind and named in the
+ * interface language, as Photoshop names them. Without it a layer fell back
+ * to the adjustment's id: "levels", "hue-saturation".
+ */
+function nextAdjustmentLayerName(doc, kind) {
+  const base = tr(adjustmentName(kind));
+  const names = new Set(doc.flatLayers().map((l) => l.name));
+  let n = 1;
+  while (names.has(`${base} ${n}`)) n++;
+  return `${base} ${n}`;
+}
+
 export function addAdjustmentLayer(doc, kind, params, name) {
-  const l = createAdjustmentLayer(kind, params || defaultParams(kind), doc.width, doc.height, name);
+  const l = createAdjustmentLayer(kind, params || defaultParams(kind), doc.width, doc.height, name || nextAdjustmentLayerName(doc, kind));
   if (doc.selection.active) {
     const mask = createCanvas(doc.width, doc.height);
     const c = mask.getContext('2d');
@@ -415,7 +434,8 @@ export function addAdjustmentLayer(doc, kind, params, name) {
     l.addMask(doc.width, doc.height, '#ffffff');
   }
   doc.addLayer(l);
-  doc.commit(msg('New {name} Layer', { name: l.name }));
+  // "New Levels Layer": the kind of adjustment, not the layer's numbered name.
+  doc.commit(msg('New {name} Layer', { name: msg(adjustmentName(kind)) }));
   return l;
 }
 
