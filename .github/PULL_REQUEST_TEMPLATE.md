@@ -10,7 +10,7 @@ because something slipped through once.
 
 **Test results**
 
-<!-- Run `npm test` and paste the counts. Baseline is 173 suites, 2306
+<!-- Run `npm test` and paste the counts. Baseline is 293 suites, 3260
      assertions, 0 failed. -->
 
 ```
