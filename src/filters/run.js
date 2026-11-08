@@ -4,7 +4,7 @@ import { getAdjustment, applyAdjustment } from '../adjustments/registry.js';
 import { setLayerPreview } from '../render/compositor.js';
 import { paramDialog } from '../ui/dialog.js';
 import { app } from '../core/app.js';
-import { tr } from '../core/i18n.js';
+import { commandName, tr } from '../core/i18n.js';
 
 /**
  * Runs filters and destructive adjustments against a layer, honouring the
@@ -125,9 +125,9 @@ export async function applyFilterCommand(id, preset) {
     return;
   }
 
-  // English, because it is data: the history step and Filter > Last Filter
-  // keep it and translate it when they show it.
-  const label = f.name.replace(/\.\.\.$/, '');
+  // The history step and Filter > Last Filter keep it, and translate it when
+  // they show it.
+  const label = commandName(f.name);
   const surf = operableSurface(doc, layer);
   if (!surf) { app.toast(tr('Cannot apply "{name}" to this layer.', { name: tr(label) })); return; }
 
@@ -179,7 +179,7 @@ export async function applyAdjustmentCommand(id, preset) {
   const layer = doc.activeLayer();
   if (!layer) { app.toast(tr('No layer selected.')); return; }
   const surf = operableSurface(doc, layer);
-  if (!surf) { app.toast(tr('Cannot apply "{name}" to this layer.', { name: tr(a.name.replace(/\.\.\.$/, '')) })); return; }
+  if (!surf) { app.toast(tr('Cannot apply "{name}" to this layer.', { name: commandName(a.name) })); return; }
 
   const runWith = (params) =>
     processSurface(doc, layer, (imageData, ctx) => {
@@ -187,7 +187,7 @@ export async function applyAdjustmentCommand(id, preset) {
       return imageData;
     });
 
-  const label = a.name.replace(/\.\.\.$/, '');
+  const label = commandName(a.name);
   const hasUI = (a.params && a.params.length) || a.renderUI;
 
   if (preset || !hasUI) {

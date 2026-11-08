@@ -49,7 +49,7 @@ function isTextKey(name) {
 }
 
 /** Calls whose first string argument is interface text. */
-const CALLS = new Set(['tr', 'msg']);
+const CALLS = new Set(['tr', 'msg', 'commandName']);
 /** Methods whose first string argument is a history label, shown later by the History panel. */
 const HISTORY_METHODS = new Set(['commit', 'record', 'replaceTop', 'clear']);
 
@@ -412,7 +412,7 @@ function labelTakers(fileToks) {
     }
   });
 
-  const SINKS = new Map(['commit', 'record', 'replaceTop', 'tr', 'msg'].map((n) => [n, new Set([0])]));
+  const SINKS = new Map(['commit', 'record', 'replaceTop', 'tr', 'msg', 'commandName'].map((n) => [n, new Set([0])]));
   const global = new Map();
   const local = new Map(); // `${file}:${name}` → positions
   const methods = new Map();

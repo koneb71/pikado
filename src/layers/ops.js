@@ -6,7 +6,7 @@ import { rasterizeShapeLayer } from '../vector/path.js';
 import { defaultParams, getAdjustment } from '../adjustments/registry.js';
 import { createSmartObject, renderSmartObject, isSmartLayer } from '../core/smart.js';
 import { app } from '../core/app.js';
-import { msg, tr } from '../core/i18n.js';
+import { commandName, msg, tr } from '../core/i18n.js';
 
 /**
  * Layer operations shared by the Layers panel, the Layer menu and shortcuts.
@@ -401,10 +401,10 @@ export function toggleMaskEnabled(doc, layer) {
 /* Adjustment layers                                                   */
 /* ------------------------------------------------------------------ */
 
-/** An adjustment's English name without the dots that say a dialog follows: 'Levels', 'Hue/Saturation'. */
+/** An adjustment's name, as its menu item says it: 'Levels', 'Hue/Saturation'. */
 function adjustmentName(kind) {
   const a = getAdjustment(kind);
-  return a && a.name ? a.name.replace(/(\.\.\.|…)$/, '') : kind;
+  return a && a.name ? commandName(a.name) : kind;
 }
 
 /**
@@ -435,7 +435,7 @@ export function addAdjustmentLayer(doc, kind, params, name) {
   }
   doc.addLayer(l);
   // "New Levels Layer": the kind of adjustment, not the layer's numbered name.
-  doc.commit(msg('New {name} Layer', { name: msg(adjustmentName(kind)) }));
+  doc.commit(msg('New {name} Layer', { name: adjustmentName(kind) }));
   return l;
 }
 

@@ -1,7 +1,7 @@
 import { PikaDocument } from './document.js';
 import { Layer, LayerType, createRasterLayer, setSmartSourceCloner } from './layer.js';
 import { app } from './app.js';
-import { msg, tr } from './i18n.js';
+import { commandName, msg, tr } from './i18n.js';
 import { uid, createCanvas, ctx2d, ctx2dRead, imageDataToCanvas, download } from './util.js';
 import { compositeDocument, setLayerPreview } from '../render/compositor.js';
 import { getFilter, runFilter } from '../filters/registry.js';
@@ -1172,6 +1172,18 @@ function filterLabel(def) {
   return def.name.replace(/(\.\.\.|…)$/, '');
 }
 
+/**
+ * A smart filter's name as it is shown: its filter's, as the Filter menu says
+ * it in the interface language. The English name the entry keeps — it is the
+ * document's data, saved with it — stands in for a filter this build lacks.
+ *
+ * @returns {string|import('./i18n.js').Message} for `tr()`
+ */
+export function smartFilterName(entry) {
+  const def = entry && getFilter(entry.filterId);
+  return def ? commandName(def.name) : msg(entry ? entry.name : '');
+}
+
 function indexOfFilter(s, ref) {
   const list = s.filters || [];
   if (typeof ref === 'number') return ref >= 0 && ref < list.length ? ref : -1;
@@ -1205,7 +1217,7 @@ export function addSmartFilter(doc, layer, filterId, params) {
   doc.beginEdit(layer);
   setPayload(layer, { filters: [...getSmartFilters(layer), entry] });
   renderSmartObject(layer, doc);
-  doc.commit(msg('Smart Filter: {filter}', { filter: msg(entry.name) }));
+  doc.commit(msg('Smart Filter: {filter}', { filter: smartFilterName(entry) }));
   return entry;
 }
 
@@ -1253,7 +1265,7 @@ export function toggleSmartFilter(doc, layer, ref) {
   doc.beginEdit(layer);
   setPayload(layer, { filters: next });
   renderSmartObject(layer, doc);
-  const filter = msg(next[i].name);
+  const filter = smartFilterName(next[i]);
   doc.commit(next[i].enabled
     ? msg('Show Smart Filter: {filter}', { filter })
     : msg('Hide Smart Filter: {filter}', { filter }));
@@ -1295,7 +1307,7 @@ export async function editSmartFilter(doc, layer, ref) {
     return false;
   }
   if (!def.params || !def.params.length) {
-    app.toast(tr('{filter} has no settings to edit.', { filter: tr(entry.name) }));
+    app.toast(tr('{filter} has no settings to edit.', { filter: smartFilterName(entry) }));
     return false;
   }
   const result = await runFilterDialog(doc, layer, def, { ...entry.params }, (params) => {
@@ -1309,7 +1321,7 @@ export async function editSmartFilter(doc, layer, ref) {
   doc.beginEdit(layer);
   setPayload(layer, { filters: next });
   renderSmartObject(layer, doc);
-  doc.commit(msg('Smart Filter: {filter}', { filter: msg(entry.name) }));
+  doc.commit(msg('Smart Filter: {filter}', { filter: smartFilterName(entry) }));
   return true;
 }
 
@@ -1331,7 +1343,7 @@ async function runFilterDialog(doc, layer, def, state, buildFilters) {
     doc.touch('preview');
   };
   const result = await paramDialog({
-    title: tr(filterLabel(def)),
+    title: tr(commandName(def.name)),
     params: def.params,
     state,
     width: def.dialogWidth || 400,
@@ -1358,7 +1370,7 @@ export async function promptSmartFilter(doc, layer, filterId, preset) {
   if (preset || !def.needsDialog || !def.params || !def.params.length) {
     const params = preset || def.defaults;
     // Filter > Last Filter must repeat what just happened, smart or not.
-    app.lastFilter = { id: filterId, params, label: filterLabel(def) };
+    app.lastFilter = { id: filterId, params, label: commandName(def.name) };
     return addSmartFilter(doc, layer, filterId, params);
   }
   const pendingId = uid('sfilter');
@@ -1368,7 +1380,7 @@ export async function promptSmartFilter(doc, layer, filterId, preset) {
   ]);
   if (!result) return null;
   app.lastFilterParams = { ...(app.lastFilterParams || {}), [filterId]: result };
-  app.lastFilter = { id: filterId, params: result, label: filterLabel(def) };
+  app.lastFilter = { id: filterId, params: result, label: commandName(def.name) };
   return addSmartFilter(doc, layer, filterId, result);
 }
 

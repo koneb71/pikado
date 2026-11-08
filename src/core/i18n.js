@@ -11,6 +11,7 @@
  *   tr('Layer "{name}" is locked.', { name })          named placeholders
  *   trn('{count} layer', '{count} layers', n)          plurals, per the language's own rules
  *   msg('Fade {action}', { action: msg(label) })       a message translated when it is shown
+ *   commandName('Threshold...')                        a command's name, as its menu item says it
  *   tr('Delete|key')                                   with a context, shown in English as "Delete"
  *
  * `tr`, not the more usual `t`: sixty-odd modules here already use `t` for a
@@ -82,6 +83,12 @@ export const LANGUAGES = [
 /** Matches a trailing ellipsis, either spelling, and what comes before it. */
 const ELLIPSIS = /^([\s\S]*?)(\.\.\.|…)$/;
 
+/** Text without the trailing dots that say a dialog follows. */
+function undotted(text) {
+  const m = ELLIPSIS.exec(text);
+  return m ? m[1] : text;
+}
+
 /**
  * A context: `'Delete|key'`. One English word can be two words elsewhere —
  * "Delete" the key on a German keyboard is Entf, "Delete" the command is
@@ -148,6 +155,32 @@ export function msg(text, params) {
   return new Message(text, params);
 }
 
+/** See {@link commandName}. */
+class CommandName extends Message {
+  toString() {
+    return undotted(plain(this.text));
+  }
+}
+
+/**
+ * A command's name, where it stands for the command: a history step, a
+ * dialog's title, a layer named after the adjustment that made it.
+ *
+ *   commandName('Threshold...')    'Threshold' — 2 階調化 in Japanese, as the menu says
+ *
+ * That is the menu label without the dots that say a dialog follows, and it is
+ * translated first and trimmed after, never the other way round: the bare word
+ * can be a different word. 'Threshold' alone is the slider in Unsharp Mask —
+ * しきい値 — and 'Fill' alone the Layers panel's Fill, Fläche in German, where
+ * the Fill… command is Fläche füllen. A {@link Message}, so it can be kept in
+ * a history entry and translated when shown; as a string it is the English name.
+ *
+ * @param {string} label the command's label as its menu shows it, dots and all
+ */
+export function commandName(label) {
+  return new CommandName(label);
+}
+
 /**
  * Translate interface text into the current language.
  *
@@ -160,6 +193,7 @@ export function msg(text, params) {
  * @returns {string}
  */
 export function tr(text, params) {
+  if (text instanceof CommandName) return translateCommand(text.text);
   if (text instanceof Message) return fill(translate(text.text), text.params, tr);
   if (text == null) return '';
   const found = translate(String(text));
@@ -195,6 +229,13 @@ export function trn(one, other, count, params) {
   return fill(template, values, tr);
 }
 
+/** A command's name in the current language; see {@link commandName}. */
+function translateCommand(label) {
+  // The pseudo-language has no words to choose between, and its brackets would hide the dots.
+  if (pseudo) return translate(undotted(plain(label)));
+  return undotted(translate(label));
+}
+
 function translate(text) {
   if (pseudo) return text.startsWith('⟦') ? text : accent(plain(text));
   if (!table) return plain(text);
@@ -221,7 +262,7 @@ function lookup(text) {
     return stem ? stem + dots[2] : undefined;
   }
   const dotted = pick(table.get(`${text}...`)) || pick(table.get(`${text}…`));
-  return dotted ? dotted.replace(/(\.\.\.|…)$/, '') : undefined;
+  return dotted ? undotted(dotted) : undefined;
 }
 
 /** A usable string from a catalogue value: empty means "not yet translated". */

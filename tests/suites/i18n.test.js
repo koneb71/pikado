@@ -556,3 +556,60 @@ suite('i18n: a new adjustment layer is named in the interface language', async (
     t.eq(historyLabel(step), 'Nouveau calque Niveaux', 'and shown in the language');
   });
 });
+
+suite('i18n: a command is named as its menu item says it', async (t) => {
+  // A history step, a dialog's title and a new adjustment layer are named
+  // after their command, and that name was the menu label trimmed of its dots
+  // and *then* translated — which looks up the bare word, and the bare word
+  // can be another word. Japanese has しきい値 for the Threshold slider and
+  // 2 階調化 for the adjustment; German has Fläche for the Layers panel's Fill
+  // and Fläche füllen for the command. Verified to fail: trimming before
+  // translating, the layer is "しきい値 1" and the steps read しきい値 and Fläche.
+  const { commandName, tr, loadLanguage } = t.app.i18n;
+  const { addAdjustmentLayer } = await import('/src/layers/ops.js');
+  const { applyAdjustmentCommand } = await import('/src/filters/run.js');
+  const { fillSelection, strokeSelection } = await import('/src/edit/fill-stroke.js');
+  const { smartFilterName } = await import('/src/core/smart.js');
+  const { labelOf } = await import('/src/commands/registry.js');
+  const { historyLabel } = await import('/src/core/history.js');
+  const doc = t.doc(24, 24, '#808080');
+  const top = () => doc.history.states[doc.history.index];
+
+  t.eq(String(commandName('Threshold...')), 'Threshold', 'as a string it is the English name');
+  t.eq(String(commandName('Stroke…|edit menu')), 'Stroke', 'without its context, either');
+  t.eq(tr('Stroke…|edit menu'), 'Stroke…', 'and English shows the Edit menu item as before');
+
+  await withLanguage(t, 'xx', {
+    'Threshold...': '2 階調化...', Threshold: 'しきい値', 'New {name} Layer': '新規{name}レイヤー',
+    'Fill…': 'Fläche füllen…', Fill: 'Fläche',
+    'Stroke…': 'Kontur…', 'Stroke…|edit menu': 'Kontur füllen…', Stroke: 'Kontur',
+    Invert: '階調の反転', Posterize: 'Isohélie', 'Gaussian Blur': 'Flou', 'Gaussian Blur...': 'Flou gaussien...',
+  }, async () => {
+    t.eq(tr(commandName('Threshold...')), '2 階調化', 'the menu item’s word, not the slider’s');
+    t.eq(tr(commandName('Fill…')), 'Fläche füllen', 'either ellipsis');
+    t.eq(tr(commandName('Invert')), '階調の反転', 'a command with no dialog is its own label');
+    t.eq(tr(commandName('Posterize...')), 'Isohélie', 'a catalogue with only the bare word still names it');
+
+    const l = addAdjustmentLayer(doc, 'threshold');
+    t.eq(l.name, '2 階調化 1', 'a new adjustment layer is named as the menu says');
+    t.eq([top().label, historyLabel(top())], ['New Threshold Layer', '新規2 階調化レイヤー'], 'and so is its history step');
+    doc.setActiveLayer(doc.flatLayers().find((x) => x.type === 'raster').id);
+    await applyAdjustmentCommand('threshold', { level: 128 });
+    t.eq([top().label, historyLabel(top())], ['Threshold', '2 階調化'], 'Image > Adjustments > Threshold leaves its own name');
+    fillSelection(doc, { use: 'foreground' });
+    t.eq([top().label, historyLabel(top())], ['Fill', 'Fläche füllen'], 'Fill leaves the command’s name, not the Fill field’s');
+    strokeSelection(doc, { width: 2, color: '#000000', location: 'inside' });
+    t.eq([top().label, historyLabel(top())], ['Stroke', 'Kontur füllen'], 'Edit > Stroke is told apart from the layer style');
+    t.eq([labelOf('edit.stroke'), tr('Stroke…')], ['Kontur füllen…', 'Kontur…'], 'in the menus as well');
+    t.eq(tr(smartFilterName({ filterId: 'gaussian-blur', name: 'Gaussian Blur' })), 'Flou gaussien', 'a smart filter is named by its filter');
+    t.eq(tr(smartFilterName({ filterId: 'not-in-this-build', name: 'Gaussian Blur' })), 'Flou', 'or by the name it was saved with');
+  });
+
+  await loadLanguage('en-XA');
+  try {
+    const s = tr(commandName('Threshold...'));
+    t.ok(s.startsWith('⟦') && !/\.\.\.|…/.test(s), 'the pseudo-language trims it too', s);
+  } finally {
+    await loadLanguage('en');
+  }
+});

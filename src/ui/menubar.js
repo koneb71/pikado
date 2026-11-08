@@ -1,6 +1,6 @@
 import { el } from '../core/util.js';
 import { app } from '../core/app.js';
-import { tr } from '../core/i18n.js';
+import { commandName, tr } from '../core/i18n.js';
 import { icon } from './icons.js';
 import {
   getCommand, isChecked, isEnabled, labelOf, formatAccel, runCommand,
@@ -398,7 +398,7 @@ function adjustmentLayerItems() {
     if (out.length) out.push({ type: 'sep' });
     for (const a of layerable) {
       out.push({
-        label: tr(a.name.replace(/(\.\.\.|…)$/, '')),
+        label: tr(commandName(a.name)),
         enabled: hasDoc,
         run: () => {
           if (app.activeDoc) addAdjustmentLayer(app.activeDoc, a.id);

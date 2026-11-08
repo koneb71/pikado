@@ -11,7 +11,7 @@ import { buildForm } from '../dialog.js';
 import { toHex, parseColor } from '../../core/color.js';
 import { FONT_WEIGHTS, ensureFont, BROWSE_FONTS } from '../../text/fonts.js';
 import { fontOptions, resolveFontChoice } from '../font-field.js';
-import { msg, tr, trn } from '../../core/i18n.js';
+import { commandName, msg, tr, trn } from '../../core/i18n.js';
 import * as ops from '../../layers/ops.js';
 import {
   isSmartLayer, getSmartTransform, getSmartFilters, decomposeMatrix, composeMatrix, authoredParams,
@@ -285,7 +285,7 @@ function adjustmentSection(doc, layer) {
   const state = { ...(def.defaults || {}), ...(layer.adjustment.params || {}) };
   layer.adjustment.params = state;
 
-  const committer = makeCommitter(msg('{adjustment} Layer', { adjustment: msg(def.name.replace(/(\.\.\.|…)$/, '')) }));
+  const committer = makeCommitter(msg('{adjustment} Layer', { adjustment: commandName(def.name) }));
   const form = buildForm(def.params || [], state, (key, value) => {
     state[key] = value;
     form.refresh();
@@ -300,7 +300,7 @@ function adjustmentSection(doc, layer) {
       onclick: () => {
         Object.assign(state, defaultParams(kind));
         form.refresh();
-        doc.commit(msg('Reset {adjustment}', { adjustment: msg(def.name.replace(/(\.\.\.|…)$/, '')) }));
+        doc.commit(msg('Reset {adjustment}', { adjustment: commandName(def.name) }));
       },
     }),
     el('button.pk-mini-btn', {

@@ -10,14 +10,14 @@ import { hasStyles } from '../../effects/styles.js';
 import { listAdjustments } from '../../adjustments/registry.js';
 import { toHex } from '../../core/color.js';
 import { paramDialog } from '../dialog.js';
-import { msg, tr, trn } from '../../core/i18n.js';
+import { commandName, msg, tr, trn } from '../../core/i18n.js';
 import * as ops from '../../layers/ops.js';
 import {
   artworkOf, clearDropTarget, copyIntoDocument, documentTabUnder, setDropTarget,
 } from '../cross-doc-drag.js';
 import {
   isSmartLayer, getSmartFilters, toggleSmartFilter, setSmartFiltersEnabled,
-  removeSmartFilter, reorderSmartFilters, editSmartFilter, editSmartContents,
+  removeSmartFilter, reorderSmartFilters, editSmartFilter, editSmartContents, smartFilterName,
 } from '../../core/smart.js';
 
 /**
@@ -654,7 +654,7 @@ function buildLayersPanel(bodyEl) {
         onclick: (e) => { e.stopPropagation(); toggleSmartFilter(doc, l, f.id); },
       }),
       el('span.pk-lay-fxname', {
-        text: tr(f.name),
+        text: tr(smartFilterName(f)),
         title: tr('Double-click to edit these settings'),
         ondblclick: (e) => { e.stopPropagation(); editSmartFilter(doc, l, f.id); },
       })));
@@ -1131,7 +1131,7 @@ function buildLayersPanel(bodyEl) {
     list.sort((a, b) => a.name.localeCompare(b.name));
     for (const a of list) {
       items.push({
-        label: tr(a.name.replace(/(\.\.\.|…)$/, '')),
+        label: tr(commandName(a.name)),
         run: () => ops.addAdjustmentLayer(doc, a.id),
       });
     }

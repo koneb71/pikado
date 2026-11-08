@@ -1353,7 +1353,8 @@ registerCommands([
     id: 'edit.fill-background', label: 'Fill with Background Color', accel: 'Ctrl+Backspace', altAccels: ['Ctrl+Delete'],
     enabled: hasPixels, run: () => fillSelection(D(), { use: 'background' }),
   },
-  { id: 'edit.stroke', label: 'Stroke…', enabled: hasLayer, run: () => showStrokeDialog(D()) },
+  // Not the layer style's Stroke… — in German that is Kontur…, and this Kontur füllen….
+  { id: 'edit.stroke', label: 'Stroke…|edit menu', enabled: hasLayer, run: () => showStrokeDialog(D()) },
   {
     id: 'edit.content-aware-fill', label: 'Content-Aware Fill…',
     enabled: () => hasPixels() && hasSelection(),

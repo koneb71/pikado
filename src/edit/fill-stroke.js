@@ -6,7 +6,7 @@ import { morph } from '../core/selection.js';
 import { compositeDocument, setLayerPreview } from '../render/compositor.js';
 import { getPatterns as builtinPatterns } from '../paint/patterns.js';
 import { Layer, LayerType } from '../core/layer.js';
-import { tr } from '../core/i18n.js';
+import { commandName, tr } from '../core/i18n.js';
 import { paramDialog, promptDialog } from '../ui/dialog.js';
 
 /**
@@ -265,7 +265,7 @@ export function fillSelection(doc, opts = {}) {
   } else {
     layer.canvas = out;
   }
-  doc.commit('Fill');
+  doc.commit(commandName('Fill…'));
   return true;
 }
 
@@ -314,7 +314,7 @@ export async function showFillDialog(doc) {
   // named in the interface language.
   const custom = customPatterns();
   const result = await paramDialog({
-    title: tr('Fill'),
+    title: tr(commandName('Fill…')),
     width: 380,
     state,
     params: [
@@ -347,7 +347,7 @@ export async function showFillDialog(doc) {
   setLayerPreview(layer.id, null);
   doc.touch('preview');
   if (!result) return;
-  await app.busy(tr('Fill'), async () => fillSelection(doc, toOpts(result)));
+  await app.busy(tr(commandName('Fill…')), async () => fillSelection(doc, toOpts(result)));
 }
 
 /* ------------------------------------------------------------------ */
@@ -410,7 +410,7 @@ export function strokeSelection(doc, opts = {}) {
   } else {
     layer.canvas = out;
   }
-  doc.commit('Stroke');
+  doc.commit(commandName('Stroke…|edit menu'));
   return true;
 }
 
@@ -438,7 +438,7 @@ export async function showStrokeDialog(doc) {
   });
 
   const result = await paramDialog({
-    title: tr('Stroke'),
+    title: tr(commandName('Stroke…|edit menu')),
     width: 380,
     state,
     params: [
@@ -475,7 +475,7 @@ export async function showStrokeDialog(doc) {
   setLayerPreview(layer.id, null);
   doc.touch('preview');
   if (!result) return;
-  await app.busy(tr('Stroke'), async () => strokeSelection(doc, toOpts(result)));
+  await app.busy(tr(commandName('Stroke…|edit menu')), async () => strokeSelection(doc, toOpts(result)));
 }
 
 /* ------------------------------------------------------------------ */
