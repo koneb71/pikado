@@ -5,6 +5,7 @@ import { cloneCanvas, clamp } from '../core/util.js';
 import { getComposite } from '../render/compositor.js';
 import { BrushToolBase, tweakDefaults, brushContextMenu } from './brush.js';
 import { makeTiledCanvas, patternOptions } from '../paint/patterns.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Clone Stamp and Pattern Stamp.
@@ -40,7 +41,7 @@ class CloneStampTool extends BrushToolBase {
     if (e.button === 0 && e.altKey) {
       this.source = { x: e.x, y: e.y };
       this.offset = null;
-      app.toast('Clone source set.', 'ok', 1200);
+      app.toast(tr('Clone source set.'), 'ok', 1200);
       app.requestRender();
       return;
     }
@@ -49,7 +50,7 @@ class CloneStampTool extends BrushToolBase {
 
   beforeStroke(e) {
     if (!this.source) {
-      app.toast('Alt-click to define a clone source first.', 'warn');
+      app.toast(tr('Alt-click to define a clone source first.'), 'warn');
       return false;
     }
     return true;
@@ -98,13 +99,13 @@ class CloneStampTool extends BrushToolBase {
 
   contextMenu() {
     return brushContextMenu(this, [{
-      label: 'Reset Clone Source',
+      label: tr('Reset Clone Source'),
       disabled: !this.source,
       run: () => {
         this.source = null;
         this.offset = null;
         this.livePoint = null;
-        app.toast('Clone source cleared.', 'info', 1200);
+        app.toast(tr('Clone source cleared.'), 'info', 1200);
         app.requestRender();
       },
     }]);

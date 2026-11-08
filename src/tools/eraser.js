@@ -7,6 +7,7 @@ import { getComposite } from '../render/compositor.js';
 import { BrushToolBase, tweakDefaults, buildMatchMask, samplePixel } from './brush.js';
 import { historySourceCanvasFor } from './history-brush.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Eraser, Background Eraser and Magic Eraser.
@@ -292,12 +293,12 @@ class MagicEraserTool extends Tool {
       run: () => this.setOption(key, !this.state[key]),
     });
     return [
-      { header: 'Magic Eraser' },
-      flag('contiguous', 'Contiguous'),
-      flag('antialias', 'Anti-alias'),
-      flag('sampleAllLayers', 'Sample All Layers'),
+      { header: tr('Magic Eraser') },
+      flag('contiguous', tr('Contiguous')),
+      flag('antialias', tr('Anti-alias')),
+      flag('sampleAllLayers', tr('Sample All Layers')),
       sep(),
-      cmd('layer.new', { label: 'New Layer' }),
+      cmd('layer.new', { label: tr('New Layer') }),
       cmd('edit.fill'),
       sep(),
       cmd('edit.undo'),
@@ -337,7 +338,7 @@ class MagicEraserTool extends Tool {
       hit = true;
     }
     if (!hit) {
-      app.toast('Nothing within tolerance here.', 'warn');
+      app.toast(tr('Nothing within tolerance here.'), 'warn');
       return;
     }
 

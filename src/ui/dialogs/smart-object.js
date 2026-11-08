@@ -6,6 +6,7 @@ import {
   isSmartLayer, getSmartTransform, decomposeMatrix, composeMatrix,
   setSmartTransform, replaceContents,
 } from '../../core/smart.js';
+import { tr } from '../../core/i18n.js';
 
 /**
  * Dialogs for Smart Objects: numeric placement and "Replace Contents".
@@ -21,7 +22,7 @@ import {
  */
 export async function showSmartTransformDialog(doc, layer) {
   if (!isSmartLayer(layer)) {
-    app.toast('Select a Smart Object layer first.');
+    app.toast(tr('Select a Smart Object layer first.'));
     return false;
   }
   const s = layer.smart;
@@ -46,7 +47,7 @@ export async function showSmartTransformDialog(doc, layer) {
   }, s.sourceWidth, s.sourceHeight);
 
   const result = await paramDialog({
-    title: 'Transform Smart Object',
+    title: tr('Transform Smart Object'),
     width: 340,
     state,
     params: [
@@ -57,7 +58,7 @@ export async function showSmartTransformDialog(doc, layer) {
       { key: 'scaleY', label: 'Height', type: 'number', min: 0.1, max: 4000, step: 0.1, unit: '%', when: (v) => !v.linked },
       {
         key: 'angle', label: 'Rotate', type: 'angle',
-        hint: `Source is ${s.sourceWidth} × ${s.sourceHeight} px — every change resamples it from scratch.`,
+        hint: tr('Source is {width} × {height} px — every change resamples it from scratch.', { width: s.sourceWidth, height: s.sourceHeight }),
       },
     ],
     onPreview: (v) => {
@@ -84,15 +85,15 @@ export async function showSmartTransformDialog(doc, layer) {
  */
 export async function showReplaceContentsDialog(doc, layer) {
   if (!isSmartLayer(layer)) {
-    app.toast('Select a Smart Object layer first.');
+    app.toast(tr('Select a Smart Object layer first.'));
     return false;
   }
   const file = await pickImageFile();
   if (!file) return false;
-  return app.busy('Replace Contents', async () => {
+  return app.busy(tr('Replace Contents'), async () => {
     const img = await decodeImage(file);
     replaceContents(doc, layer, img, 'Replace Contents');
-    app.toast(`Replaced with "${file.name}".`, 'ok');
+    app.toast(tr('Replaced with "{file}".', { file: file.name }), 'ok');
     return true;
   });
 }

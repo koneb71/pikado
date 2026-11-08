@@ -8,6 +8,7 @@ import { PaintStroke, brushFromOptions } from '../../paint/brush-engine.js';
 import { pathToPath2D, pathToSelectionMask } from '../../vector/path.js';
 import { iconEl } from '../icons.js';
 import { promptDialog } from '../dialog.js';
+import { tr } from '../../core/i18n.js';
 import './panels.css';
 import './paths.css';
 
@@ -262,11 +263,11 @@ registerPanel({
       const d = doc();
       const l = d && d.activeLayer();
       if (!l || !l.canvas) {
-        app.toast('Select a raster layer first.', 'warn');
+        app.toast(tr('Select a raster layer first.'), 'warn');
         return null;
       }
       if (l.locked.all || l.locked.pixels) {
-        app.toast(`Layer "${l.name}" is locked.`, 'warn');
+        app.toast(tr('Layer "{name}" is locked.', { name: l.name }), 'warn');
         return null;
       }
       return l;
@@ -275,7 +276,7 @@ registerPanel({
     const requirePath = () => {
       const p = activePath();
       if (!p || pathIsEmpty(p)) {
-        app.toast('Select a path with at least one segment.', 'warn');
+        app.toast(tr('Select a path with at least one segment.'), 'warn');
         return null;
       }
       return p;
@@ -331,7 +332,7 @@ registerPanel({
         drew = true;
       }
       if (!drew) {
-        app.toast('That path has nothing to stroke.', 'warn');
+        app.toast(tr('That path has nothing to stroke.'), 'warn');
         return;
       }
       stroke.flush();
@@ -350,16 +351,16 @@ registerPanel({
       const d = doc();
       if (!d) return;
       if (!d.selection.active) {
-        app.toast('Make a selection first.', 'warn');
+        app.toast(tr('Make a selection first.'), 'warn');
         return;
       }
       const subpaths = traceSelection(d.selection, TRACE_TOLERANCE);
       if (!subpaths.length) {
-        app.toast('That selection is too small to trace.', 'warn');
+        app.toast(tr('That selection is too small to trace.'), 'warn');
         return;
       }
       const i = d.paths.findIndex((p) => p.isWork);
-      const path = { id: i >= 0 ? d.paths[i].id : uid('path'), name: 'Work Path', isWork: true, subpaths };
+      const path = { id: i >= 0 ? d.paths[i].id : uid('path'), name: tr('Work Path'), isWork: true, subpaths };
       if (i >= 0) d.paths[i] = path;
       else d.paths.unshift(path);
       d.activePathId = path.id;
@@ -371,8 +372,8 @@ registerPanel({
       if (!d) return;
       let n = d.paths.length + 1;
       const taken = new Set(d.paths.map((p) => p.name));
-      while (taken.has(`Path ${n}`)) n++;
-      const path = { id: uid('path'), name: `Path ${n}`, subpaths: [] };
+      while (taken.has(tr('Path {number}', { number: n }))) n++;
+      const path = { id: uid('path'), name: tr('Path {number}', { number: n }), subpaths: [] };
       d.paths.push(path);
       d.activePathId = path.id;
       d.commit('New Path');
@@ -383,7 +384,7 @@ registerPanel({
       if (!d) return;
       const i = d.paths.findIndex((p) => p.id === d.activePathId);
       if (i < 0) {
-        app.toast('Select a path to delete.', 'warn');
+        app.toast(tr('Select a path to delete.'), 'warn');
         return;
       }
       d.paths.splice(i, 1);
@@ -397,18 +398,18 @@ registerPanel({
       const d = doc();
       list.replaceChildren();
       if (!d) {
-        list.appendChild(el('div.pkp-empty', { text: 'No document open.' }));
+        list.appendChild(el('div.pkp-empty', { text: tr('No document open.') }));
         renderFooter();
         return;
       }
 
       if (!d.paths.some((p) => p.isWork)) {
         list.appendChild(el('div.pkp-row.is-ghost', {
-          title: 'Draw with the Pen tool or use "Make work path from selection" to create one',
+          title: tr('Draw with the Pen tool or use "Make work path from selection" to create one'),
         },
           el('div.pkp-thumb.pk-checker'),
-          el('span.pkp-name.pk-truncate', { text: 'Work Path' }),
-          el('span.pkp-tag', { text: 'empty' })
+          el('span.pkp-name.pk-truncate', { text: tr('Work Path') }),
+          el('span.pkp-tag', { text: tr('empty') })
         ));
       }
 
@@ -417,14 +418,14 @@ registerPanel({
         const thumb = el('div.pkp-thumb.pk-checker', {}, pathThumb(d, path));
         const name = el('span.pkp-name.pk-truncate', { text: path.name });
         row.append(thumb, name);
-        if (path.isWork) row.appendChild(el('span.pkp-tag', { text: 'work' }));
+        if (path.isWork) row.appendChild(el('span.pkp-tag', { text: tr('work') }));
         row.addEventListener('click', () => {
           d.activePathId = path.id;
           render();
           d.emit('structure');
         });
         row.addEventListener('dblclick', async () => {
-          const next = await promptDialog('Path name', path.name, 'Rename Path');
+          const next = await promptDialog(tr('Path name'), path.name, tr('Rename Path'));
           if (next == null || !next.trim()) return;
           path.name = next.trim();
           if (path.isWork) path.isWork = false;
@@ -442,13 +443,13 @@ registerPanel({
     const renderFooter = () => {
       const d = doc();
       footer.replaceChildren(
-        el('button.pk-icon-btn', { type: 'button', title: 'Fill path with the foreground colour', disabled: !d, onclick: fillPath }, iconEl('bucket')),
-        el('button.pk-icon-btn', { type: 'button', title: 'Stroke path with the current brush', disabled: !d, onclick: strokePath }, iconEl('brush')),
-        el('button.pk-icon-btn', { type: 'button', title: 'Load path as a selection', disabled: !d, onclick: pathToSelection }, iconEl('marquee-rect')),
-        el('button.pk-icon-btn', { type: 'button', title: 'Make a work path from the selection', disabled: !d, onclick: selectionToPath }, iconEl('pen')),
+        el('button.pk-icon-btn', { type: 'button', title: tr('Fill path with the foreground colour'), disabled: !d, onclick: fillPath }, iconEl('bucket')),
+        el('button.pk-icon-btn', { type: 'button', title: tr('Stroke path with the current brush'), disabled: !d, onclick: strokePath }, iconEl('brush')),
+        el('button.pk-icon-btn', { type: 'button', title: tr('Load path as a selection'), disabled: !d, onclick: pathToSelection }, iconEl('marquee-rect')),
+        el('button.pk-icon-btn', { type: 'button', title: tr('Make a work path from the selection'), disabled: !d, onclick: selectionToPath }, iconEl('pen')),
         el('div.pk-spacer'),
-        el('button.pk-icon-btn', { type: 'button', title: 'New path', disabled: !d, onclick: newPath }, iconEl('plus')),
-        el('button.pk-icon-btn', { type: 'button', title: 'Delete path', disabled: !d, onclick: deletePath }, iconEl('trash'))
+        el('button.pk-icon-btn', { type: 'button', title: tr('New path'), disabled: !d, onclick: newPath }, iconEl('plus')),
+        el('button.pk-icon-btn', { type: 'button', title: tr('Delete path'), disabled: !d, onclick: deletePath }, iconEl('trash'))
       );
     };
 

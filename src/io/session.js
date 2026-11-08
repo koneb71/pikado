@@ -1,6 +1,7 @@
 import { app } from '../core/app.js';
 import { Emitter } from '../core/emitter.js';
 import { createCanvas } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { getComposite } from '../render/compositor.js';
 import { savePKD, loadPKD } from './pkd.js';
 import {
@@ -126,7 +127,7 @@ export async function saveDocNow(doc, opts = {}) {
     const [data, thumb] = await Promise.all([savePKD(doc), makeThumb(doc)]);
     if (data.size > DOC_LIMIT_BYTES) {
       state.error = 'too-large';
-      app.toast(`"${doc.name}" is too large to keep locally, so it will not be restored after a refresh.`, 'warn', 6000);
+      app.toast(tr('"{name}" is too large to keep locally, so it will not be restored after a refresh.', { name: doc.name }), 'warn', 6000);
       return false;
     }
     await putDoc({
@@ -247,7 +248,7 @@ export async function restoreSession() {
   }
 
   if (firstFailure && !restored) {
-    app.toast('Your previous session could not be restored.', 'warn', 5000);
+    app.toast(tr('Your previous session could not be restored.'), 'warn', 5000);
   }
   return restored;
 }
@@ -266,9 +267,9 @@ export async function openRecent(id) {
   const already = app.docs.find((d) => d._storeId === id);
   if (already) { app.setActiveDoc(already); return already; }
 
-  return app.busy('Opening…', async () => {
+  return app.busy(tr('Opening…'), async () => {
     const blob = await getDocData(id);
-    if (!blob) { app.toast('That project is no longer stored locally.', 'warn'); return null; }
+    if (!blob) { app.toast(tr('That project is no longer stored locally.'), 'warn'); return null; }
     const doc = await loadPKD(await blob.arrayBuffer());
     doc._storeId = id;
     doc.dirty = false;

@@ -104,15 +104,19 @@ export async function runCommand(id, ...args) {
 export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /**
- * Modifier names as the keyboard prints them. A German keyboard says Strg and
- * Umschalt, and so do its menus; the bindings themselves never change.
+ * Key names as the keyboard prints them. A German keyboard says Strg, Umschalt
+ * and Entf, and so do its menus; the bindings themselves never change.
  */
-const KEY_NAMES = { Ctrl: msg('Ctrl'), Shift: msg('Shift'), Alt: msg('Alt') };
+const KEY_NAMES = {
+  Ctrl: msg('Ctrl'), Shift: msg('Shift'), Alt: msg('Alt'), Esc: msg('Esc'), Enter: msg('Enter'),
+  Delete: msg('Delete'), Backspace: msg('Backspace'), PageUp: msg('PageUp'), PageDown: msg('PageDown'),
+};
+const KEY_NAME_RE = new RegExp(`\\b(${Object.keys(KEY_NAMES).join('|')})\\b`, 'g');
 
 /** Human-readable accelerator for menus. */
 export function formatAccel(accel) {
   if (!accel) return '';
-  if (!IS_MAC) return accel.replace(/\b(Ctrl|Shift|Alt)(?=\+)/g, (k) => tr(KEY_NAMES[k]));
+  if (!IS_MAC) return accel.replace(KEY_NAME_RE, (k) => tr(KEY_NAMES[k]));
   return accel
     .replace(/Ctrl\+/g, '⌘')
     .replace(/Cmd\+/g, '⌘')

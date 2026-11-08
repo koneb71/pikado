@@ -13,6 +13,7 @@
  */
 
 import { createCanvas } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 
 const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 
@@ -62,6 +63,13 @@ export const FONT_FAMILIES = [
 export const FONT_FAMILY_OPTIONS = FONT_FAMILIES.map((f) => ({ value: f.id, label: f.name }));
 
 /**
+ * Built-ins whose `name` describes a kind of face rather than naming a family.
+ * Those two are interface text and are translated where a picker lists them;
+ * every other name is the family's own and is shown as it is.
+ */
+const DESCRIPTIVE_FAMILIES = new Set(['system', 'mono']);
+
+/**
  * Every family the user can pick right now: the built-ins, plus whatever has
  * been downloaded, plus the layer's own family when it is neither.
  *
@@ -84,7 +92,7 @@ export const FONT_FAMILY_OPTIONS = FONT_FAMILIES.map((f) => ({ value: f.id, labe
 export const BROWSE_FONTS = '\u0000browse';
 
 export function fontFamilyOptions(current = '', installed = []) {
-  const out = [...FONT_FAMILY_OPTIONS];
+  const out = FONT_FAMILY_OPTIONS.map((o) => (DESCRIPTIVE_FAMILIES.has(o.value) ? { ...o, label: tr(o.label) } : o));
   for (const f of installed) {
     if (!out.some((o) => o.value === f.id)) out.push({ value: f.id, label: f.name });
   }
@@ -92,7 +100,7 @@ export function fontFamilyOptions(current = '', installed = []) {
   if (key && !out.some((o) => o.value === key)) {
     out.unshift({ value: key, label: googleFamilyOf(key) || String(key) });
   }
-  out.push({ value: BROWSE_FONTS, label: 'Browse Google Fonts…' });
+  out.push({ value: BROWSE_FONTS, label: tr('Browse Google Fonts…') });
   return out;
 }
 

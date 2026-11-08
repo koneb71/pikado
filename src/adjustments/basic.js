@@ -2,6 +2,7 @@ import './basic.css';
 import { registerAdjustment, buildLUT, buildLUTf, sampleLUT, applyLUT } from './registry.js';
 import { el, clamp, clamp255 } from '../core/util.js';
 import { parseColor } from '../core/color.js';
+import { tr } from '../core/i18n.js';
 import { curveParam, applyCurves, defaultCurves, curveToLUT } from '../ui/curve-editor.js';
 import { drawHistogram, setupHiDPI, currentHistogram, clipPoints, emptyHistogram } from '../ui/histogram.js';
 
@@ -105,7 +106,7 @@ export function presetParam(cfg) {
     default: def,
     render(container, state, onChange) {
       const sel = el('select.pk-select.pk-preset-select');
-      for (const n of names) sel.appendChild(el('option', { value: n, text: n }));
+      for (const n of names) sel.appendChild(el('option', { value: n, text: tr(n) }));
       sel.value = state[cfg.key] || def;
       sel.addEventListener('change', () => {
         const values = cfg.presets[sel.value] || {};
@@ -262,7 +263,7 @@ function buildLevelsWidget(container, key, state, onChange) {
 
   const chanSelect = el('select.pk-select.pk-levels-chan');
   for (const c of [{ v: 'rgb', l: 'RGB' }, { v: 'r', l: 'Red' }, { v: 'g', l: 'Green' }, { v: 'b', l: 'Blue' }]) {
-    chanSelect.appendChild(el('option', { value: c.v, text: c.l }));
+    chanSelect.appendChild(el('option', { value: c.v, text: tr(c.l) }));
   }
   chanSelect.value = value.channel;
   chanSelect.addEventListener('change', () => {
@@ -272,7 +273,7 @@ function buildLevelsWidget(container, key, state, onChange) {
   });
 
   const autoBtn = el('button.pk-btn.subtle', {
-    type: 'button', text: 'Auto', title: 'Clip 0.1% of each channel',
+    type: 'button', text: tr('Auto'), title: tr('Clip 0.1% of each channel'),
     onclick: () => {
       const next = cloneLevels(value);
       for (const ch of ['r', 'g', 'b']) {
@@ -286,7 +287,7 @@ function buildLevelsWidget(container, key, state, onChange) {
     },
   });
   const resetBtn = el('button.pk-btn.subtle', {
-    type: 'button', text: 'Reset', title: 'Reset this channel',
+    type: 'button', text: tr('Reset'), title: tr('Reset this channel'),
     onclick: () => {
       const next = cloneLevels(value);
       next[next.channel] = blankLevels();
@@ -299,11 +300,11 @@ function buildLevelsWidget(container, key, state, onChange) {
 
   const num = (title, min, max, step) =>
     el('input.pk-num', { type: 'number', min, max, step, title });
-  const ibNum = num('Input black', 0, 253, 1);
-  const igNum = num('Midtone gamma', 0.01, 9.99, 0.01);
-  const iwNum = num('Input white', 2, 255, 1);
-  const obNum = num('Output black', 0, 255, 1);
-  const owNum = num('Output white', 0, 255, 1);
+  const ibNum = num(tr('Input black'), 0, 253, 1);
+  const igNum = num(tr('Midtone gamma'), 0.01, 9.99, 0.01);
+  const iwNum = num(tr('Input white'), 2, 255, 1);
+  const obNum = num(tr('Output black'), 0, 255, 1);
+  const owNum = num(tr('Output white'), 0, 255, 1);
 
   const bindNum = (input, field) => {
     input.addEventListener('input', () => {
@@ -322,13 +323,13 @@ function buildLevelsWidget(container, key, state, onChange) {
 
   const root = el('div.pk-levels', {},
     el('div.pk-levels-head', {},
-      el('span.pk-levels-lbl', { text: 'Channel' }), chanSelect,
+      el('span.pk-levels-lbl', { text: tr('Channel') }), chanSelect,
       el('div.pk-spacer'), autoBtn, resetBtn),
     canvas,
     el('div.pk-levels-nums', {},
-      el('span.pk-levels-lbl', { text: 'Input' }), ibNum, igNum, iwNum,
+      el('span.pk-levels-lbl', { text: tr('Input') }), ibNum, igNum, iwNum,
       el('div.pk-spacer'),
-      el('span.pk-levels-lbl', { text: 'Output' }), obNum, owNum)
+      el('span.pk-levels-lbl', { text: tr('Output') }), obNum, owNum)
   );
   container.appendChild(root);
 

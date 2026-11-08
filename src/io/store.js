@@ -1,3 +1,5 @@
+import { tr } from '../core/i18n.js';
+
 /**
  * Local project storage, backed by IndexedDB.
  *
@@ -59,7 +61,7 @@ function openDB() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
     if (!storageAvailable()) {
-      reject(new Error('IndexedDB is unavailable'));
+      reject(new Error(tr('IndexedDB is unavailable')));
       return;
     }
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -81,8 +83,8 @@ function openDB() {
       db.onversionchange = () => { db.close(); dbPromise = null; };
       resolve(db);
     };
-    req.onerror = () => reject(req.error || new Error('Could not open the local project store'));
-    req.onblocked = () => reject(new Error('Local storage is blocked by another tab'));
+    req.onerror = () => reject(req.error || new Error(tr('Could not open the local project store')));
+    req.onblocked = () => reject(new Error(tr('Local storage is blocked by another tab')));
   });
   // A failed open must not be cached as a permanently rejected promise.
   dbPromise.catch(() => { dbPromise = null; });
@@ -96,7 +98,7 @@ function withTx(storeNames, mode, fn) {
     let result;
     tx.oncomplete = () => resolve(result);
     tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error('Storage transaction aborted'));
+    tx.onabort = () => reject(tx.error || new Error(tr('Storage transaction aborted')));
     try {
       result = fn(tx);
     } catch (err) {
@@ -134,13 +136,13 @@ async function getOne(storeName, key) {
 export async function putDoc(rec) {
   if (!rec || !rec.id || !(rec.data instanceof Blob)) throw new Error('putDoc needs an id and a data blob');
   if (rec.data.size > DOC_LIMIT_BYTES) {
-    const err = new Error(`Project is too large to keep locally (${(rec.data.size / 1048576).toFixed(0)} MB)`);
+    const err = new Error(tr('Project is too large to keep locally ({size} MB)', { size: (rec.data.size / 1048576).toFixed(0) }));
     err.code = 'too-large';
     throw err;
   }
   const meta = {
     id: rec.id,
-    name: rec.name || 'Untitled',
+    name: rec.name || tr('Untitled'),
     width: rec.width || 0,
     height: rec.height || 0,
     layers: rec.layers || 0,

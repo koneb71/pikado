@@ -1,6 +1,7 @@
 import { LayerType } from '../core/layer.js';
 import { getComposite } from '../render/compositor.js';
 import { createCanvas, ctx2dRead } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { parseColor } from '../core/color.js';
 import { resolveTextProps, measureTextLayer } from '../text/text-render.js';
 import { capabilitiesOf } from '../text/font-table.js';
@@ -802,7 +803,7 @@ function channelPlane(ch, width, height) {
     plane.set(ch.mask);
     return plane;
   }
-  throw new Error(`The alpha channel "${ch.name || 'Alpha'}" has no pixel data to save`);
+  throw new Error(tr('The alpha channel "{name}" has no pixel data to save', { name: ch.name || tr('Alpha') }));
 }
 
 /**
@@ -2415,7 +2416,7 @@ function writeShapeLayer(w, layer, doc) {
   const shape = layer.shape;
   const subpaths = (shape.subpaths || []).filter((sp) => sp && (sp.points || []).length);
   if (!subpaths.length) {
-    throw new Error(`The shape layer "${layer.name || 'Shape'}" has no path to save`);
+    throw new Error(tr('The shape layer "{name}" has no path to save', { name: layer.name || tr('Shape') }));
   }
   const fill = describeShapeFill(shape);
   const stroke = describeShapeStroke(shape);

@@ -5,6 +5,7 @@ import { Dialog, confirmDialog } from '../dialog.js';
 import { getComposite } from '../../render/compositor.js';
 import { UNIT_OPTIONS, RES_UNITS, toPixels, fromPixels, roundForUnit, resToUnit, resFromUnit } from './new-document.js';
 import { getPref } from './preferences.js';
+import { tr } from '../../core/i18n.js';
 
 /**
  * Image > Image Size. Resamples every layer, or re-labels the document's
@@ -84,17 +85,17 @@ export async function showImageSizeDialog(doc = app.activeDoc) {
     method: 'automatic',
   };
 
-  const dlg = new Dialog({ title: 'Image Size', width: 520, className: 'pkd-imagesize' });
+  const dlg = new Dialog({ title: tr('Image Size'), width: 520, className: 'pkd-imagesize' });
 
   const units = [...UNIT_OPTIONS, { value: 'percent', label: 'Percent' }];
   const widthInput = el('input.pk-input', { type: 'number', min: 0.001, step: 1 });
   const heightInput = el('input.pk-input', { type: 'number', min: 0.001, step: 1 });
-  const unitSelect = el('select.pk-select', {}, ...units.map((u) => el('option', { value: u.value, text: u.label })));
+  const unitSelect = el('select.pk-select', {}, ...units.map((u) => el('option', { value: u.value, text: tr(u.label) })));
   const resInput = el('input.pk-input', { type: 'number', min: 1, step: 1 });
-  const resSelect = el('select.pk-select', {}, ...RES_UNITS.map((u) => el('option', { value: u.value, text: u.label })));
-  const chain = el('button.pkd-chain.on', { type: 'button', title: 'Constrain proportions' });
+  const resSelect = el('select.pk-select', {}, ...RES_UNITS.map((u) => el('option', { value: u.value, text: tr(u.label) })));
+  const chain = el('button.pkd-chain.on', { type: 'button', title: tr('Constrain proportions') });
   const resampleInput = el('input', { type: 'checkbox', checked: true });
-  const methodSelect = el('select.pk-select', {}, ...RESAMPLE_METHODS.map((m) => el('option', { value: m.value, text: m.label })));
+  const methodSelect = el('select.pk-select', {}, ...RESAMPLE_METHODS.map((m) => el('option', { value: m.value, text: tr(m.label) })));
 
   const previewBox = el('div.pkd-preview', { style: { height: '150px' } });
   const previewCanvas = el('canvas');
@@ -212,9 +213,9 @@ export async function showImageSizeDialog(doc = app.activeDoc) {
     const before = origW * origH * 4;
     const after = state.w * state.h * 4;
     readout.replaceChildren(
-      el('div', {}, el('b', { text: `${state.w} × ${state.h} px` }), ` (was ${origW} × ${origH})`),
-      el('div', { text: `${(state.w / state.res).toFixed(2)} × ${(state.h / state.res).toFixed(2)} in at ${Math.round(state.res)} ppi` }),
-      el('div', { text: `Image size ${formatBytes(after)} — was ${formatBytes(before)}` })
+      el('div', {}, el('b', { text: `${state.w} × ${state.h} px` }), tr(' (was {width} × {height})', { width: origW, height: origH })),
+      el('div', { text: tr('{width} × {height} in at {resolution} ppi', { width: (state.w / state.res).toFixed(2), height: (state.h / state.res).toFixed(2), resolution: Math.round(state.res) }) }),
+      el('div', { text: tr('Image size {size} — was {previousSize}', { size: formatBytes(after), previousSize: formatBytes(before) }) })
     );
   }
 
@@ -226,26 +227,26 @@ export async function showImageSizeDialog(doc = app.activeDoc) {
       el('div.pkd-col.grow', {},
         el('div.pkd-row', {},
           el('div.pkd-col.grow', {},
-            field('Width', widthInput),
-            field('Height', heightInput)
+            field(tr('Width'), widthInput),
+            field(tr('Height'), heightInput)
           ),
           chain,
-          el('div.pk-field.fixed', {}, el('label', { text: 'Units' }), unitSelect)
+          el('div.pk-field.fixed', {}, el('label', { text: tr('Units') }), unitSelect)
         ),
         el('div.pkd-row', {},
-          field('Resolution', resInput),
+          field(tr('Resolution'), resInput),
           el('div.pk-field', {}, el('label', { text: ' ' }), resSelect)
         ),
-        el('div.pk-field.inline', {}, el('label.pk-check', {}, resampleInput, el('span', { text: 'Resample' }))),
-        field('Method', methodSelect),
-        el('div.pkd-note', { text: 'With Resample off the pixels are untouched — only the print size and resolution change.' })
+        el('div.pk-field.inline', {}, el('label.pk-check', {}, resampleInput, el('span', { text: tr('Resample') }))),
+        field(tr('Method'), methodSelect),
+        el('div.pkd-note', { text: tr('With Resample off the pixels are untouched — only the print size and resolution change.') })
       )
     )
   );
 
   dlg.setButtons([
-    { label: 'Cancel', value: null, subtle: true },
-    { label: 'OK', primary: true, onClick: (d) => { d.close({ ...state }); return false; } },
+    { label: tr('Cancel'), value: null, subtle: true },
+    { label: tr('OK'), primary: true, onClick: (d) => { d.close({ ...state }); return false; } },
   ]);
 
   sync();
@@ -255,8 +256,10 @@ export async function showImageSizeDialog(doc = app.activeDoc) {
   const limit = getPref('maxDocPixels', 80) * 1e6;
   if (result.w * result.h > limit) {
     const ok = await confirmDialog(
-      `${result.w} × ${result.h} px is ${((result.w * result.h) / 1e6).toFixed(1)} megapixels. Continue?`,
-      'Large image', 'Resize'
+      tr('{width} × {height} px is {megapixels} megapixels. Continue?', {
+        width: result.w, height: result.h, megapixels: ((result.w * result.h) / 1e6).toFixed(1),
+      }),
+      tr('Large image'), tr('Resize')
     );
     if (!ok) return null;
   }
@@ -265,7 +268,7 @@ export async function showImageSizeDialog(doc = app.activeDoc) {
   const changedRes = Math.abs(result.res - origRes) > 1e-6;
   if (!changedPixels && !changedRes) return null;
 
-  await app.busy('Image Size', async () => {
+  await app.busy(tr('Image Size'), async () => {
     if (changedPixels) {
       const { smoothing, sharpen } = methodSettings(result.method);
       doc.resample(result.w, result.h, smoothing);

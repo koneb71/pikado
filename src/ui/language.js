@@ -118,8 +118,9 @@ export async function applyLanguagePreference(preference) {
  * @param {{value: string, onChange: (preference: string) => void}} o
  */
 export function languagePicker({ value, onChange }) {
+  // Each language's own name is written for everyone; keep page translation off it.
   const select = el('select.pk-select', { 'aria-label': tr('Language') },
-    ...languageOptions().map((o) => el('option', { value: o.value, text: o.label })));
+    ...languageOptions().map((o) => el('option', { value: o.value, text: o.label, translate: o.value === 'auto' ? null : 'no' })));
   select.value = value;
   select.addEventListener('change', () => onChange(select.value));
   return el('label.pk-lang-pick', { title: tr('Language') }, iconEl('language', { size: 14 }), select);

@@ -1,5 +1,6 @@
 import { Tool, registerTool } from './base.js';
 import { app } from '../core/app.js';
+import { tr } from '../core/i18n.js';
 import { deg2rad, rad2deg } from '../core/util.js';
 import { OVERLAY } from '../ui/brand.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
@@ -197,7 +198,7 @@ class RotateViewTool extends Tool {
   contextMenu() {
     return [
       {
-        label: 'Reset View Rotation',
+        label: tr('Reset View Rotation'),
         run: () => this.reset(),
         disabled: !this.app.viewport.rotation,
         hideWhenDisabled: true,

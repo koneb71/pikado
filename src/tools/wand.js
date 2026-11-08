@@ -3,6 +3,7 @@ import { SelectionTool } from './marquee.js';
 import { getComposite } from '../render/compositor.js';
 import { ctx2dRead, clamp } from '../core/util.js';
 import { cmd } from '../ui/canvas-menu.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Magic Wand and Quick Selection, plus the Select > Grow / Similar helpers the
@@ -146,7 +147,7 @@ class MagicWandTool extends SelectionTool {
     if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) return;
     const img = sourceImageData(doc, this.state.sampleAllLayers);
     if (!img) {
-      this.app.toast('Nothing to sample on this layer.', 'warn');
+      this.app.toast(tr('Nothing to sample on this layer.'), 'warn');
       return;
     }
     const mask = wandMask(img, x, y, Math.max(0, Number(this.state.tolerance) || 0), {
@@ -188,7 +189,7 @@ class QuickSelectTool extends SelectionTool {
     if (!doc) return;
     const img = sourceImageData(doc, this.state.sampleAllLayers);
     if (!img) {
-      this.app.toast('Nothing to sample on this layer.', 'warn');
+      this.app.toast(tr('Nothing to sample on this layer.'), 'warn');
       return;
     }
     this.img = img;

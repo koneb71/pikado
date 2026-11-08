@@ -9,6 +9,7 @@ import {
 import { getProvider, listProviders, modelChoices, effortChoices } from '../../ai/providers/index.js';
 import { getModel, setModel, getEffort, setEffort } from '../../ai/model-prefs.js';
 import { consentedHosts, revokeAllConsent } from '../../ai/consent.js';
+import { tr } from '../../core/i18n.js';
 
 /**
  * API key entry and per-provider settings, one provider at a time.
@@ -35,13 +36,13 @@ import { consentedHosts, revokeAllConsent } from '../../ai/consent.js';
 export async function showAiKeyDialog(providerId = 'openai') {
   const provider = getProvider(providerId) || listProviders().find((p) => p.needsKey);
   if (!provider) {
-    app.toast('No provider needs a key.', 'info');
+    app.toast(tr('No provider needs a key.'), 'info');
     return false;
   }
   const id = provider.id;
   const host = provider.endpoint ? new URL(provider.endpoint).host : '';
 
-  const dialog = new Dialog({ title: `${provider.name} settings`, width: 480 });
+  const dialog = new Dialog({ title: tr('{provider} settings', { provider: provider.name }), width: 480 });
 
   const input = el('input.pk-input', {
     type: 'password',
@@ -49,11 +50,11 @@ export async function showAiKeyDialog(providerId = 'openai') {
     spellcheck: 'false',
     autocapitalize: 'off',
     autocorrect: 'off',
-    placeholder: provider.keyHint || 'Paste your key',
+    placeholder: provider.keyHint ? tr(provider.keyHint) : tr('Paste your key'),
   });
 
   const remember = el('input', { type: 'checkbox' });
-  const rememberRow = el('label.pk-check', {}, remember, el('span', { text: 'Remember this key on this device' }));
+  const rememberRow = el('label.pk-check', {}, remember, el('span', { text: tr('Remember this key on this device') }));
 
   /*
    * Every provider that needs a key, and whether one is set — because with more
@@ -64,22 +65,25 @@ export async function showAiKeyDialog(providerId = 'openai') {
   const keyed = listProviders().filter((p) => p.needsKey);
   const summary = keyed.length > 1
     ? el('div.pk-hint', {
-      text: `Keys held: ${keyed.map((p) => (hasCredential(p.id)
-        ? `${p.name} ${redactedCredential(p.id)}`
-        : `${p.name} — none`)).join(' · ')}`,
+      text: tr('Keys held: {keys}', {
+        keys: keyed.map((p) => (hasCredential(p.id)
+          ? `${p.name} ${redactedCredential(p.id)}`
+          : tr('{provider} — none', { provider: p.name }))).join(' · '),
+      }),
     })
     : null;
 
   const current = hasCredential(id)
     ? el('div.pk-hint', {
-      text: `Current ${provider.name} key: ${redactedCredential(id)}`
-        + (credentialScope(id) === 'device' ? ' — remembered on this device' : ' — this session only'),
+      text: credentialScope(id) === 'device'
+        ? tr('Current {provider} key: {key} — remembered on this device', { provider: provider.name, key: redactedCredential(id) })
+        : tr('Current {provider} key: {key} — this session only', { provider: provider.name, key: redactedCredential(id) }),
     })
     : null;
 
   const agreed = consentedHosts();
   const consentNote = agreed.length
-    ? el('div.pk-hint', { text: `Images may be sent without asking to: ${agreed.join(', ')}.` })
+    ? el('div.pk-hint', { text: tr('Images may be sent without asking to: {hosts}.', { hosts: agreed.join(', ') }) })
     : null;
 
   /*
@@ -114,13 +118,13 @@ export async function showAiKeyDialog(providerId = 'openai') {
    */
   const models = modelChoices(provider);
   const modelSel = models.length
-    ? el('select.pk-input', {}, ...models.map((m) => el('option', { value: m.id, text: m.label })))
+    ? el('select.pk-input', {}, ...models.map((m) => el('option', { value: m.id, text: tr(m.label) })))
     : null;
   if (modelSel) modelSel.value = getModel(provider);
 
   const effortSel = el('select.pk-input');
   const effortRow = el('div.pk-field', {},
-    el('label', { text: provider.effortLabel || 'Effort' }), effortSel);
+    el('label', { text: provider.effortLabel ? tr(provider.effortLabel) : tr('Effort') }), effortSel);
 
   /*
    * Rebuilt whenever the model changes, because the effort dial is a property
@@ -133,7 +137,7 @@ export async function showAiKeyDialog(providerId = 'openai') {
     const choices = effortChoices(provider, modelId);
     effortRow.hidden = !choices.length;
     if (!choices.length) return;
-    effortSel.replaceChildren(...choices.map((c) => el('option', { value: c.value, text: c.label })));
+    effortSel.replaceChildren(...choices.map((c) => el('option', { value: c.value, text: tr(c.label) })));
     effortSel.value = getEffort(provider, modelId);
   };
   syncEffort();
@@ -149,39 +153,39 @@ export async function showAiKeyDialog(providerId = 'openai') {
   });
 
   dialog.setBody(
-    ...(providerSel ? [el('div.pk-field', {}, el('label', { text: 'Provider' }), providerSel)] : []),
+    ...(providerSel ? [el('div.pk-field', {}, el('label', { text: tr('Provider') }), providerSel)] : []),
     el('div.pk-field', {},
       el('div.pk-hint', {
         text: host
-          ? `Pikado sends this key to ${host} and nowhere else. There is no Pikado server, so nobody but you and ${provider.name} ever sees it.`
-          : `This key is used only to talk to ${provider.name}. There is no Pikado server.`,
+          ? tr('Pikado sends this key to {host} and nowhere else. There is no Pikado server, so nobody but you and {provider} ever sees it.', { host, provider: provider.name })
+          : tr('This key is used only to talk to {provider}. There is no Pikado server.', { provider: provider.name }),
       }),
       input),
     rememberRow,
     el('div.pk-hint', {
-      text: 'By default the key is kept in this tab\'s memory only, so closing the tab or '
+      text: tr('By default the key is kept in this tab\'s memory only, so closing the tab or '
         + 'refreshing forgets it. Remembering stores it in this browser\'s local database in '
         + 'plain text — anyone who can use this browser profile, and any script that runs on '
-        + 'this page, can read it. Use a key with a spending limit you could afford to lose.',
+        + 'this page, can read it. Use a key with a spending limit you could afford to lose.'),
     }),
-    ...(modelSel ? [el('div.pk-field', {}, el('label', { text: 'Model' }), modelSel)] : []),
+    ...(modelSel ? [el('div.pk-field', {}, el('label', { text: tr('Model') }), modelSel)] : []),
     effortRow,
     // Declared by the provider, not branched on here — the dialog stays free of
     // `if (id === 'openai')`, which is what lets a new provider be data only.
-    ...(provider.effortHint ? [el('div.pk-hint', { text: provider.effortHint })] : []),
+    ...(provider.effortHint ? [el('div.pk-hint', { text: tr(provider.effortHint) })] : []),
     ...(current ? [current] : []),
     ...(summary ? [summary] : []),
     ...(consentNote ? [consentNote] : []),
   );
 
-  const buttons = [{ label: 'Cancel', value: null, subtle: true }];
+  const buttons = [{ label: tr('Cancel'), value: null, subtle: true }];
 
   if (hasCredential(id)) {
     buttons.push({
-      label: `Forget ${provider.name} key`,
+      label: tr('Forget {provider} key', { provider: provider.name }),
       onClick: async (dlg) => {
         await forgetCredential(id);
-        app.toast(`The ${provider.name} key has been forgotten.`, 'ok');
+        app.toast(tr('The {provider} key has been forgotten.', { provider: provider.name }), 'ok');
         dlg.close(false);
         return false;
       },
@@ -194,12 +198,12 @@ export async function showAiKeyDialog(providerId = 'openai') {
        * Forgets every key and every "don't ask again", because a user clearing
        * their credentials means "undo the trust", not "undo part of it".
        */
-      label: 'Forget everything',
+      label: tr('Forget everything'),
       danger: true,
       onClick: async (dlg) => {
         await forgetAllCredentials();
         revokeAllConsent();
-        app.toast('Every API key and send permission has been forgotten.', 'ok');
+        app.toast(tr('Every API key and send permission has been forgotten.'), 'ok');
         dlg.close(false);
         return false;
       },
@@ -207,7 +211,7 @@ export async function showAiKeyDialog(providerId = 'openai') {
   }
 
   buttons.push({
-    label: 'Save',
+    label: tr('Save'),
     primary: true,
     onClick: async (dlg) => {
       const value = input.value.trim();
@@ -223,18 +227,18 @@ export async function showAiKeyDialog(providerId = 'openai') {
           dlg.close(false);
           return false;
         }
-        app.toast('Paste a key first, or cancel.', 'warn');
+        app.toast(tr('Paste a key first, or cancel.'), 'warn');
         return false;
       }
       const persisted = await setCredential(id, value, { remember: remember.checked });
       // Persistence can refuse — private browsing, a full quota — and the user
       // asked for it, so silence would be a small lie.
       if (remember.checked && !persisted) {
-        app.toast('The key works for this session, but this browser would not store it.', 'warn', 5000);
+        app.toast(tr('The key works for this session, but this browser would not store it.'), 'warn', 5000);
       } else {
         app.toast(remember.checked
-          ? `${provider.name} key saved on this device.`
-          : `${provider.name} key set for this session.`, 'ok');
+          ? tr('{provider} key saved on this device.', { provider: provider.name })
+          : tr('{provider} key set for this session.', { provider: provider.name }), 'ok');
       }
       dlg.close(true);
       return false;

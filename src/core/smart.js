@@ -1,6 +1,7 @@
 import { PikaDocument } from './document.js';
 import { Layer, LayerType, createRasterLayer, setSmartSourceCloner } from './layer.js';
 import { app } from './app.js';
+import { msg, tr } from './i18n.js';
 import { uid, createCanvas, ctx2d, ctx2dRead, imageDataToCanvas, download } from './util.js';
 import { compositeDocument, setLayerPreview } from '../render/compositor.js';
 import { getFilter, runFilter } from '../filters/registry.js';
@@ -544,8 +545,8 @@ export function cloneSourceDocument(src, name) {
 function documentFromImage(image, name) {
   const w = Math.max(1, image.naturalWidth || image.width || 1);
   const h = Math.max(1, image.naturalHeight || image.height || 1);
-  const d = new PikaDocument({ width: w, height: h, name: name || 'Contents' });
-  const l = createRasterLayer(w, h, 'Layer 1');
+  const d = new PikaDocument({ width: w, height: h, name: name || tr('Contents') });
+  const l = createRasterLayer(w, h, tr('Layer {number}', { number: 1 }));
   ctx2d(l.canvas).drawImage(image, 0, 0, w, h);
   d.layers = [l];
   d.activeLayerId = l.id;
@@ -582,7 +583,7 @@ function applySmartFilters(canvas, s, layer) {
     if (!f.enabled) continue;
     const def = getFilter(f.filterId);
     if (!def) {
-      app.toast(`Smart filter "${f.filterId}" is not registered — skipped.`, 'error');
+      app.toast(tr('Smart filter "{filter}" is not registered — skipped.', { filter: f.filterId }), 'error');
       continue;
     }
     const w = cur.width, h = cur.height;
@@ -722,7 +723,7 @@ export function composeSmartCanvas(s, width, height, layer = null, cacheHolder =
  */
 export function renderSmartObject(layer, doc) {
   if (!isSmartLayer(layer)) {
-    app.toast('That layer has no Smart Object contents.', 'error');
+    app.toast(tr('That layer has no Smart Object contents.'), 'error');
     return null;
   }
   const cv = composeSmartCanvas(layer.smart, doc.width, doc.height, layer, layer);
@@ -764,11 +765,11 @@ export function createSmartObject(doc, layers) {
   if (!doc) return null;
   let list = (layers && layers.length ? layers : doc.selectedLayers()).filter(Boolean);
   if (!list.length) {
-    app.toast('Select a layer to convert to a Smart Object.');
+    app.toast(tr('Select a layer to convert to a Smart Object.'));
     return null;
   }
   if (list.length === 1 && list[0].type === LayerType.SMART) {
-    app.toast('That layer is already a Smart Object.');
+    app.toast(tr('That layer is already a Smart Object.'));
     return null;
   }
   list = dropNested(list);
@@ -778,12 +779,12 @@ export function createSmartObject(doc, layers) {
   const anchor = ordered[0];
   const loc = doc.locate(anchor);
   if (!loc) {
-    app.toast('Could not locate the layer to convert.', 'error');
+    app.toast(tr('Could not locate the layer to convert.'), 'error');
     return null;
   }
   const parent = loc.parent;
   const index = loc.index;
-  const name = ordered.length === 1 ? anchor.name : 'Smart Object';
+  const name = ordered.length === 1 ? anchor.name : tr('Smart Object');
 
   const source = new PikaDocument({
     width: doc.width, height: doc.height, name, resolution: doc.resolution,
@@ -859,11 +860,11 @@ export function linkCount(doc, layer) {
  */
 export function unlinkSmartObject(doc, layer) {
   if (!isSmartLayer(layer)) {
-    app.toast('Select a Smart Object layer first.');
+    app.toast(tr('Select a Smart Object layer first.'));
     return false;
   }
   if (linkCount(doc, layer) < 2) {
-    app.toast('This Smart Object is already independent.', 'info');
+    app.toast(tr('This Smart Object is already independent.'), 'info');
     return false;
   }
   doc.beginEdit(layer);
@@ -897,11 +898,11 @@ export function unlinkSmartObject(doc, layer) {
  */
 export function setSmartTransform(doc, layer, matrix, opts = {}) {
   if (!isSmartLayer(layer)) {
-    app.toast('Select a Smart Object layer first.');
+    app.toast(tr('Select a Smart Object layer first.'));
     return null;
   }
   if (!validMatrix(matrix)) {
-    app.toast('That transform is not a valid matrix.', 'error');
+    app.toast(tr('That transform is not a valid matrix.'), 'error');
     return null;
   }
   const { commit = true, label = 'Transform Smart Object' } = opts;
@@ -910,14 +911,14 @@ export function setSmartTransform(doc, layer, matrix, opts = {}) {
   let warp = cur.warp;
   if (opts.perspective !== undefined) {
     if (opts.perspective !== null && !validPerspective(opts.perspective)) {
-      app.toast('That perspective is not a valid projective row.', 'error');
+      app.toast(tr('That perspective is not a valid projective row.'), 'error');
       return null;
     }
     perspective = opts.perspective;
   }
   if (opts.warp !== undefined) {
     if (opts.warp !== null && !validWarp(opts.warp)) {
-      app.toast('That warp mesh is not a valid 4x4 control grid.', 'error');
+      app.toast(tr('That warp mesh is not a valid 4x4 control grid.'), 'error');
       return null;
     }
     // A mesh that is back at its neutral positions is dropped, not stored, so
@@ -950,7 +951,7 @@ export function resetSmartTransform(doc, layer) {
  */
 export function clearSmartShape(doc, layer, what = { perspective: true, warp: true }) {
   if (!isSmartLayer(layer)) {
-    app.toast('Select a Smart Object layer first.');
+    app.toast(tr('Select a Smart Object layer first.'));
     return null;
   }
   const opts = { label: 'Clear Smart Distortion' };
@@ -1016,7 +1017,7 @@ export function applySmartContents(doc, layer, child) {
     renderSmartObject(inst, doc);
   }
   doc.commit(instances.length > 1
-    ? `Edit Smart Contents (${instances.length} linked)`
+    ? msg('Edit Smart Contents ({count} linked)', { count: instances.length })
     : 'Edit Smart Contents');
   return instances.length;
 }
@@ -1032,7 +1033,7 @@ function pushContents(s) {
   const layer = doc.findLayer(s.layerId);
   if (!layer || !layer.smart) {
     endSession(s.key);
-    app.toast('The Smart Object layer is gone — contents were not saved back.', 'warn');
+    app.toast(tr('The Smart Object layer is gone — contents were not saved back.'), 'warn');
     return;
   }
   applySmartContents(doc, layer, s.child);
@@ -1048,7 +1049,7 @@ function pushContents(s) {
  */
 export function editSmartContents(doc, layer) {
   if (!isSmartLayer(layer)) {
-    app.toast('Select a Smart Object layer first.');
+    app.toast(tr('Select a Smart Object layer first.'));
     return null;
   }
   const key = sessionKey(doc, layer);
@@ -1059,7 +1060,7 @@ export function editSmartContents(doc, layer) {
   }
   if (open) endSession(key);
 
-  const child = cloneSourceDocument(layer.smart.source, `${layer.name} (Contents)`);
+  const child = cloneSourceDocument(layer.smart.source, tr('{name} (Contents)', { name: layer.name }));
   child.smartParent = { docId: doc.id, layerId: layer.id };
 
   const s = { key, doc, layerId: layer.id, child, timer: null, pending: false };
@@ -1078,7 +1079,7 @@ export function editSmartContents(doc, layer) {
 
   app.addDocument(child);
   app.fitView();
-  app.toast('Editing Smart Object contents — changes update the parent live.', 'info');
+  app.toast(tr('Editing Smart Object contents — changes update the parent live.'), 'info');
   return child;
 }
 
@@ -1102,11 +1103,11 @@ export function isEditingContents(doc, layer) {
  */
 export function replaceContents(doc, layer, imageOrDoc, label = 'Replace Contents') {
   if (!isSmartLayer(layer)) {
-    app.toast('Select a Smart Object layer first.');
+    app.toast(tr('Select a Smart Object layer first.'));
     return null;
   }
   if (!imageOrDoc) {
-    app.toast('Nothing to place into the Smart Object.', 'error');
+    app.toast(tr('Nothing to place into the Smart Object.'), 'error');
     return null;
   }
   const s = layer.smart;
@@ -1148,15 +1149,17 @@ export function replaceContents(doc, layer, imageOrDoc, label = 'Replace Content
  */
 export async function exportSmartContents(doc, layer) {
   if (!isSmartLayer(layer)) {
-    app.toast('Select a Smart Object layer first.');
+    app.toast(tr('Select a Smart Object layer first.'));
     return false;
   }
   const s = layer.smart;
   const cv = compositeDocument(s.source);
   const blob = await new Promise((resolve, reject) => {
-    cv.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not encode the Smart Object contents.'))), 'image/png');
+    cv.toBlob((b) => (b ? resolve(b) : reject(new Error(tr('Could not encode the Smart Object contents.')))), 'image/png');
   });
-  const safe = String(layer.name || 'smart-object').replace(/[^\w.-]+/g, '-');
+  // \w is ASCII-only: a layer named 图层 1 — every default name, for a Chinese
+  // user — would export as "-1.png". Letters and digits of any script are kept.
+  const safe = String(layer.name || 'smart-object').replace(/[^\p{L}\p{N}_.-]+/gu, '-').replace(/^-+|-+$/g, '') || 'smart-object';
   download(blob, `${safe}.png`);
   return true;
 }
@@ -1184,12 +1187,12 @@ function indexOfFilter(s, ref) {
  */
 export function addSmartFilter(doc, layer, filterId, params) {
   if (!isSmartLayer(layer)) {
-    app.toast('Smart filters need a Smart Object layer.');
+    app.toast(tr('Smart filters need a Smart Object layer.'));
     return null;
   }
   const def = getFilter(filterId);
   if (!def) {
-    app.toast(`Unknown filter "${filterId}".`, 'error');
+    app.toast(tr('Unknown filter "{filter}".', { filter: filterId }), 'error');
     return null;
   }
   const entry = {
@@ -1202,7 +1205,7 @@ export function addSmartFilter(doc, layer, filterId, params) {
   doc.beginEdit(layer);
   setPayload(layer, { filters: [...getSmartFilters(layer), entry] });
   renderSmartObject(layer, doc);
-  doc.commit(`Smart Filter: ${entry.name}`);
+  doc.commit(msg('Smart Filter: {filter}', { filter: msg(entry.name) }));
   return entry;
 }
 
@@ -1211,7 +1214,7 @@ export function removeSmartFilter(doc, layer, ref) {
   if (!isSmartLayer(layer)) return false;
   const i = indexOfFilter(layer.smart, ref);
   if (i < 0) {
-    app.toast('That smart filter is no longer on this layer.', 'error');
+    app.toast(tr('That smart filter is no longer on this layer.'), 'error');
     return false;
   }
   const list = getSmartFilters(layer);
@@ -1219,7 +1222,7 @@ export function removeSmartFilter(doc, layer, ref) {
   doc.beginEdit(layer);
   setPayload(layer, { filters: list.filter((_, n) => n !== i) });
   renderSmartObject(layer, doc);
-  doc.commit(`Delete Smart Filter: ${name}`);
+  doc.commit(msg('Delete Smart Filter: {filter}', { filter: msg(name) }));
   return true;
 }
 
@@ -1250,7 +1253,10 @@ export function toggleSmartFilter(doc, layer, ref) {
   doc.beginEdit(layer);
   setPayload(layer, { filters: next });
   renderSmartObject(layer, doc);
-  doc.commit(`${next[i].enabled ? 'Show' : 'Hide'} Smart Filter: ${next[i].name}`);
+  const filter = msg(next[i].name);
+  doc.commit(next[i].enabled
+    ? msg('Show Smart Filter: {filter}', { filter })
+    : msg('Hide Smart Filter: {filter}', { filter }));
   return true;
 }
 
@@ -1274,22 +1280,22 @@ export function setSmartFiltersEnabled(doc, layer, enabled) {
  */
 export async function editSmartFilter(doc, layer, ref) {
   if (!isSmartLayer(layer)) {
-    app.toast('Select a Smart Object layer first.');
+    app.toast(tr('Select a Smart Object layer first.'));
     return false;
   }
   const i = indexOfFilter(layer.smart, ref);
   if (i < 0) {
-    app.toast('That smart filter is no longer on this layer.', 'error');
+    app.toast(tr('That smart filter is no longer on this layer.'), 'error');
     return false;
   }
   const entry = getSmartFilters(layer)[i];
   const def = getFilter(entry.filterId);
   if (!def) {
-    app.toast(`Filter "${entry.filterId}" is not registered.`, 'error');
+    app.toast(tr('Filter "{filter}" is not registered.', { filter: entry.filterId }), 'error');
     return false;
   }
   if (!def.params || !def.params.length) {
-    app.toast(`${entry.name} has no settings to edit.`);
+    app.toast(tr('{filter} has no settings to edit.', { filter: tr(entry.name) }));
     return false;
   }
   const result = await runFilterDialog(doc, layer, def, { ...entry.params }, (params) => {
@@ -1303,7 +1309,7 @@ export async function editSmartFilter(doc, layer, ref) {
   doc.beginEdit(layer);
   setPayload(layer, { filters: next });
   renderSmartObject(layer, doc);
-  doc.commit(`Smart Filter: ${entry.name}`);
+  doc.commit(msg('Smart Filter: {filter}', { filter: msg(entry.name) }));
   return true;
 }
 
@@ -1325,7 +1331,7 @@ async function runFilterDialog(doc, layer, def, state, buildFilters) {
     doc.touch('preview');
   };
   const result = await paramDialog({
-    title: filterLabel(def),
+    title: tr(filterLabel(def)),
     params: def.params,
     state,
     width: def.dialogWidth || 400,
@@ -1346,7 +1352,7 @@ async function runFilterDialog(doc, layer, def, state, buildFilters) {
 export async function promptSmartFilter(doc, layer, filterId, preset) {
   const def = getFilter(filterId);
   if (!def) {
-    app.toast(`Unknown filter "${filterId}".`, 'error');
+    app.toast(tr('Unknown filter "{filter}".', { filter: filterId }), 'error');
     return null;
   }
   if (preset || !def.needsDialog || !def.params || !def.params.length) {

@@ -7,6 +7,7 @@ import { createCanvas, ctx2dRead, clamp, clamp255 } from '../core/util.js';
 import { rgb, rgb2hsl, hsl2rgb, toCss, luminance, colorDistance } from '../core/color.js';
 import { OVERLAY } from '../ui/brand.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Painting tools: Brush, Pencil, Colour Replacement, Mixer Brush.
@@ -63,7 +64,7 @@ export function brushPresetItems(tool) {
   const items = [];
   if (optionShown(tool, 'size')) {
     const cur = Math.round(tool.state.size);
-    items.push({ header: 'Brush Size' });
+    items.push({ header: tr('Brush Size') });
     for (const px of SIZE_PRESETS) {
       items.push({
         label: `${px} px`,
@@ -77,7 +78,7 @@ export function brushPresetItems(tool) {
   }
   if (optionShown(tool, 'hardness')) {
     const cur = Math.round(tool.state.hardness);
-    items.push({ header: 'Hardness' });
+    items.push({ header: tr('Hardness') });
     for (const pct of HARDNESS_PRESETS) {
       items.push({
         label: `${pct}%`,
@@ -106,7 +107,7 @@ export function brushContextMenu(tool, extra = []) {
     sep(),
     ...extra,
     sep(),
-    cmd('layer.new', { label: 'New Layer' }),
+    cmd('layer.new', { label: tr('New Layer') }),
     cmd('edit.fill'),
     sep(),
     cmd('edit.undo'),
@@ -752,7 +753,7 @@ class MixerBrushTool extends BrushToolBase {
       const c = samplePixel(getComposite(doc), e.x, e.y);
       if (c) {
         this.reservoir = { r: c.r, g: c.g, b: c.b, a: c.a };
-        app.toast('Mixer brush loaded.', 'ok', 1200);
+        app.toast(tr('Mixer brush loaded.'), 'ok', 1200);
       }
       return;
     }
@@ -830,11 +831,11 @@ class MixerBrushTool extends BrushToolBase {
     // "Clean" is the mixer's equivalent of clearing a sampled source: it drops
     // whatever colour the bristles are holding.
     return brushContextMenu(this, [{
-      label: 'Clean Brush',
+      label: tr('Clean Brush'),
       disabled: !this.reservoir,
       run: () => {
         this.reservoir = null;
-        app.toast('Mixer brush cleaned.', 'ok', 1200);
+        app.toast(tr('Mixer brush cleaned.'), 'ok', 1200);
       },
     }]);
   }

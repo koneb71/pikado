@@ -3,6 +3,7 @@ import { app } from '../core/app.js';
 import { PaintStroke, brushOptionDescriptors, brushFromOptions } from '../paint/brush-engine.js';
 import { ctx2dRead, clamp } from '../core/util.js';
 import { BrushToolBase, tweakDefaults } from './brush.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * History Brush and Art History Brush.
@@ -51,22 +52,22 @@ export function historySourceIndex(doc) {
 export function historySourceCanvasFor(doc, layer, { warn = true } = {}) {
   const states = doc.history.states;
   if (!states.length) {
-    if (warn) app.toast('There is no history state to paint from.', 'warn');
+    if (warn) app.toast(tr('There is no history state to paint from.'), 'warn');
     return null;
   }
   const entry = states[historySourceIndex(doc)];
   const snap = entry && entry.state ? findLayerSnapshot(entry.state.layers, layer.id) : null;
   if (!snap) {
-    if (warn) app.toast(`"${layer.name}" does not exist in the history source state.`, 'warn');
+    if (warn) app.toast(tr('"{name}" does not exist in the history source state.', { name: layer.name }), 'warn');
     return null;
   }
   const cv = layer.editingMask ? snap.mask : snap.canvas;
   if (!cv) {
-    if (warn) app.toast('The history source has no pixels for this layer.', 'warn');
+    if (warn) app.toast(tr('The history source has no pixels for this layer.'), 'warn');
     return null;
   }
   if (cv.width !== doc.width || cv.height !== doc.height) {
-    if (warn) app.toast('The history source was a different canvas size.', 'warn');
+    if (warn) app.toast(tr('The history source was a different canvas size.'), 'warn');
     return null;
   }
   return cv;

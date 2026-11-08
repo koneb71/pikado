@@ -7,6 +7,7 @@
  */
 
 import { app } from '../core/app.js';
+import { tr } from '../core/i18n.js';
 import { Tool, registerTool, getTool } from './base.js';
 import { createCanvas, ctx2d, ctx2dRead } from '../core/util.js';
 import { LayerType } from '../core/layer.js';
@@ -117,7 +118,7 @@ export class VectorTool extends Tool {
     const mode = this.state.mode || 'shape';
 
     if (mode === 'path') {
-      appendSubpathsToDoc(doc, subpaths, 'Path');
+      appendSubpathsToDoc(doc, subpaths);
       doc.commit(label);
       return null;
     }
@@ -127,7 +128,7 @@ export class VectorTool extends Tool {
       const layer = doc.activeLayer();
       const style = this.styleFromState();
       if (style.fill.type === 'none' && !style.stroke.enabled) {
-        app.toast('Set a fill or a stroke width to draw pixels.');
+        app.toast(tr('Set a fill or a stroke width to draw pixels.'));
         return null;
       }
       doc.beginEdit(layer);
@@ -137,7 +138,7 @@ export class VectorTool extends Tool {
     }
 
     const style = { ...this.styleFromState(), ...meta };
-    const layer = createShapeLayer(doc, subpaths, style, uniqueLayerName(doc, meta.baseName || 'Shape'));
+    const layer = createShapeLayer(doc, subpaths, style, uniqueLayerName(doc, tr(meta.baseName || 'Shape')));
     doc.addLayer(layer);
     doc.commit(label);
     return layer;
@@ -218,7 +219,7 @@ function makeSelectionFromPath(doc, subpaths) {
     console.warn('[pen] pathToSelectionMask failed', err);
   }
   if (!mask || mask.length !== doc.width * doc.height) {
-    app.toast('That path cannot be turned into a selection.', 'warn');
+    app.toast(tr('That path cannot be turned into a selection.'), 'warn');
     return;
   }
   doc.selection.set(mask instanceof Uint8ClampedArray ? mask : Uint8ClampedArray.from(mask));
@@ -229,7 +230,7 @@ function makeSelectionFromPath(doc, subpaths) {
 /** Fill subpaths with the foreground colour on the active raster layer. */
 function fillPathWithForeground(doc, subpaths) {
   const layer = paintablePathLayer(doc);
-  if (!layer) { app.toast('Select an unlocked raster layer first.', 'warn'); return; }
+  if (!layer) { app.toast(tr('Select an unlocked raster layer first.'), 'warn'); return; }
   const tmp = createCanvas(doc.width, doc.height);
   const tc = ctx2d(tmp);
   tc.fillStyle = toCss(app.foreground);
@@ -247,7 +248,7 @@ function fillPathWithForeground(doc, subpaths) {
 /** Stroke subpaths with the current brush on the active raster layer. */
 function strokePathWithBrush(doc, subpaths) {
   const layer = paintablePathLayer(doc);
-  if (!layer) { app.toast('Select an unlocked raster layer first.', 'warn'); return; }
+  if (!layer) { app.toast(tr('Select an unlocked raster layer first.'), 'warn'); return; }
   const brushTool = getTool('brush');
   const brush = brushFromOptions(brushTool ? brushTool.state : {}, { smoothing: 0, airbrush: false });
   doc.beginEdit(layer);
@@ -264,7 +265,7 @@ function strokePathWithBrush(doc, subpaths) {
     stroke.end();
     drew = true;
   }
-  if (!drew) { app.toast('That path has nothing to stroke.', 'warn'); return; }
+  if (!drew) { app.toast(tr('That path has nothing to stroke.'), 'warn'); return; }
   stroke.flush();
   doc.commit('Stroke Path');
 }
@@ -301,13 +302,13 @@ export function pathActionItems(doc, target) {
   const subpaths = target.subpaths;
   const paintable = !!paintablePathLayer(doc);
   const items = [
-    { label: 'Make Selection', run: () => makeSelectionFromPath(doc, subpaths) },
-    { label: 'Fill Path', run: () => fillPathWithForeground(doc, subpaths), disabled: !paintable },
-    { label: 'Stroke Path', run: () => strokePathWithBrush(doc, subpaths), disabled: !paintable },
+    { label: tr('Make Selection'), run: () => makeSelectionFromPath(doc, subpaths) },
+    { label: tr('Fill Path'), run: () => fillPathWithForeground(doc, subpaths), disabled: !paintable },
+    { label: tr('Stroke Path'), run: () => strokePathWithBrush(doc, subpaths), disabled: !paintable },
   ];
   if (target.kind === 'path' && target.path) {
     items.push(sep());
-    items.push({ label: 'Delete Path', run: () => deletePathRecord(doc, target.path) });
+    items.push({ label: tr('Delete Path'), run: () => deletePathRecord(doc, target.path) });
   }
   return items;
 }
@@ -357,7 +358,7 @@ export function anchorEditItems(doc, e, tol, live = null) {
     const smooth = !!(p.in || p.out);
     return [
       {
-        label: 'Delete Anchor Point',
+        label: tr('Delete Anchor Point'),
         run: () => {
           begin();
           removePoint(site.subpaths, site.hit.subpathIndex, site.hit.pointIndex);
@@ -365,7 +366,7 @@ export function anchorEditItems(doc, e, tol, live = null) {
         },
       },
       {
-        label: smooth ? 'Convert to Corner Point' : 'Convert to Smooth Point',
+        label: smooth ? tr('Convert to Corner Point') : tr('Convert to Smooth Point'),
         run: () => {
           begin();
           convertPoint(site.subpaths, site.hit.subpathIndex, site.hit.pointIndex, !smooth);
@@ -376,7 +377,7 @@ export function anchorEditItems(doc, e, tol, live = null) {
   }
 
   return [{
-    label: 'Add Anchor Point',
+    label: tr('Add Anchor Point'),
     run: () => {
       begin();
       insertPointAt(site.subpaths, site.hit.subpathIndex, site.hit.segmentIndex, site.hit.t);
@@ -622,7 +623,7 @@ class PenTool extends VectorTool {
     return penMenu(this, e, {
       live: this.liveSubpath(),
       extra: open ? [{
-        label: 'Close Path',
+        label: tr('Close Path'),
         run: () => {
           if (!this.sp || this.sp.points.length < 2) return;
           this.sp.closed = true;
@@ -910,7 +911,7 @@ class CurvaturePenTool extends VectorTool {
           }
         : null,
       extra: open ? [{
-        label: 'Close Path',
+        label: tr('Close Path'),
         run: () => {
           if (!this.sp || this.sp.points.length < 2) return;
           this.sp.closed = true;
@@ -969,7 +970,7 @@ class AddAnchorTool extends PointEditTool {
     const doc = this.doc;
     if (!doc) return;
     const found = findSegmentAt(doc, e.x, e.y, this.tol(7));
-    if (!found) { app.toast('Click a path segment to add an anchor point.'); return; }
+    if (!found) { app.toast(tr('Click a path segment to add an anchor point.')); return; }
     this.target = found.target;
     beginVectorEdit(doc, found.target);
     insertPointAt(found.target.subpaths, found.hit.subpathIndex, found.hit.segmentIndex, found.hit.t);
@@ -987,7 +988,7 @@ class DeleteAnchorTool extends PointEditTool {
     const doc = this.doc;
     if (!doc) return;
     const found = findAnchorAt(doc, e.x, e.y, this.tol(7));
-    if (!found || found.hit.kind !== 'anchor') { app.toast('Click an anchor point to delete it.'); return; }
+    if (!found || found.hit.kind !== 'anchor') { app.toast(tr('Click an anchor point to delete it.')); return; }
     this.target = found.target;
     beginVectorEdit(doc, found.target);
     removePoint(found.target.subpaths, found.hit.subpathIndex, found.hit.pointIndex);
@@ -1006,7 +1007,7 @@ class ConvertPointTool extends PointEditTool {
     const doc = this.doc;
     if (!doc) return;
     const found = findAnchorAt(doc, e.x, e.y, this.tol(7));
-    if (!found || found.hit.kind !== 'anchor') { app.toast('Click an anchor point to convert it.'); return; }
+    if (!found || found.hit.kind !== 'anchor') { app.toast(tr('Click an anchor point to convert it.')); return; }
     this.target = found.target;
     beginVectorEdit(doc, found.target);
     const sp = found.target.subpaths[found.hit.subpathIndex];

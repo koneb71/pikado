@@ -28,7 +28,8 @@ import { OVERLAY } from './brand.js';
  * form translates it: `label`, `hint`, `unit` and the labels of a literal
  * `options` array. Options that are data — layer names, patterns, profiles —
  * are given as a function instead, and what it returns is shown exactly as
- * returned; translate any interface text in that list yourself. A label you
+ * returned (and marked `translate="no"`, so a browser's page translation leaves
+ * them alone too); translate any interface text in that list yourself. A label you
  * build with `${}` is composed, not declared: pass it through `tr()` with
  * placeholders. The dialog's own title and buttons are composed by whoever
  * opens it, and translated there.
@@ -379,8 +380,8 @@ function buildControl(p, state, onChange, controls) {
       break;
     }
     case 'select': {
-      const sel = el('select.pk-select', { id: `pk_${p.key}` });
       const { list, verbatim } = optionsOf(p);
+      const sel = el('select.pk-select', { id: `pk_${p.key}`, translate: verbatim ? 'no' : null });
       for (const o of list) {
         const val = typeof o === 'object' ? o.value : o;
         const lab = typeof o === 'object' ? o.label : String(o);

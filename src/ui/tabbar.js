@@ -50,7 +50,9 @@ function render() {
       },
       onpointerdown: (e) => { if (e.button === 0) beginTabDrag(e, doc); },
     },
-      el('span.pk-tab-name.pk-truncate', { text: doc.name }),
+      // translate="no": the name is the user's, and a browser's own page
+      // translation should leave it alone as well.
+      el('span.pk-tab-name.pk-truncate', { text: doc.name, translate: 'no' }),
       doc.dirty ? el('span.pk-tab-dirty', { title: tr('Unsaved changes') }) : null,
       el('button.pk-tab-close', {
         type: 'button',

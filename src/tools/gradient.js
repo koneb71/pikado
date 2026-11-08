@@ -10,6 +10,7 @@ import {
   GRADIENT_PRESETS, getGradientPreset, renderGradient, gradientPreviewCanvas,
 } from '../paint/gradients.js';
 import { getPattern, makeTiledCanvas } from '../paint/patterns.js';
+import { tr } from '../core/i18n.js';
 import './gradient.css';
 
 /**
@@ -68,18 +69,18 @@ function paintInk(doc, layer, target, base, ink, mode, opacity, extraClip) {
 /* ------------------------------------------------------------------ */
 
 function showGradientPicker(current) {
-  const d = new Dialog({ title: 'Gradient Picker', width: 470, className: 'pk-grad-dialog' });
+  const d = new Dialog({ title: tr('Gradient Picker'), width: 470, className: 'pk-grad-dialog' });
   const grid = el('div.pk-grad-grid');
   for (const g of GRADIENT_PRESETS) {
     const cell = el('button.pk-grad-cell' + (g.id === current ? '.selected' : ''), {
-      type: 'button', title: g.name, onclick: () => d.close(g.id),
+      type: 'button', title: tr(g.name), onclick: () => d.close(g.id),
     });
     cell.appendChild(gradientPreviewCanvas(g.stops, 126, 26));
-    cell.appendChild(el('span.pk-grad-name', { text: g.name }));
+    cell.appendChild(el('span.pk-grad-name', { text: tr(g.name) }));
     grid.appendChild(cell);
   }
   d.setBody(grid);
-  d.setButtons([{ label: 'Cancel', value: null, subtle: true }]);
+  d.setButtons([{ label: tr('Cancel'), value: null, subtle: true }]);
   return d.open();
 }
 
@@ -87,7 +88,7 @@ function renderGradientSwatch(container, state, onChange, p) {
   const btn = el('button.pk-grad-swatch', { type: 'button' });
   const draw = (id) => {
     const preset = getGradientPreset(id) || GRADIENT_PRESETS[0];
-    btn.title = preset.name;
+    btn.title = tr(preset.name);
     btn.replaceChildren(gradientPreviewCanvas(preset.stops, 116, 20));
   };
   btn.addEventListener('click', async () => {
@@ -116,7 +117,7 @@ function optionChoices(tool, key) {
   return ((desc && desc.options) || []).map((c) => {
     const value = c && typeof c === 'object' ? c.value : c;
     return {
-      label: c && typeof c === 'object' ? c.label : String(c),
+      label: tr(c && typeof c === 'object' ? c.label : String(c)),
       checked: tool.state[key] === value,
       run: () => tool.setOption(key, value),
     };
@@ -250,10 +251,10 @@ class GradientTool extends Tool {
     return [
       ...optionChoices(this, 'type'),
       sep(),
-      optionToggle(this, 'reverse', 'Reverse'),
+      optionToggle(this, 'reverse', tr('Reverse')),
       sep(),
       cmd('edit.fill', { hideWhenDisabled: true }),
-      cmd('layer.fill.gradient', { label: 'New Gradient Fill Layer…', hideWhenDisabled: true }),
+      cmd('layer.fill.gradient', { label: tr('New Gradient Fill Layer…'), hideWhenDisabled: true }),
     ];
   }
 
@@ -398,7 +399,7 @@ function patternChoices(mod) {
 function renderPatternSelect(container, state, onChange, p) {
   const sel = el('select.pk-select.pk-pattern-select');
   const fill = (list) => {
-    sel.replaceChildren(...list.map((o) => el('option', { value: o.value, text: o.label })));
+    sel.replaceChildren(...list.map((o) => el('option', { value: o.value, text: tr(o.label) })));
     if (list.length && !list.some((o) => String(o.value) === String(state[p.key]))) {
       onChange(p.key, list[0].value);
     }
@@ -454,7 +455,7 @@ class BucketTool extends Tool {
       const pat = getPattern(this.state.pattern);
       const tiled = pat ? makeTiledCanvas(pat, doc.width, doc.height) : null;
       if (!tiled) {
-        this.app.toast('Choose a pattern first.');
+        this.app.toast(tr('Choose a pattern first.'));
         return null;
       }
       c.drawImage(tiled, 0, 0);
@@ -472,7 +473,7 @@ class BucketTool extends Tool {
     const x = Math.floor(e.x), y = Math.floor(e.y);
     if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) return;
     if (doc.selection.active && doc.selection.at(x, y) === 0) {
-      this.app.toast('Click inside the selection to fill.');
+      this.app.toast(tr('Click inside the selection to fill.'));
       return;
     }
 
@@ -504,8 +505,8 @@ class BucketTool extends Tool {
     return [
       ...optionChoices(this, 'fill'),
       sep(),
-      optionToggle(this, 'contiguous', 'Contiguous'),
-      optionToggle(this, 'allLayers', 'All Layers'),
+      optionToggle(this, 'contiguous', tr('Contiguous')),
+      optionToggle(this, 'allLayers', tr('All Layers')),
       sep(),
       cmd('edit.fill', { hideWhenDisabled: true }),
       cmd('edit.fill-foreground', { hideWhenDisabled: true }),

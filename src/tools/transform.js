@@ -1,4 +1,5 @@
 import { app } from '../core/app.js';
+import { tr } from '../core/i18n.js';
 import {
   isSmartLayer, getSmartTransform, getSmartPerspective, getSmartWarp, setSmartTransform,
   toMatrix3, fromMatrix3, matrix3Multiply, invertMatrix3, applyMatrix3,
@@ -264,7 +265,7 @@ export function startTransform(doc, opts = {}) {
 
   const layers = rasterLayersOf(opts.layers && opts.layers.length ? opts.layers : doc.selectedLayers());
   if (!layers.length) {
-    app.toast('Select a pixel layer to transform.');
+    app.toast(tr('Select a pixel layer to transform.'));
     return null;
   }
 
@@ -307,7 +308,7 @@ export function startTransform(doc, opts = {}) {
 export function transformSelectionStart(doc) {
   if (!doc) return null;
   if (!doc.selection.active) {
-    app.toast('Make a selection first.');
+    app.toast(tr('Make a selection first.'));
     return null;
   }
   if (app.transformSession) commitTransform();
@@ -358,7 +359,7 @@ export function transformContextMenu() {
   if (!s) return [];
   const mode = (id, m) => cmd(id, { checked: s.mode === m });
   return [
-    { header: s.selectionMode ? 'Transform Selection' : 'Free Transform' },
+    { header: s.selectionMode ? tr('Transform Selection') : tr('Free Transform') },
     mode('edit.transform.scale', 'scale'),
     mode('edit.transform.rotate', 'rotate'),
     mode('edit.transform.skew', 'skew'),
@@ -369,8 +370,8 @@ export function transformContextMenu() {
     cmd('edit.transform.flip-h'),
     cmd('edit.transform.flip-v'),
     sep(),
-    { label: 'Apply', accel: 'Enter', run: () => commitTransform() },
-    { label: 'Cancel', accel: 'Esc', run: () => cancelTransform() },
+    { label: tr('Apply'), accel: 'Enter', run: () => commitTransform() },
+    { label: tr('Cancel'), accel: 'Esc', run: () => cancelTransform() },
   ];
 }
 
@@ -415,7 +416,7 @@ function renderSession(s) {
       if (renderSmartLayer(s, i)) continue;
       if (!s.smartFallbackWarned) {
         s.smartFallbackWarned = true;
-        app.toast('That transform collapses the Smart Object — falling back to its pixels.', 'warn');
+        app.toast(tr('That transform collapses the Smart Object — falling back to its pixels.'), 'warn');
       }
     }
     const base = s.baseCanvases[i];

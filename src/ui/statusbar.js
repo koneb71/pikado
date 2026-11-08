@@ -8,15 +8,18 @@ import './statusbar.css';
  * readout, the current tool, memory use and a modifier-key hint.
  */
 
-/** Both the select's values and, translated, its labels. */
+/**
+ * The status readouts. Each is the select's value as English — `String(m)`,
+ * which `statusValue` switches on — and its label translated.
+ */
 const STATUS_MODES = [
-  'Document Sizes',
-  'Document Profile',
-  'Document Dimensions',
-  'Scratch Sizes',
-  'Efficiency',
-  'Timing',
-  'Current Tool',
+  msg('Document Sizes'),
+  msg('Document Profile'),
+  msg('Document Dimensions'),
+  msg('Scratch Sizes'),
+  msg('Efficiency'),
+  msg('Timing'),
+  msg('Current Tool'),
 ];
 
 const ZOOM_PRESETS = [1600, 800, 400, 200, 100, 66.67, 50, 33.33, 25, 12.5];
@@ -53,7 +56,7 @@ const GROUP_HINTS = {
 };
 
 let nodes = null;
-let statusMode = STATUS_MODES[0];
+let statusMode = String(STATUS_MODES[0]);
 let lastTiming = 0;
 let busyStart = 0;
 
@@ -103,7 +106,7 @@ export function buildStatusBar(rootEl) {
 
   const dims = el('span.pk-sb-dims');
   const statusSelect = el('select.pk-select.pk-sb-mode', { title: tr('Status information') },
-    ...STATUS_MODES.map((m) => el('option', { value: m, text: tr(m) }))
+    ...STATUS_MODES.map((m) => el('option', { value: String(m), text: tr(m) }))
   );
   statusSelect.value = statusMode;
   statusSelect.addEventListener('change', () => {

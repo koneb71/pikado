@@ -7,6 +7,7 @@ import { iconEl } from '../icons.js';
 import { colorSwatchButton } from '../color-picker.js';
 import { normalizeFontId, BROWSE_FONTS } from '../../text/fonts.js';
 import { fontOptions, resolveFontChoice } from '../font-field.js';
+import { tr } from '../../core/i18n.js';
 import './panels.css';
 import './character.css';
 
@@ -133,7 +134,7 @@ registerPanel({
         })
         .catch((err) => {
           console.error(err);
-          app.toast('Could not re-render the text layer.', 'error');
+          app.toast(tr('Could not re-render the text layer.'), 'error');
         });
     };
 
@@ -165,10 +166,10 @@ registerPanel({
         if (Number.isFinite(v)) set(key, clamp(v, min, max), false);
       });
       controls.push(() => { if (document.activeElement !== input) input.value = get(key); });
-      return el('label.pkt-field', { title: hint },
+      return el('label.pkt-field', { title: hint && tr(hint) },
         el('span.pkt-label', { text: label }),
         input,
-        unit ? el('span.pk-unit', { text: unit }) : null
+        unit ? el('span.pk-unit', { text: tr(unit) }) : null
       );
     };
 
@@ -177,7 +178,7 @@ registerPanel({
       for (const o of options) {
         const value = typeof o === 'string' ? o : o.value;
         const text = typeof o === 'string' ? o : o.label;
-        sel.appendChild(el('option', { value, text }));
+        sel.appendChild(el('option', { value, text: tr(text) }));
       }
       sel.addEventListener('change', () => set(key, sel.value, false));
       controls.push(() => { sel.value = get(key); });
@@ -214,7 +215,7 @@ registerPanel({
         sel.value = current;
       });
       return el('label.pkt-field.pkt-wide', {},
-        el('span.pkt-label', { text: 'Font' }), sel);
+        el('span.pkt-label', { text: tr('Font') }), sel);
     };
 
     const checkField = (label, key) => {
@@ -229,7 +230,7 @@ registerPanel({
     const toggleStrip = el('div.pkt-toggles');
     for (const t of TOGGLES) {
       const btn = el(`button.pkt-toggle${t.className ? `.${t.className}` : ''}`, {
-        type: 'button', title: t.title, text: t.label,
+        type: 'button', title: tr(t.title), text: t.label,
         onclick: () => set(t.key, !get(t.key), false),
       });
       controls.push(() => btn.classList.toggle('is-on', !!get(t.key)));
@@ -239,35 +240,35 @@ registerPanel({
     const colorBtn = colorSwatchButton(
       () => get('color'),
       (c) => set('color', toHex(parseColor(c)), false),
-      { title: 'Text Color', live: false }
+      { title: tr('Text Color'), live: false }
     );
     controls.push(() => colorBtn.sync());
 
     const charSection = el('div.pkt-section', {},
       fontField(),
-      selectField('Style', 'fontStyle', STYLES),
+      selectField(tr('Style'), 'fontStyle', STYLES),
       el('div.pkt-pair', {},
-        numField('Size', 'fontSize', { min: 1, max: 1600, unit: 'px' }),
-        numField('Leading', 'leading', { min: 0, max: 3000, unit: 'px', hint: '0 = automatic (1.2 × size)' })
+        numField(tr('Size'), 'fontSize', { min: 1, max: 1600, unit: 'px' }),
+        numField(tr('Leading'), 'leading', { min: 0, max: 3000, unit: 'px', hint: '0 = automatic (1.2 × size)' })
       ),
       el('div.pkt-pair', {},
-        numField('Tracking', 'tracking', { min: -1000, max: 1000, hint: 'Letter spacing in 1/1000 em' }),
-        selectField('Kerning', 'kerning', [
+        numField(tr('Tracking'), 'tracking', { min: -1000, max: 1000, hint: 'Letter spacing in 1/1000 em' }),
+        selectField(tr('Kerning'), 'kerning', [
           { value: 'metrics', label: 'Metrics' },
           { value: 'optical', label: 'Optical' },
           { value: 'none', label: 'Off' },
         ])
       ),
       el('div.pkt-pair', {},
-        numField('V scale', 'verticalScale', { min: 5, max: 1000, unit: '%' }),
-        numField('H scale', 'horizontalScale', { min: 5, max: 1000, unit: '%' })
+        numField(tr('V scale'), 'verticalScale', { min: 5, max: 1000, unit: '%' }),
+        numField(tr('H scale'), 'horizontalScale', { min: 5, max: 1000, unit: '%' })
       ),
       el('div.pkt-pair', {},
-        numField('Baseline', 'baselineShift', { min: -500, max: 500, unit: 'px' }),
-        el('label.pkt-field', {}, el('span.pkt-label', { text: 'Color' }), colorBtn)
+        numField(tr('Baseline'), 'baselineShift', { min: -500, max: 500, unit: 'px' }),
+        el('label.pkt-field', {}, el('span.pkt-label', { text: tr('Color') }), colorBtn)
       ),
       toggleStrip,
-      selectField('Anti-alias', 'antiAlias', ANTIALIAS)
+      selectField(tr('Anti-alias'), 'antiAlias', ANTIALIAS)
     );
 
     /* ---- paragraph section ---------------------------------------- */
@@ -279,12 +280,12 @@ registerPanel({
       { value: 'right', icon: 'align-right', title: 'Align right' },
     ];
     for (const a of ALIGNS) {
-      const btn = el('button.pk-icon-btn.pkt-align', { type: 'button', title: a.title, onclick: () => set('align', a.value, false) }, iconEl(a.icon));
+      const btn = el('button.pk-icon-btn.pkt-align', { type: 'button', title: tr(a.title), onclick: () => set('align', a.value, false) }, iconEl(a.icon));
       controls.push(() => btn.classList.toggle('active', get('align') === a.value));
       alignStrip.appendChild(btn);
     }
     const justifyBtn = el('button.pkt-toggle.pkt-justify', {
-      type: 'button', title: 'Justify', text: 'J',
+      type: 'button', title: tr('Justify'), text: 'J',
       onclick: () => set('align', 'justify', false),
     });
     controls.push(() => justifyBtn.classList.toggle('is-on', get('align') === 'justify'));
@@ -293,16 +294,16 @@ registerPanel({
     const paraSection = el('div.pkt-section', {},
       alignStrip,
       el('div.pkt-pair', {},
-        numField('Indent L', 'indentLeft', { min: -2000, max: 2000, unit: 'px' }),
-        numField('Indent R', 'indentRight', { min: -2000, max: 2000, unit: 'px' })
+        numField(tr('Indent L'), 'indentLeft', { min: -2000, max: 2000, unit: 'px' }),
+        numField(tr('Indent R'), 'indentRight', { min: -2000, max: 2000, unit: 'px' })
       ),
       el('div.pkt-pair', {},
-        numField('First line', 'indentFirst', { min: -2000, max: 2000, unit: 'px' }),
-        numField('Space ↑', 'spaceBefore', { min: 0, max: 2000, unit: 'px' })
+        numField(tr('First line'), 'indentFirst', { min: -2000, max: 2000, unit: 'px' }),
+        numField(tr('Space ↑'), 'spaceBefore', { min: 0, max: 2000, unit: 'px' })
       ),
       el('div.pkt-pair', {},
-        numField('Space ↓', 'spaceAfter', { min: 0, max: 2000, unit: 'px' }),
-        checkField('Hyphenate', 'hyphenate')
+        numField(tr('Space ↓'), 'spaceAfter', { min: 0, max: 2000, unit: 'px' }),
+        checkField(tr('Hyphenate'), 'hyphenate')
       )
     );
 
@@ -311,7 +312,7 @@ registerPanel({
     body.append(
       scope,
       charSection,
-      el('div.pkt-heading', { text: 'Paragraph' }),
+      el('div.pkt-heading', { text: tr('Paragraph') }),
       paraSection
     );
 
@@ -320,8 +321,8 @@ registerPanel({
     const sync = () => {
       const l = textLayer();
       scope.textContent = l
-        ? `Editing “${l.name}”`
-        : 'No text layer selected — these are the defaults for the next one.';
+        ? tr('Editing “{name}”', { name: l.name })
+        : tr('No text layer selected — these are the defaults for the next one.');
       scope.classList.toggle('is-defaults', !l);
       for (const fn of controls) fn();
     };

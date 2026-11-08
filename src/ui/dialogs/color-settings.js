@@ -6,6 +6,7 @@ import { INTENTS, intentIsExact, profileOf } from '../../color/icc.js';
 import {
   availableProfiles, assignProfile, convertToProfile, proofOf, setProof, proofLabel,
 } from '../../color/manage.js';
+import { tr } from '../../core/i18n.js';
 
 /**
  * The three colour-management dialogs.
@@ -16,6 +17,7 @@ import {
  * answer.
  */
 
+/** Profile names are data, so the descriptors take this as a function and show them as they are. */
 const profileOptions = (doc) => availableProfiles(doc).map((p) => ({ value: p.id === 'embedded' ? 'embedded' : p.id, label: p.name }));
 
 /** Resolve an option value back to a profile object. */
@@ -34,7 +36,7 @@ function sourceNote(doc) {
   return [{
     type: 'label',
     className: 'pk-hint pk-source-profile',
-    label: `Opened from a file tagged ${doc.sourceProfileName}; its colours were converted to sRGB as it opened.`,
+    label: tr('Opened from a file tagged {profile}; its colours were converted to sRGB as it opened.', { profile: doc.sourceProfileName }),
   }];
 }
 
@@ -44,11 +46,11 @@ export async function showAssignProfileDialog(doc = app.activeDoc) {
   const current = profileOf(doc);
   const state = { profile: current.id === 'embedded' ? 'embedded' : current.id };
 
-  const dialog = new Dialog({ title: 'Assign Profile', width: 420 });
+  const dialog = new Dialog({ title: tr('Assign Profile'), width: 420 });
   const form = buildForm([
-    { type: 'label', label: `This document is currently ${current.name}` },
+    { type: 'label', label: tr('This document is currently {profile}', { profile: current.name }) },
     ...sourceNote(doc),
-    { key: 'profile', label: 'Profile', type: 'select', options: profileOptions(doc) },
+    { key: 'profile', label: 'Profile', type: 'select', options: () => profileOptions(doc) },
     {
       type: 'label',
       className: 'pk-hint',
@@ -59,15 +61,15 @@ export async function showAssignProfileDialog(doc = app.activeDoc) {
 
   dialog.setBody(form.node);
   dialog.setButtons([
-    { label: 'Cancel', value: false, subtle: true },
-    { label: 'Assign', primary: true, value: true },
+    { label: tr('Cancel'), value: false, subtle: true },
+    { label: tr('Assign'), primary: true, value: true },
   ]);
   const ok = await dialog.open();
   if (!ok) return false;
   const next = resolve(doc, state.profile);
   if (!next) return false;
   assignProfile(doc, next);
-  app.toast(`Assigned ${next.name}`, 'ok');
+  app.toast(tr('Assigned {profile}', { profile: next.name }), 'ok');
   return true;
 }
 
@@ -81,20 +83,20 @@ export async function showConvertProfileDialog(doc = app.activeDoc) {
     blackPoint: true,
   };
 
-  const dialog = new Dialog({ title: 'Convert to Profile', width: 440 });
+  const dialog = new Dialog({ title: tr('Convert to Profile'), width: 440 });
   let form = null;
   const note = el('div.pk-hint');
   const syncNote = () => {
     const exact = intentIsExact(state.intent);
     note.textContent = exact
-      ? 'Colours outside the destination gamut are clipped; converting back will not restore them.'
-      : 'A matrix profile has no perceptual table, so this intent behaves as Relative Colorimetric.';
+      ? tr('Colours outside the destination gamut are clipped; converting back will not restore them.')
+      : tr('A matrix profile has no perceptual table, so this intent behaves as Relative Colorimetric.');
   };
 
   form = buildForm([
-    { type: 'label', label: `Source: ${current.name}` },
+    { type: 'label', label: tr('Source: {profile}', { profile: current.name }) },
     ...sourceNote(doc),
-    { key: 'profile', label: 'Destination', type: 'select', options: profileOptions(doc) },
+    { key: 'profile', label: 'Destination', type: 'select', options: () => profileOptions(doc) },
     { key: 'intent', label: 'Intent', type: 'select', options: INTENTS },
     { key: 'blackPoint', label: 'Use Black Point Compensation', type: 'checkbox' },
     {
@@ -115,16 +117,16 @@ export async function showConvertProfileDialog(doc = app.activeDoc) {
 
   dialog.setBody(form.node, note);
   dialog.setButtons([
-    { label: 'Cancel', value: false, subtle: true },
-    { label: 'Convert', primary: true, value: true },
+    { label: tr('Cancel'), value: false, subtle: true },
+    { label: tr('Convert'), primary: true, value: true },
   ]);
   const ok = await dialog.open();
   if (!ok) return false;
   const next = resolve(doc, state.profile);
   if (!next) return false;
-  const done = await app.busy('Converting…', async () =>
+  const done = await app.busy(tr('Converting…'), async () =>
     convertToProfile(doc, next, { intent: state.intent, blackPoint: state.blackPoint }));
-  if (done) app.toast(`Converted to ${done.name}`, 'ok');
+  if (done) app.toast(tr('Converted to {profile}', { profile: done.name }), 'ok');
   return !!done;
 }
 
@@ -135,7 +137,7 @@ export async function showProofSetupDialog(doc = app.activeDoc) {
   const before = { ...proof };
   const state = { ...proof };
 
-  const dialog = new Dialog({ title: 'Proof Setup', width: 440 });
+  const dialog = new Dialog({ title: tr('Proof Setup'), width: 440 });
   let form = null;
   const apply = () => {
     setProof(doc, state);
@@ -143,7 +145,7 @@ export async function showProofSetupDialog(doc = app.activeDoc) {
   };
 
   form = buildForm([
-    { key: 'profileId', label: 'Simulate', type: 'select', options: profileOptions(doc).filter((o) => o.value !== 'embedded') },
+    { key: 'profileId', label: 'Simulate', type: 'select', options: () => profileOptions(doc).filter((o) => o.value !== 'embedded') },
     { key: 'intent', label: 'Intent', type: 'select', options: INTENTS },
     { key: 'blackPoint', label: 'Black Point Compensation', type: 'checkbox' },
     { key: 'enabled', label: 'Preview', type: 'checkbox' },
@@ -163,8 +165,8 @@ export async function showProofSetupDialog(doc = app.activeDoc) {
 
   dialog.setBody(form.node);
   dialog.setButtons([
-    { label: 'Cancel', value: false, subtle: true },
-    { label: 'OK', primary: true, value: true },
+    { label: tr('Cancel'), value: false, subtle: true },
+    { label: tr('OK'), primary: true, value: true },
   ]);
   // Show the proof while the dialog is open, whatever it was before.
   apply();

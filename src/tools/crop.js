@@ -6,6 +6,7 @@ import { createCanvas, ctx2dRead, clamp } from '../core/util.js';
 import { sampleBilinear } from '../filters/registry.js';
 import { OVERLAY } from '../ui/brand.js';
 import { sep } from '../ui/canvas-menu.js';
+import { msg, tr } from '../core/i18n.js';
 
 /**
  * Crop family: the rotating crop box, the perspective crop and the slice tool.
@@ -173,8 +174,8 @@ function rotatedCrop(doc, rect, angle) {
  * purpose: it is only meaningful alongside the W/H fields in the options bar.
  */
 const CONTEXT_RATIOS = [
-  ['free', 'Unconstrained'],
-  ['original', 'Original Ratio'],
+  ['free', msg('Unconstrained')],
+  ['original', msg('Original Ratio')],
   ['1:1', '1:1'],
   ['4:3', '4:3'],
   ['16:9', '16:9'],
@@ -510,7 +511,7 @@ class CropTool extends Tool {
     let rect = { ...this.rect };
     const angle = this.angle;
     if (rect.width < 1 || rect.height < 1) {
-      this.app.toast('The crop area is empty.', 'warn');
+      this.app.toast(tr('The crop area is empty.'), 'warn');
       return;
     }
 
@@ -580,19 +581,19 @@ class CropTool extends Tool {
     const pending = !!this.rect;
     return [
       ...CONTEXT_RATIOS.map(([value, label]) => ({
-        label,
+        label: tr(label),
         checked: ratio === value,
         run: () => this.setOption('ratio', value),
       })),
       sep(),
       {
-        label: 'Delete Cropped Pixels',
+        label: tr('Delete Cropped Pixels'),
         checked: deleteCropped,
         run: () => this.setOption('deleteCropped', !deleteCropped),
       },
       sep(),
-      { label: 'Crop', accel: 'Enter', disabled: !pending, run: () => this.applyCrop() },
-      { label: 'Cancel', accel: 'Esc', disabled: !pending, run: () => this.cancel() },
+      { label: tr('Crop'), accel: 'Enter', disabled: !pending, run: () => this.applyCrop() },
+      { label: tr('Cancel'), accel: 'Esc', disabled: !pending, run: () => this.cancel() },
     ];
   }
 
@@ -771,7 +772,7 @@ class PerspectiveCropTool extends Tool {
     const fwd = solveHomography(rectPts, this.quad);
     const inv = solveHomography(this.quad, rectPts);
     if (!fwd || !inv) {
-      this.app.toast('That quad is degenerate — move the corners apart.', 'warn');
+      this.app.toast(tr('That quad is degenerate — move the corners apart.'), 'warn');
       return;
     }
 
@@ -851,10 +852,10 @@ class PerspectiveCropTool extends Tool {
   contextMenu() {
     const grid = this.state.showGrid !== false;
     return [
-      { label: 'Perspective Crop', accel: 'Enter', disabled: !this.quad, run: () => this.apply() },
-      { label: 'Cancel', accel: 'Esc', disabled: !this.quad, run: () => this.cancel() },
+      { label: tr('Perspective Crop'), accel: 'Enter', disabled: !this.quad, run: () => this.apply() },
+      { label: tr('Cancel'), accel: 'Esc', disabled: !this.quad, run: () => this.cancel() },
       sep(),
-      { label: 'Show Grid', checked: grid, run: () => this.setOption('showGrid', !grid) },
+      { label: tr('Show Grid'), checked: grid, run: () => this.setOption('showGrid', !grid) },
     ];
   }
 
@@ -947,7 +948,7 @@ class SliceTool extends Tool {
         list.push({
           x: Math.round(r.x), y: Math.round(r.y),
           width: Math.round(r.width), height: Math.round(r.height),
-          name: `${this.state.namePrefix || 'Slice'} ${list.length + 1}`,
+          name: `${this.state.namePrefix || tr('Slice')} ${list.length + 1}`,
         });
         this.selected = list.length - 1;
       }
@@ -1002,7 +1003,7 @@ class SliceTool extends Tool {
     const items = [];
     if (slice) {
       items.push({
-        label: `Delete "${slice.name}"`,
+        label: tr('Delete "{name}"', { name: slice.name }),
         run: () => {
           const list = slicesOf(doc);
           const i = list.indexOf(slice);
@@ -1013,7 +1014,7 @@ class SliceTool extends Tool {
       });
     }
     items.push({
-      label: 'Delete All Slices',
+      label: tr('Delete All Slices'),
       disabled: !count,
       run: () => {
         doc.slices = [];

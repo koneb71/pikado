@@ -9,7 +9,7 @@ import { showColorPicker } from '../ui/color-picker.js';
 import { gradientParam, normalizeGradient } from '../ui/gradient-editor.js';
 import { Layer, LayerType, createGroupLayer } from '../core/layer.js';
 import { Selection } from '../core/selection.js';
-import { makeTiledCanvas } from '../paint/patterns.js';
+import { makeTiledCanvas, getPattern } from '../paint/patterns.js';
 
 import * as ops from '../layers/ops.js';
 import * as smart from '../core/smart.js';
@@ -88,7 +88,7 @@ async function toggleProof() {
   const { proofOf, setProof, proofLabel } = await import('../color/manage.js');
   const proof = proofOf(doc);
   setProof(doc, { enabled: !proof.enabled });
-  app.toast(proof.enabled ? proofLabel(doc) || 'Proofing on' : 'Proofing off', 'info');
+  app.toast(proof.enabled ? proofLabel(doc) || tr('Proofing on') : tr('Proofing off'), 'info');
   app.emit('doc-change', doc);
 }
 
@@ -286,7 +286,7 @@ async function openRecent(entry) {
       console.warn('[open-recent]', err);
     }
   }
-  app.toast(`The browser will not reopen "${entry.name}" by itself — pick the file again.`, 'warn', 4200);
+  app.toast(tr('The browser will not reopen "{name}" by itself — pick the file again.', { name: entry.name }), 'warn', 4200);
   const input = document.getElementById('file-input');
   if (input) input.click();
 }
@@ -298,13 +298,13 @@ async function openRecent(entry) {
 function pickFiles() {
   const input = document.getElementById('file-input');
   if (input) { input.click(); return; }
-  app.toast('The file picker is unavailable.', 'error');
+  app.toast(tr('The file picker is unavailable.'), 'error');
 }
 
 async function closeDoc(doc) {
   if (!doc) return false;
   if (doc.dirty && getPref('confirmBeforeClosing', true)) {
-    const ok = await confirmDialog(`"${doc.name}" has unsaved changes. Close it anyway?`, 'Close', 'Discard');
+    const ok = await confirmDialog(tr('"{name}" has unsaved changes. Close it anyway?', { name: doc.name }), tr('Close'), tr('Discard'));
     if (!ok) return false;
   }
   app.closeDocument(doc);
@@ -323,10 +323,10 @@ async function revertDoc(doc) {
       console.warn('[revert]', err);
     }
   }
-  if (!doc.history.canUndo) { app.toast('Nothing to revert to.'); return; }
+  if (!doc.history.canUndo) { app.toast(tr('Nothing to revert to.')); return; }
   doc.history.goto(0);
   doc.dirty = false;
-  app.toast(`Reverted ${doc.name}`, 'ok');
+  app.toast(tr('Reverted {name}', { name: doc.name }), 'ok');
 }
 
 async function showFileInfo(doc) {
@@ -336,7 +336,7 @@ async function showFileInfo(doc) {
     el('span', { text: value })
   );
   const layers = doc.flatLayers();
-  const dlg = new Dialog({ title: 'File Info', width: 460 });
+  const dlg = new Dialog({ title: tr('File Info'), width: 460 });
 
   const fields = {};
   const input = (key, label) => {
@@ -348,27 +348,30 @@ async function showFileInfo(doc) {
   desc.value = info.description || '';
 
   dlg.setBody(el('div', {},
-    el('div.pkd-section', { text: 'Description' }),
-    input('title', 'Document Title'),
-    input('author', 'Author'),
-    el('div.pk-field', {}, el('label', { text: 'Description' }), desc),
-    input('copyright', 'Copyright Notice'),
-    el('div.pkd-section', { text: 'Data' }),
-    stat('Dimensions', `${doc.width} × ${doc.height} px`),
-    stat('Resolution', `${Math.round(doc.resolution || 72)} ppi`),
-    stat('Print size', `${(doc.width / (doc.resolution || 72)).toFixed(2)} × ${(doc.height / (doc.resolution || 72)).toFixed(2)} in`),
-    stat('Color mode', doc.colorMode === 'grayscale' ? 'Grayscale' : doc.colorMode === 'bitmap' ? 'Bitmap' : 'RGB Color'),
-    stat('Layers', `${layers.length} (${layers.filter((l) => l.visible).length} visible)`),
-    stat('Alpha channels', String(doc.alphaChannels.length)),
-    stat('Paths', String(doc.paths.length)),
-    stat('Pixel memory', formatBytes(doc.memoryUse())),
-    stat('History states', String(doc.history.states.length)),
-    stat('File', doc.filePath || 'Not saved yet'),
-    el('div.pkd-note', { text: 'Description fields are kept with the open document and written into .pkd projects.' })
+    el('div.pkd-section', { text: tr('Description') }),
+    input('title', tr('Document Title')),
+    input('author', tr('Author')),
+    el('div.pk-field', {}, el('label', { text: tr('Description') }), desc),
+    input('copyright', tr('Copyright Notice')),
+    el('div.pkd-section', { text: tr('Data') }),
+    stat(tr('Dimensions'), `${doc.width} × ${doc.height} px`),
+    stat(tr('Resolution'), `${Math.round(doc.resolution || 72)} ppi`),
+    stat(tr('Print size'), tr('{width} × {height} in', {
+      width: (doc.width / (doc.resolution || 72)).toFixed(2),
+      height: (doc.height / (doc.resolution || 72)).toFixed(2),
+    })),
+    stat(tr('Color mode'), doc.colorMode === 'grayscale' ? tr('Grayscale') : doc.colorMode === 'bitmap' ? tr('Bitmap') : tr('RGB Color')),
+    stat(tr('Layers'), tr('{count} ({visible} visible)', { count: layers.length, visible: layers.filter((l) => l.visible).length })),
+    stat(tr('Alpha channels'), String(doc.alphaChannels.length)),
+    stat(tr('Paths'), String(doc.paths.length)),
+    stat(tr('Pixel memory'), formatBytes(doc.memoryUse())),
+    stat(tr('History states'), String(doc.history.states.length)),
+    stat(tr('File'), doc.filePath || tr('Not saved yet')),
+    el('div.pkd-note', { text: tr('Description fields are kept with the open document and written into .pkd projects.') })
   ));
   dlg.setButtons([
-    { label: 'Cancel', value: null, subtle: true },
-    { label: 'OK', primary: true, onClick: (d) => { d.close(true); return false; } },
+    { label: tr('Cancel'), value: null, subtle: true },
+    { label: tr('OK'), primary: true, onClick: (d) => { d.close(true); return false; } },
   ]);
   const ok = await dlg.open();
   if (!ok) return;
@@ -423,7 +426,7 @@ function pivotOf(n) {
 /** Edit > Transform > Again — repeat the last transform on the current layers. */
 function transformAgain() {
   const doc = D();
-  if (!doc || !lastTransform) { app.toast('No transform to repeat.'); return; }
+  if (!doc || !lastTransform) { app.toast(tr('No transform to repeat.')); return; }
   const prevPivot = pivotOf(lastTransform);
   const dx = lastTransform.x - prevPivot.x;
   const dy = lastTransform.y - prevPivot.y;
@@ -466,7 +469,7 @@ function purge(what) {
   if (what === 'undo' && app.activeDoc) app.activeDoc.history.clear('Purge');
   if (what === 'histories' || what === 'all') for (const d of app.docs) d.history.clear('Purge');
   app.emit('history-change', app.activeDoc);
-  app.toast('Purged.', 'ok');
+  app.toast(tr('Purged.'), 'ok');
 }
 
 /* ------------------------------------------------------------------ */
@@ -485,19 +488,19 @@ function deselect(doc) {
 
 function reselect(doc) {
   const mask = lastMasks.get(doc);
-  if (!mask || mask.length !== doc.width * doc.height) { app.toast('Nothing to reselect.'); return; }
+  if (!mask || mask.length !== doc.width * doc.height) { app.toast(tr('Nothing to reselect.')); return; }
   doc.selection.set(new Uint8ClampedArray(mask));
   commitSelection(doc, 'Reselect');
 }
 
 async function modifySelection(doc, kind) {
   const titles = {
-    border: 'Border Selection', smooth: 'Smooth Selection', expand: 'Expand Selection',
-    contract: 'Contract Selection', feather: 'Feather Selection',
+    border: msg('Border Selection'), smooth: msg('Smooth Selection'), expand: msg('Expand Selection'),
+    contract: msg('Contract Selection'), feather: msg('Feather Selection'),
   };
   const max = kind === 'feather' ? 250 : 100;
   const result = await paramDialog({
-    title: titles[kind],
+    title: tr(titles[kind]),
     width: 320,
     preview: false,
     state: { amount: kind === 'feather' ? 2 : 4 },
@@ -520,19 +523,19 @@ function toggleQuickMaskMode(doc) {
   }
   doc.touch('quick-mask');
   app.emit('doc-selection', doc);
-  app.toast(doc.quickMask ? 'Quick Mask on' : 'Quick Mask off');
+  app.toast(doc.quickMask ? tr('Quick Mask on') : tr('Quick Mask off'));
 }
 
 async function saveSelection(doc) {
-  const name = await promptDialog('Channel name', `Alpha ${doc.alphaChannels.length + 1}`, 'Save Selection');
+  const name = await promptDialog(tr('Channel name'), tr('Alpha {number}', { number: doc.alphaChannels.length + 1 }), tr('Save Selection'));
   if (name == null) return;
   doc.alphaChannels.push({
     id: `chan_${Date.now().toString(36)}_${doc.alphaChannels.length}`,
-    name: name.trim() || `Alpha ${doc.alphaChannels.length + 1}`,
+    name: name.trim() || tr('Alpha {number}', { number: doc.alphaChannels.length + 1 }),
     canvas: doc.selection.toCanvas(),
   });
   doc.commit('Save Selection');
-  app.toast('Selection saved as an alpha channel.', 'ok');
+  app.toast(tr('Selection saved as an alpha channel.'), 'ok');
 }
 
 function maskFromCanvas(canvas, w, h) {
@@ -546,19 +549,19 @@ function maskFromCanvas(canvas, w, h) {
 
 async function loadSelection(doc) {
   const sources = [
-    ...doc.alphaChannels.map((c) => ({ value: `chan:${c.id}`, label: `Channel — ${c.name}` })),
-    ...doc.flatLayers().filter((l) => l.canvas).map((l) => ({ value: `layer:${l.id}`, label: `${l.name} Transparency` })),
-    ...doc.flatLayers().filter((l) => l.mask).map((l) => ({ value: `mask:${l.id}`, label: `${l.name} Mask` })),
+    ...doc.alphaChannels.map((c) => ({ value: `chan:${c.id}`, label: tr('Channel — {name}', { name: c.name }) })),
+    ...doc.flatLayers().filter((l) => l.canvas).map((l) => ({ value: `layer:${l.id}`, label: tr('{name} Transparency', { name: l.name }) })),
+    ...doc.flatLayers().filter((l) => l.mask).map((l) => ({ value: `mask:${l.id}`, label: tr('{name} Mask', { name: l.name }) })),
   ];
-  if (!sources.length) { app.toast('There is nothing to load a selection from.'); return; }
+  if (!sources.length) { app.toast(tr('There is nothing to load a selection from.')); return; }
 
   const result = await paramDialog({
-    title: 'Load Selection',
+    title: tr('Load Selection'),
     width: 380,
     preview: false,
     state: { source: sources[0].value, op: 'replace', invert: false },
     params: [
-      { key: 'source', label: 'Source', type: 'select', options: sources },
+      { key: 'source', label: 'Source', type: 'select', options: () => sources },
       {
         key: 'op', label: 'Operation', type: 'radio',
         options: [
@@ -590,7 +593,7 @@ async function loadSelection(doc) {
       for (let p = 0, i = 3; p < mask.length; p++, i += 4) mask[p] = d[i];
     }
   }
-  if (!mask) { app.toast('That source has no pixels.'); return; }
+  if (!mask) { app.toast(tr('That source has no pixels.')); return; }
   if (result.invert) for (let i = 0; i < mask.length; i++) mask[i] = 255 - mask[i];
   doc.selection.combine(mask, result.op);
   commitSelection(doc, 'Load Selection');
@@ -608,7 +611,7 @@ async function loadSelection(doc) {
 function makeWorkPath(doc) {
   const sel = doc.selection;
   const b = sel.active ? sel.bounds() : null;
-  if (!b) { app.toast('Make a selection first.'); return; }
+  if (!b) { app.toast(tr('Make a selection first.')); return; }
 
   // A 1px pad keeps a selection that touches the canvas edge a closed loop.
   const pad = 1;
@@ -618,10 +621,10 @@ function makeWorkPath(doc) {
   crop.getContext('2d').drawImage(sel.toAlphaCanvas(), -ox, -oy);
 
   const subpaths = loopsToSubpaths(traceAlphaContours(crop), ox, oy, 1, 1.4);
-  if (!subpaths.length) { app.toast('That selection is too small to trace.'); return; }
+  if (!subpaths.length) { app.toast(tr('That selection is too small to trace.')); return; }
 
   const i = doc.paths.findIndex((p) => p.isWork);
-  const path = { id: i >= 0 ? doc.paths[i].id : uid('path'), name: 'Work Path', isWork: true, subpaths };
+  const path = { id: i >= 0 ? doc.paths[i].id : uid('path'), name: tr('Work Path'), isWork: true, subpaths };
   if (i >= 0) doc.paths[i] = path;
   else doc.paths.unshift(path);
   doc.activePathId = path.id;
@@ -679,7 +682,7 @@ function canLayerVia(cut) {
 function layerViaSelection(doc, cut) {
   const layer = viaSourceLayer();
   if (!layer || !doc.selection.active) return;
-  if (!doc.selection.bounds()) { app.toast('The selection is empty.'); return; }
+  if (!doc.selection.bounds()) { app.toast(tr('The selection is empty.')); return; }
   const alpha = doc.selection.toAlphaCanvas();
 
   const cv = createCanvas(doc.width, doc.height);
@@ -708,14 +711,14 @@ function layerViaSelection(doc, cut) {
 
 async function newFillLayer(doc, kind) {
   if (kind === 'solid') {
-    const c = await showColorPicker({ color: toHex(app.foreground), title: 'Color Fill' });
+    const c = await showColorPicker({ color: toHex(app.foreground), title: tr('Color Fill') });
     if (!c) return;
     ops.addFillLayer(doc, 'solid', { color: toCss(c) });
     return;
   }
   if (kind === 'gradient') {
     const result = await paramDialog({
-      title: 'Gradient Fill',
+      title: tr('Gradient Fill'),
       width: 420,
       preview: false,
       state: {
@@ -733,14 +736,15 @@ async function newFillLayer(doc, kind) {
     return;
   }
   const patterns = getPatterns();
-  if (!patterns.length) { app.toast('No patterns available — use Edit > Define Pattern first.'); return; }
+  if (!patterns.length) { app.toast(tr('No patterns available — use Edit > Define Pattern first.')); return; }
   const result = await paramDialog({
-    title: 'Pattern Fill',
+    title: tr('Pattern Fill'),
     width: 380,
     preview: false,
     state: { pattern: patterns[0].id, scale: 1 },
     params: [
-      { key: 'pattern', label: 'Pattern', type: 'select', options: patterns.map((p) => ({ value: p.id, label: p.name })) },
+      // A library pattern's name is ours to translate; a defined pattern's name is the user's.
+      { key: 'pattern', label: 'Pattern', type: 'select', options: () => patterns.map((p) => ({ value: p.id, label: getPattern(p.id) ? tr(p.name) : p.name })) },
       { key: 'scale', label: 'Scale', type: 'slider', min: 0.1, max: 4, step: 0.1 },
       { type: 'label', label: 'A pattern fill is baked into pixels, with a mask you can paint on.' },
     ],
@@ -752,7 +756,7 @@ async function newFillLayer(doc, kind) {
   // being stored on a live fill layer.
   const layer = new Layer({
     type: LayerType.RASTER,
-    name: 'Pattern Fill',
+    name: tr('Pattern Fill'),
     canvas: makeTiledCanvas(entry, doc.width, doc.height, result.scale),
   });
   layer.addMask(doc.width, doc.height, '#ffffff');
@@ -766,7 +770,7 @@ async function newFillLayer(doc, kind) {
 
 function rasterizeAll(doc) {
   const targets = doc.flatLayers().filter((l) => l.type === LayerType.TEXT || l.type === LayerType.SHAPE || l.type === LayerType.SMART);
-  if (!targets.length) { app.toast('There is nothing left to rasterize.'); return; }
+  if (!targets.length) { app.toast(tr('There is nothing left to rasterize.')); return; }
   doc.history.suspend();
   try {
     for (const l of targets) ops.rasterizeLayer(doc, l);
@@ -829,7 +833,7 @@ async function warpTextDialog(doc) {
   };
   doc.beginEdit(l);
   const result = await paramDialog({
-    title: 'Warp Text',
+    title: tr('Warp Text'),
     width: 380,
     state: { ...original },
     params: [
@@ -1000,9 +1004,9 @@ function loopsToSubpaths(loops, ox = 0, oy = 0, simplifyTol = 0.6, fitTol = 1.1)
 /** Type > Convert to Shape — trace the rendered glyphs into vector subpaths. */
 function convertTypeToShape(doc) {
   const l = textLayer();
-  if (!l || !l.canvas) { app.toast('Select a type layer.'); return; }
+  if (!l || !l.canvas) { app.toast(tr('Select a type layer.')); return; }
   const box = l.contentBounds();
-  if (!box) { app.toast('This type layer has no visible pixels.'); return; }
+  if (!box) { app.toast(tr('This type layer has no visible pixels.')); return; }
 
   // Trace only the glyph bounding box — a full-document scan is pure waste.
   const pad = 2;
@@ -1012,10 +1016,10 @@ function convertTypeToShape(doc) {
   crop.getContext('2d').drawImage(l.canvas, -ox, -oy);
 
   const loops = traceAlphaContours(crop);
-  if (!loops.length) { app.toast('This type layer has no visible pixels.'); return; }
+  if (!loops.length) { app.toast(tr('This type layer has no visible pixels.')); return; }
 
   const subpaths = loopsToSubpaths(loops, ox, oy);
-  if (!subpaths.length) { app.toast('The outline was too small to trace.'); return; }
+  if (!subpaths.length) { app.toast(tr('The outline was too small to trace.')); return; }
 
   const color = typeof l.text.color === 'string' ? l.text.color : toCss(l.text.color || '#000000');
   const shape = createShapeLayer(doc, subpaths, defaultShapeStyle({ fill: { type: 'solid', color } }), l.name);
@@ -1084,7 +1088,7 @@ function dedupeGuides(list) {
 
 async function newGuide(doc) {
   const result = await paramDialog({
-    title: 'New Guide',
+    title: tr('New Guide'),
     width: 320,
     preview: false,
     state: { axis: 'v', pos: Math.round(doc.width / 2) },
@@ -1102,7 +1106,7 @@ async function newGuide(doc) {
 
 async function newGuideLayout(doc) {
   const result = await paramDialog({
-    title: 'New Guide Layout',
+    title: tr('New Guide Layout'),
     width: 380,
     preview: false,
     state: { clear: true, columns: 3, columnGutter: 20, rows: 0, rowGutter: 20, margin: 0 },
@@ -1166,7 +1170,7 @@ function applyWorkspace(name) {
     if (wanted.has(p)) openPanel(p);
     else closePanel(p);
   }
-  app.toast(`${name[0].toUpperCase()}${name.slice(1)} workspace`, 'ok');
+  app.toast(tr('{workspace} workspace', { workspace: tr(name[0].toUpperCase() + name.slice(1)) }), 'ok');
 }
 
 function resetWorkspace() {
@@ -1174,7 +1178,7 @@ function resetWorkspace() {
     if (p.defaultOpen) openPanel(p.id);
     else closePanel(p.id);
   }
-  app.toast('Workspace reset.', 'ok');
+  app.toast(tr('Workspace reset.'), 'ok');
 }
 
 function stepDocument(dir) {
@@ -1206,48 +1210,48 @@ function ensurePanelCommands() {
 /* ------------------------------------------------------------------ */
 
 const DONE = [
-  'Layers, groups, 27 blend modes, opacity and fill opacity',
-  'Layer masks, clipping masks and ten live layer effects',
-  'Adjustment layers and 24 destructive adjustments',
-  '60+ filters across Blur, Distort, Noise, Pixelate, Render, Sharpen, Stylize and Other',
-  'Marquee, lasso, magic wand, quick select and Color Range selections',
-  'Pressure-aware brush engine, eraser, clone/pattern stamp, healing, dodge/burn/sponge',
-  'Gradients, patterns, Fill, Stroke and a real content-aware fill',
-  'Type layers with warping, vector paths and live shape layers',
-  'Free transform with scale, rotate, skew, distort, perspective and warp',
-  'Snapshot undo history, guides, grid, rulers and quick mask',
-  'Snapping and smart guides across every drag, with Ctrl to override',
-  'Select Subject and the Select and Mask workspace, on a GrabCut segmenter',
-  'Camera Raw develop controls and a frame-animation timeline',
-  'Colour management with soft proofing and gamut warning',
-  'Slices and notes',
-  'The whole Google Fonts catalogue, downloaded and kept for offline use',
-  'Open and save .pkd projects; import/export PSD, PNG, JPG, WebP, GIF and SVG',
-  'Non-destructive smart objects: embedded contents, re-editable smart filters and transforms',
+  msg('Layers, groups, 27 blend modes, opacity and fill opacity'),
+  msg('Layer masks, clipping masks and ten live layer effects'),
+  msg('Adjustment layers and 24 destructive adjustments'),
+  msg('60+ filters across Blur, Distort, Noise, Pixelate, Render, Sharpen, Stylize and Other'),
+  msg('Marquee, lasso, magic wand, quick select and Color Range selections'),
+  msg('Pressure-aware brush engine, eraser, clone/pattern stamp, healing, dodge/burn/sponge'),
+  msg('Gradients, patterns, Fill, Stroke and a real content-aware fill'),
+  msg('Type layers with warping, vector paths and live shape layers'),
+  msg('Free transform with scale, rotate, skew, distort, perspective and warp'),
+  msg('Snapshot undo history, guides, grid, rulers and quick mask'),
+  msg('Snapping and smart guides across every drag, with Ctrl to override'),
+  msg('Select Subject and the Select and Mask workspace, on a GrabCut segmenter'),
+  msg('Camera Raw develop controls and a frame-animation timeline'),
+  msg('Colour management with soft proofing and gamut warning'),
+  msg('Slices and notes'),
+  msg('The whole Google Fonts catalogue, downloaded and kept for offline use'),
+  msg('Open and save .pkd projects; import/export PSD, PNG, JPG, WebP, GIF and SVG'),
+  msg('Non-destructive smart objects: embedded contents, re-editable smart filters and transforms'),
 ];
 
 const NOT_DONE = [
-  'CMYK, Lab, Indexed and Duotone document modes; 16- and 32-bit depth',
-  'A standing layer-edge overlay (edges show while dragging, not at rest)',
-  '3D and panorama merging',
-  'Cloud documents, plug-ins and scripting',
+  msg('CMYK, Lab, Indexed and Duotone document modes; 16- and 32-bit depth'),
+  msg('A standing layer-edge overlay (edges show while dragging, not at rest)'),
+  msg('3D and panorama merging'),
+  msg('Cloud documents, plug-ins and scripting'),
 ];
 
 function showAbout() {
-  const dlg = new Dialog({ title: 'About Pikado', width: 520 });
+  const dlg = new Dialog({ title: tr('About Pikado'), width: 520 });
   dlg.setBody(el('div.pkd-about', {},
     el('p', {
-      text: 'Pikado is an image editor that runs entirely in the browser. No pixels leave '
+      text: tr('Pikado is an image editor that runs entirely in the browser. No pixels leave '
         + 'your machine — Generative Fill is the one thing that can send any, and it asks first. '
-        + 'Web fonts are downloaded from Google when you use one, which sends nothing of yours.',
+        + 'Web fonts are downloaded from Google when you use one, which sends nothing of yours.'),
     }),
-    el('div.pkd-section', { text: 'What works' }),
-    el('ul', {}, ...DONE.map((t) => el('li', { text: t }))),
-    el('div.pkd-section', { text: 'What is not implemented' }),
-    el('ul', {}, ...NOT_DONE.map((t) => el('li', { text: t }))),
-    el('div.pkd-note', { text: 'Built with plain ES modules and a 2-D canvas. Everything above is checked against the code, not the roadmap.' })
+    el('div.pkd-section', { text: tr('What works') }),
+    el('ul', {}, ...DONE.map((t) => el('li', { text: tr(t) }))),
+    el('div.pkd-section', { text: tr('What is not implemented') }),
+    el('ul', {}, ...NOT_DONE.map((t) => el('li', { text: tr(t) }))),
+    el('div.pkd-note', { text: tr('Built with plain ES modules and a 2-D canvas. Everything above is checked against the code, not the roadmap.') })
   ));
-  dlg.setButtons([{ label: 'Close', value: true, primary: true }]);
+  dlg.setButtons([{ label: tr('Close'), value: true, primary: true }]);
   return dlg.open();
 }
 
@@ -1261,7 +1265,7 @@ registerCommands([
   { id: 'file.open', label: 'Open…', accel: 'Ctrl+O', run: () => pickFiles() },
   {
     id: 'file.recent-clear', label: 'Clear Recent File List',
-    run: () => { writeRecent([]); noted.clear(); app.toast('Recent file list cleared.'); },
+    run: () => { writeRecent([]); noted.clear(); app.toast(tr('Recent file list cleared.')); },
   },
   { id: 'file.close', label: 'Close', accel: 'Ctrl+W', enabled: hasDoc, run: () => closeDoc(D()) },
   {
@@ -1417,7 +1421,7 @@ registerCommands([
     enabled: hasDoc, checked: () => !!D() && D().colorMode === 'grayscale',
     // Resolve the document up front: `app.busy` waits a frame, and the user can
     // close or switch documents before the callback runs.
-    run: () => { const doc = D(); return app.busy('Grayscale', async () => img.convertToGrayscale(doc)); },
+    run: () => { const doc = D(); return app.busy(tr('Grayscale'), async () => img.convertToGrayscale(doc)); },
   },
   {
     id: 'edit.assign-profile', label: 'Assign Profile…',
@@ -1452,7 +1456,7 @@ registerCommands([
     run: async () => {
       const doc = D();
       if (doc.flatLayers().length > 1) {
-        const ok = await img.confirmFlatten('Bitmap mode flattens the document to one black-and-white layer. Continue?');
+        const ok = await img.confirmFlatten(tr('Bitmap mode flattens the document to one black-and-white layer. Continue?'));
         if (!ok) return;
       }
       await img.convertToBitmap(doc);
@@ -1475,7 +1479,7 @@ registerCommands([
     run: () => {
       const doc = D();
       const b = doc.selection.bounds();
-      if (!b) { app.toast('The selection is empty.'); return; }
+      if (!b) { app.toast(tr('The selection is empty.')); return; }
       doc.crop(b);
       doc.commit('Crop');
     },
@@ -1487,14 +1491,14 @@ registerCommands([
     run: () => {
       // Layer buffers are always document-sized, so nothing can hide outside
       // the canvas — this is a report rather than an edit.
-      app.toast('Nothing is hidden outside the canvas: Pikado clips layers to the document.');
+      app.toast(tr('Nothing is hidden outside the canvas: Pikado clips layers to the document.'));
     },
   },
   { id: 'image.duplicate', label: 'Duplicate…', enabled: hasDoc, run: async () => {
     const doc = D();
-    const name = await promptDialog('Duplicate as', `${doc.name} copy`, 'Duplicate Image');
+    const name = await promptDialog(tr('Duplicate as'), tr('{name} copy', { name: doc.name }), tr('Duplicate Image'));
     if (name == null) return;
-    img.duplicateDocument(doc, name.trim() || `${doc.name} copy`);
+    img.duplicateDocument(doc, name.trim() || tr('{name} copy', { name: doc.name }));
   } },
   { id: 'image.apply-image', label: 'Apply Image…', enabled: hasPixels, run: () => img.showApplyImageDialog(D()) },
   { id: 'image.calculations', label: 'Calculations…', enabled: hasDoc, run: () => img.showCalculationsDialog(D()) },
@@ -1540,8 +1544,8 @@ registerCommands([
       const d = D();
       const names = new Set(d.flatLayers().map((l) => l.name));
       let n = 1;
-      while (names.has(`Group ${n}`)) n++;
-      d.addLayer(createGroupLayer(`Group ${n}`));
+      while (names.has(tr('Group {number}', { number: n }))) n++;
+      d.addLayer(createGroupLayer(tr('Group {number}', { number: n })));
       d.commit('New Group');
     },
   },
@@ -1632,14 +1636,14 @@ registerCommands([
   },
   {
     id: 'layer.mask.toggle', label: 'Disable',
-    dynamicLabel: () => { const l = activeLayer(); return l && l.mask && !l.maskEnabled ? 'Enable' : 'Disable'; },
+    dynamicLabel: () => { const l = activeLayer(); return l && l.mask && !l.maskEnabled ? tr('Enable') : tr('Disable'); },
     enabled: () => { const l = activeLayer(); return !!(l && l.mask); },
     run: () => ops.toggleMaskEnabled(D()),
   },
 
   {
     id: 'layer.clipping', label: 'Create Clipping Mask', accel: 'Alt+Ctrl+G',
-    dynamicLabel: () => { const l = activeLayer(); return l && l.clipped ? 'Release Clipping Mask' : 'Create Clipping Mask'; },
+    dynamicLabel: () => { const l = activeLayer(); return l && l.clipped ? tr('Release Clipping Mask') : tr('Create Clipping Mask'); },
     enabled: hasLayer,
     run: () => ops.toggleClipping(D()),
   },
@@ -1683,7 +1687,7 @@ registerCommands([
       const layer = activeLayer();
       if (!doc || !layer) return;
       const copy = doc.duplicateLayer(layer, { link: false });
-      copy.name = `${layer.name} copy`;
+      copy.name = tr('{name} copy', { name: layer.name });
       doc.commit('New Smart Object via Copy');
     },
   },
@@ -1741,7 +1745,7 @@ registerCommands([
 
   {
     id: 'layer.merge-down', label: 'Merge Down', accel: 'Ctrl+E',
-    dynamicLabel: () => (D() && D().selectedLayers().length > 1 ? 'Merge Layers' : 'Merge Down'),
+    dynamicLabel: () => (D() && D().selectedLayers().length > 1 ? tr('Merge Layers') : tr('Merge Down')),
     enabled: hasLayer,
     run: () => { const d = D(); if (d.selectedLayers().length > 1) ops.mergeSelected(d); else ops.mergeDown(d); },
   },
@@ -1751,11 +1755,11 @@ registerCommands([
 
   { id: 'layer.matting.defringe', label: 'Defringe…', enabled: hasPixels, run: async () => {
     const r = await paramDialog({
-      title: 'Defringe', width: 300, preview: false, state: { width: 1 },
+      title: tr('Defringe'), width: 300, preview: false, state: { width: 1 },
       params: [{ key: 'width', label: 'Width', type: 'slider', min: 1, max: 10, step: 1, unit: 'px' }],
     });
     if (!r) return;
-    await app.busy('Defringe', async () => img.defringe(D(), null, r.width));
+    await app.busy(tr('Defringe'), async () => img.defringe(D(), null, r.width));
   } },
   { id: 'layer.matting.black', label: 'Remove Black Matte', enabled: hasPixels, run: () => img.removeMatte(D(), null, 'black') },
   { id: 'layer.matting.white', label: 'Remove White Matte', enabled: hasPixels, run: () => img.removeMatte(D(), null, 'white') },
@@ -1783,7 +1787,7 @@ registerCommands([
   {
     id: 'type.convert-to-shape', label: 'Convert to Shape',
     enabled: () => !!textLayer(),
-    run: () => app.busy('Convert to Shape', async () => convertTypeToShape(D())),
+    run: () => app.busy(tr('Convert to Shape'), async () => convertTypeToShape(D())),
   },
   { id: 'type.rasterize', label: 'Rasterize Type Layer', enabled: () => !!textLayer(), run: () => ops.rasterizeLayer(D()) },
   { id: 'type.warp', label: 'Warp Text…', enabled: () => !!textLayer(), run: () => warpTextDialog(D()) },
@@ -1833,7 +1837,7 @@ registerCommands([
   {
     id: 'select.make-work-path', label: 'Make Work Path',
     enabled: hasSelection,
-    run: () => app.busy('Make Work Path', async () => makeWorkPath(D())),
+    run: () => app.busy(tr('Make Work Path'), async () => makeWorkPath(D())),
   },
 
   /* --- Filter ----------------------------------------------------- */
@@ -1856,7 +1860,7 @@ registerCommands([
     enabled: () => hasLayer() && !isSmart(),
     run: () => {
       const l = ops.convertToSmartObject(D());
-      if (l) app.toast('Filters applied to this layer are now re-editable smart filters.', 'ok');
+      if (l) app.toast(tr('Filters applied to this layer are now re-editable smart filters.'), 'ok');
     },
   },
 
@@ -1969,7 +1973,7 @@ for (let i = 0; i < RECENT_MAX; i++) {
     label: `Recent ${i + 1}`,
     dynamicLabel: () => {
       const e = recentList()[i];
-      return e ? e.name : `Recent ${i + 1}`;
+      return e ? e.name : tr('Recent {number}', { number: i + 1 });
     },
     enabled: () => !!recentList()[i],
     run: () => openRecent(recentList()[i]),

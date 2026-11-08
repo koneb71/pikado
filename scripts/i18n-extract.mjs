@@ -30,9 +30,23 @@
  * what reaches `tr()` at runtime.
  */
 
-const TEXT_KEYS = new Set([
-  'label', 'name', 'title', 'hint', 'header', 'menu', 'unit', 'placeholder', 'strokeLabel', 'tagline',
+/**
+ * Source files that hold no interface text and are left out: generated data,
+ * and the engine, whose only strings are language names (never translated).
+ */
+export const SKIP_FILES = new Set([
+  'src/text/google-catalog.data.js',
+  'src/core/i18n.js',
 ]);
+
+const TEXT_KEYS = new Set([
+  'label', 'name', 'title', 'hint', 'header', 'menu', 'unit', 'placeholder', 'tagline',
+]);
+
+/** A property whose value is interface text: one of the above, or a compound such as `strokeLabel`, `keyHint`. */
+function isTextKey(name) {
+  return TEXT_KEYS.has(name) || /(Label|Hint|Title|Header|Tagline|Placeholder)$/.test(name);
+}
 
 /** Calls whose first string argument is interface text. */
 const CALLS = new Set(['tr', 'msg']);
@@ -286,6 +300,145 @@ function valueStrings(toks, start) {
   return found;
 }
 
+/** The index of the bracket that closes the one at `open`. */
+function closing(toks, open) {
+  let depth = 0;
+  for (let k = open; k < toks.length; k++) {
+    const v = toks[k].type === 'punct' ? toks[k].value : null;
+    if (v && OPENERS.has(v)) depth++;
+    else if (v === ')' || v === ']' || v === '}') {
+      depth--;
+      if (depth === 0) return k;
+    }
+  }
+  return toks.length - 1;
+}
+
+/** The top-level arguments of the call whose `(` is at `open`, as [start, end) token ranges. */
+function argRanges(toks, open) {
+  const end = closing(toks, open);
+  const out = [];
+  let start = open + 1;
+  let depth = 0;
+  for (let k = open + 1; k < end; k++) {
+    const v = toks[k].type === 'punct' ? toks[k].value : null;
+    if (v && OPENERS.has(v)) depth++;
+    else if (v === ')' || v === ']' || v === '}') depth--;
+    else if (v === ',' && depth === 0) { out.push([start, k]); start = k + 1; }
+  }
+  if (start < end) out.push([start, end]);
+  return { args: out, end };
+}
+
+const NOT_FUNCTIONS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with', 'return', 'typeof', 'function']);
+
+/** Where an expression starting at `start` ends: the first `,` `;` or unmatched closer at its own level. */
+function expressionEnd(toks, start) {
+  let depth = 0;
+  for (let k = start; k < toks.length; k++) {
+    const v = toks[k].type === 'punct' ? toks[k].value : null;
+    if (v && OPENERS.has(v)) depth++;
+    else if (v === ')' || v === ']' || v === '}') {
+      if (depth === 0) return k;
+      depth--;
+    } else if ((v === ',' || v === ';') && depth === 0) return k;
+  }
+  return toks.length;
+}
+
+/**
+ * Functions that take interface text as an argument, by name, with the
+ * argument's position.
+ *
+ * `.commit('Brush Stroke')` and `{ label: 'Radius' }` are easy to find, but
+ * plenty of text travels through a helper first — a history label through
+ * `transformLayersOrSession('cw', 'Rotate Layer 90° CW')`, a slider's label
+ * through Camera Raw's `slider('tint', 'Tint', …)` — and a string the extractor
+ * never sees is one no translator is ever asked for. So a parameter is text
+ * when it reaches `.commit()`, `tr()` or `msg()`, a text property such as
+ * `label` (shorthand `{ key, label }` included), or the text position of
+ * another such function; found to a fixed point, since helpers call helpers.
+ */
+function labelTakers(fileToks) {
+  const fns = [];
+  for (const toks of fileToks) {
+    for (let k = 0; k < toks.length; k++) {
+      const tok = toks[k];
+      if (tok.type !== 'id' || NOT_FUNCTIONS.has(tok.value)) continue;
+      const prev = toks[k - 1];
+      let open = -1;
+      if (prev && prev.type === 'id' && prev.value === 'function' && toks[k + 1] && toks[k + 1].value === '(') open = k + 1;
+      else if (toks[k + 1] && (toks[k + 1].value === '=' || toks[k + 1].value === ':')) {
+        // name = (…) =>   name = async (…) =>   name: (…) =>
+        let m = k + 2;
+        if (toks[m] && toks[m].value === 'async') m++;
+        if (toks[m] && toks[m].value === '(' && toks[closing(toks, m) + 1] && toks[closing(toks, m) + 1].value === '=>') open = m;
+      } else if (toks[k + 1] && toks[k + 1].value === '(' && prev && prev.type === 'punct' && ['{', '}', ';', ','].includes(prev.value)) {
+        // method shorthand: name(…) { … }
+        if (toks[closing(toks, k + 1) + 1] && toks[closing(toks, k + 1) + 1].value === '{') open = k + 1;
+      }
+      if (open < 0) continue;
+      const { args, end } = argRanges(toks, open);
+      const params = args.map(([s]) => (toks[s].value === '...' ? toks[s + 1] : toks[s])).map((p) => (p && p.type === 'id' ? p.value : null));
+      let bodyStart = end + 1;
+      if (toks[bodyStart] && toks[bodyStart].value === '=>') bodyStart++;
+      const opener = toks[bodyStart] && toks[bodyStart].value;
+      const bodyEnd = opener === '{' || opener === '(' ? closing(toks, bodyStart) : expressionEnd(toks, bodyStart);
+      if (params.some(Boolean)) fns.push({ name: tok.value, params, toks, bodyStart, bodyEnd });
+    }
+  }
+
+  const SINKS = ['commit', 'record', 'replaceTop', 'tr', 'msg'];
+  const takers = new Map(SINKS.map((n) => [n, new Set([0])]));
+  const mark = (f, p) => {
+    if (!takers.has(f.name)) takers.set(f.name, new Set());
+    if (takers.get(f.name).has(p)) return false;
+    takers.get(f.name).add(p);
+    return true;
+  };
+  for (let round = 0, changed = true; changed && round < 8; round++) {
+    changed = false;
+    for (const f of fns) {
+      for (let k = f.bodyStart; k < f.bodyEnd; k++) {
+        const tok = f.toks[k];
+        if (tok.type !== 'id') continue;
+        const next = f.toks[k + 1];
+        const prev = f.toks[k - 1];
+        // { label } — a parameter named for a text property, used as shorthand.
+        const p0 = f.params.indexOf(tok.value);
+        if (p0 >= 0 && isTextKey(tok.value) && prev && (prev.value === '{' || prev.value === ',') && next && (next.value === ',' || next.value === '}')) {
+          changed = mark(f, p0) || changed;
+          continue;
+        }
+        // { label: param } — anywhere at the value's own level.
+        if (isTextKey(tok.value) && next && next.value === ':' && prev && (prev.value === '{' || prev.value === ',')) {
+          const stop = expressionEnd(f.toks, k + 2);
+          for (let m = k + 2; m < stop; m++) {
+            const p = f.params.indexOf(f.toks[m].value);
+            if (f.toks[m].type === 'id' && p >= 0) changed = mark(f, p) || changed;
+          }
+          continue;
+        }
+        // commit(param), tr(param), helper(…, param, …)
+        if (!takers.has(tok.value) || !next || next.value !== '(') continue;
+        const { args } = argRanges(f.toks, k + 1);
+        for (const i of takers.get(tok.value)) {
+          const range = args[i];
+          if (!range) continue;
+          for (let m = range[0]; m < range[1]; m++) {
+            const p = f.params.indexOf(f.toks[m].value);
+            if (f.toks[m].type === 'id' && p >= 0) changed = mark(f, p) || changed;
+          }
+        }
+      }
+    }
+  }
+  for (const k of SINKS) takers.delete(k); // found directly
+  return takers;
+}
+
+export { labelTakers as _labelTakers };
+
 /**
  * Extract every piece of interface text from a set of files.
  *
@@ -313,14 +466,24 @@ export function extract(files) {
     if (extra) Object.assign(entry, extra);
   };
 
-  for (const { path, source } of files) {
-    const toks = tokenize(source);
+  const tokenized = files.map(({ path, source }) => ({ path, toks: tokenize(source) }));
+  const takers = labelTakers(tokenized.map((f) => f.toks));
+
+  for (const { path, toks } of tokenized) {
     const at = (tok) => `${path}:${tok.line}`;
 
     for (let k = 0; k < toks.length; k++) {
       const tok = toks[k];
       const s = text(tok);
       if (s != null) literals.add(s);
+
+      // { 'Blue Filter': {…} } — a preset table keyed by its display name. Not
+      // a four-character format code ('Rd  ') or a header ('Content-Type').
+      if (tok.type === 'str' && toks[k + 1] && toks[k + 1].value === ':' && toks[k - 1]
+        && (toks[k - 1].value === '{' || toks[k - 1].value === ',')
+        && !/^\s|\s$/.test(tok.value) && /\s|^\p{Lu}\p{Ll}+$/u.test(tok.value)) {
+        add(tok.value, at(tok));
+      }
 
       if (tok.type !== 'id') continue;
       const prev = toks[k - 1];
@@ -332,12 +495,24 @@ export function extract(files) {
       // tr('…'), msg('…'), and history labels: doc.commit('…'), history.record('…') …
       if (next && next.value === '(' && ((CALLS.has(tok.value) && !isMethod) || (HISTORY_METHODS.has(tok.value) && isMethod))) {
         const arg = toks[k + 2];
-        const s1 = text(arg);
-        if (s1 != null) add(s1, at(arg));
-        else if (arg && arg.type === 'tpl' && CALLS.has(tok.value)) {
+        // Every string at the first argument's own level: `commit(handle ? 'Edit Handle' : 'Move Anchor Points')`.
+        for (const v of valueStrings(toks, k + 2)) add(text(v), at(v));
+        if (arg && arg.type === 'tpl' && arg.exprs && CALLS.has(tok.value)) {
           problems.push({ location: at(arg), message: `${tok.value}() given a template literal — use {placeholders} so the whole sentence can be translated` });
         }
         continue;
+      }
+
+      // A history label on its way to .commit() through a helper.
+      if (takers.has(tok.value) && next && next.value === '(' && !(prev && prev.type === 'id' && prev.value === 'function')) {
+        const { args } = argRanges(toks, k + 1);
+        for (const i of takers.get(tok.value)) {
+          if (!args[i]) continue;
+          for (const v of valueStrings(toks, args[i][0])) {
+            const vs = text(v);
+            if (!looksLikeIdentifier(vs)) add(vs, at(v));
+          }
+        }
       }
 
       // trn('{count} layer', '{count} layers', n)
@@ -351,11 +526,20 @@ export function extract(files) {
 
       // { label: 'Gaussian Blur...' } — a key in an object literal, not a ternary branch.
       const keyName = tok.value;
-      if (TEXT_KEYS.has(keyName) && next && next.value === ':' && prev && (prev.value === '{' || prev.value === ',')) {
+      if (isTextKey(keyName) && next && next.value === ':' && prev && (prev.value === '{' || prev.value === ',')) {
         for (const v of valueStrings(toks, k + 2)) {
           const vs = text(v);
           if (keyName !== 'unit' && looksLikeIdentifier(vs)) continue;
           add(vs, at(v));
+        }
+        continue;
+      }
+
+      // this.label = 'Rectangular Marquee' — a label kept on an object, committed later.
+      if (isTextKey(keyName) && keyName !== 'name' && keyName !== 'title' && isMethod && next && next.value === '=' ) {
+        for (const v of valueStrings(toks, k + 2)) {
+          const vs = text(v);
+          if (!looksLikeIdentifier(vs)) add(vs, at(v));
         }
         continue;
       }

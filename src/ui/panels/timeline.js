@@ -8,6 +8,7 @@ import {
   addFrame, removeFrame, moveFrame, setFrameDelay, updateFrame, framesFromLayers,
   tweenFrames, reverseFrames, clearTimeline,
 } from '../../core/animation.js';
+import { tr, trn } from '../../core/i18n.js';
 import './panels.css';
 import './timeline.css';
 
@@ -127,7 +128,7 @@ registerPanel({
 
     const strip = el('div.pktl-strip.pk-scroll');
     const bar = el('div.pktl-bar');
-    const empty = el('div.pk-empty', { text: 'No animation. Create the first frame to start a timeline.' });
+    const empty = el('div.pk-empty', { text: tr('No animation. Create the first frame to start a timeline.') });
     body.append(strip, bar);
 
     /** True while the panel is applying a frame, so write-back stays off. */
@@ -300,7 +301,7 @@ registerPanel({
         const frames = framesOf(d);
         const i = frameIndex(d);
         if (i + 1 >= frames.length) {
-          app.toast('Tween needs a frame after this one.', 'info');
+          app.toast(tr('Tween needs a frame after this one.'), 'info');
           return;
         }
         withCommit('Tween', (dd) => tweenFrames(dd, frames[i], frames[i + 1], 3));
@@ -322,28 +323,29 @@ registerPanel({
         }, iconEl(icon, { size: 14 }));
 
       const loop = el('select.pk-select.pktl-loop', {
-        title: 'How many times to play',
+        title: tr('How many times to play'),
         onchange: (e) => {
           if (!d) return;
           d.loopCount = Number(e.target.value) || 0;
           d.commit('Loop Count');
         },
       });
-      for (const [value, label] of [[0, 'Forever'], [1, 'Once'], [2, '2 times'], [3, '3 times'], [5, '5 times'], [10, '10 times']]) {
+      for (const value of [0, 1, 2, 3, 5, 10]) {
+        const label = value === 0 ? tr('Forever') : value === 1 ? tr('Once') : trn('{count} time', '{count} times', value);
         loop.appendChild(el('option', { value, text: label }));
       }
       if (d) loop.value = String(d.loopCount || 0);
 
       bar.replaceChildren(
-        iconBtn('play', playing ? 'Stop' : 'Play', () => (playing ? stop() : play()), { on: playing, disabled: !many }),
-        iconBtn('chevron-left', 'Previous frame', () => { stop(); step(-1); }, { disabled: !many }),
-        iconBtn('chevron-right', 'Next frame', () => { stop(); step(1); }, { disabled: !many }),
+        iconBtn('play', playing ? tr('Stop') : tr('Play'), () => (playing ? stop() : play()), { on: playing, disabled: !many }),
+        iconBtn('chevron-left', tr('Previous frame'), () => { stop(); step(-1); }, { disabled: !many }),
+        iconBtn('chevron-right', tr('Next frame'), () => { stop(); step(1); }, { disabled: !many }),
         el('span.pk-vsep'),
         loop,
         el('span.pk-spacer'),
-        iconBtn('duplicate', 'Duplicate frame', actions.duplicate, { disabled: !has }),
-        iconBtn('tween', 'Tween between this frame and the next', actions.tween, { disabled: !many }),
-        iconBtn('trash', 'Delete frame', actions.remove, { disabled: !many })
+        iconBtn('duplicate', tr('Duplicate frame'), actions.duplicate, { disabled: !has }),
+        iconBtn('tween', tr('Tween between this frame and the next'), actions.tween, { disabled: !many }),
+        iconBtn('trash', tr('Delete frame'), actions.remove, { disabled: !many })
       );
     }
 
@@ -389,7 +391,7 @@ registerPanel({
       const d = doc();
       renderBar();
       if (!d) {
-        strip.replaceChildren(el('div.pk-empty', { text: 'No document open.' }));
+        strip.replaceChildren(el('div.pk-empty', { text: tr('No document open.') }));
         return;
       }
       const frames = framesOf(d);
@@ -397,8 +399,8 @@ registerPanel({
         strip.replaceChildren(
           empty,
           el('div.pktl-start', {},
-            el('button.pk-btn.primary', { text: 'Create Frame Animation', onclick: actions.create }),
-            el('button.pk-btn.subtle', { text: 'Make Frames From Layers', onclick: actions.fromLayers })
+            el('button.pk-btn.primary', { text: tr('Create Frame Animation'), onclick: actions.create }),
+            el('button.pk-btn.subtle', { text: tr('Make Frames From Layers'), onclick: actions.fromLayers })
           )
         );
         return;
@@ -433,7 +435,7 @@ registerPanel({
         thumb.className = 'pktl-thumb';
 
         const delay = el('select.pktl-delay', {
-          title: 'Frame delay',
+          title: tr('Frame delay'),
           onchange: (e) => {
             const ms = Number(e.target.value);
             withCommit('Frame Delay', (dd) => setFrameDelay(dd, ms, selection()));
@@ -448,7 +450,7 @@ registerPanel({
       });
 
       strip.replaceChildren(...cells, el('button.pk-icon-btn.pktl-add', {
-        title: 'New frame', onclick: actions.add,
+        title: tr('New frame'), onclick: actions.add,
       }, iconEl('plus', { size: 14 })));
     }
 

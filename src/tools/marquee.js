@@ -3,6 +3,7 @@ import { app } from '../core/app.js';
 import { Selection } from '../core/selection.js';
 import { snapPoint, clearSnapLines } from '../core/snapping.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Marquee tools + the shared base class every selection tool builds on
@@ -140,20 +141,20 @@ export class SelectionTool extends Tool {
 
     if (!doc.selection.active) {
       return [
-        cmd('select.all', { label: 'Select All' }),
+        cmd('select.all', { label: tr('Select All') }),
         cmd('select.reselect', { hideWhenDisabled: true }),
         sep(),
         cmd('select.subject'),
         cmd('select.select-and-mask'),
         sep(),
-        cmd('layer.new', { label: 'New Layer' }),
+        cmd('layer.new', { label: tr('New Layer') }),
         cmd('select.load'),
       ];
     }
 
     return [
       cmd('select.deselect'),
-      cmd('select.inverse', { label: 'Select Inverse' }),
+      cmd('select.inverse', { label: tr('Select Inverse') }),
       sep(),
       cmd('select.select-and-mask'),
       ...this.selectionModifyItems(),

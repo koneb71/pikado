@@ -7,6 +7,7 @@ import { gradientParam, gradientToLUT, defaultGradient } from '../ui/gradient-ed
 import { computeHistogram, drawHistogram, setupHiDPI, currentHistogram, clipPoints, emptyHistogram } from '../ui/histogram.js';
 import { getComposite } from '../render/compositor.js';
 import { app } from '../core/app.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * The rest of Image > Adjustments: pixel-mapping operations, the mask-driven
@@ -537,8 +538,8 @@ registerAdjustment({
 /* ================================================================== */
 
 /** Selection weight for a pixel against the target colour. */
-function replaceWeight(r, g, b, tr, tg, tb, fuzz) {
-  const dist = Math.max(Math.abs(r - tr), Math.abs(g - tg), Math.abs(b - tb));
+function replaceWeight(r, g, b, r0, g0, b0, fuzz) {
+  const dist = Math.max(Math.abs(r - r0), Math.abs(g - g0), Math.abs(b - b0));
   if (fuzz <= 0) return dist === 0 ? 1 : 0;
   return 1 - smoothstep(clamp(dist / fuzz, 0, 1));
 }
@@ -552,7 +553,7 @@ function replaceMaskParam() {
     default: 0,
     render(container, state, onChange) {
       const W = 200, H = 120;
-      const canvas = el('canvas.pk-rc-thumb', { width: W, height: H, title: 'Click to sample a colour' });
+      const canvas = el('canvas.pk-rc-thumb', { width: W, height: H, title: tr('Click to sample a colour') });
       const ctx = setupHiDPI(canvas, W, H);
       container.appendChild(canvas);
 
@@ -584,7 +585,7 @@ function replaceMaskParam() {
         if (!source) {
           ctx.fillStyle = '#7a7a7a';
           ctx.font = '11px sans-serif';
-          ctx.fillText('No image', 8, 20);
+          ctx.fillText(tr('No image'), 8, 20);
           return;
         }
         const t = parseColor(state.targetColor || '#ff0000');

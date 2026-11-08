@@ -17,17 +17,11 @@
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extract, audit, hasTranslation, isLive } from './i18n-extract.mjs';
+import { extract, audit, hasTranslation, isLive, SKIP_FILES } from './i18n-extract.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'src');
 const LOCALES = join(SRC, 'locales');
-/** Generated data, not interface text: the Google Fonts catalogue is 60 KB of family names. */
-const SKIP = new Set([
-  'src/text/google-catalog.data.js',
-  // The engine: its only strings are language names, which are never translated.
-  'src/core/i18n.js',
-]);
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir).sort()) {
@@ -41,7 +35,7 @@ function walk(dir, out = []) {
 export function sourceFiles() {
   return walk(SRC)
     .map((p) => relative(ROOT, p).split('\\').join('/'))
-    .filter((p) => !SKIP.has(p) && !p.startsWith('src/locales/'))
+    .filter((p) => !SKIP_FILES.has(p) && !p.startsWith('src/locales/'))
     .map((path) => ({ path, source: readFileSync(join(ROOT, path), 'utf8') }));
 }
 

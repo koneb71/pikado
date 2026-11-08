@@ -5,6 +5,7 @@ import { Selection } from '../../core/selection.js';
 import { getComposite, channelViewOf, setChannelView, isFullChannelView } from '../../render/compositor.js';
 import { iconEl } from '../icons.js';
 import { promptDialog } from '../dialog.js';
+import { tr } from '../../core/i18n.js';
 import './panels.css';
 import './channels.css';
 
@@ -96,8 +97,8 @@ function maskFromChannelCanvas(doc, canvas) {
 function nextAlphaName(doc) {
   let n = doc.alphaChannels.length + 1;
   const taken = new Set(doc.alphaChannels.map((c) => c.name));
-  while (taken.has(`Alpha ${n}`)) n++;
-  return `Alpha ${n}`;
+  while (taken.has(tr('Alpha {number}', { number: n }))) n++;
+  return tr('Alpha {number}', { number: n });
 }
 
 registerPanel({
@@ -130,21 +131,21 @@ registerPanel({
       else {
         const ch = d.alphaChannels.find((c) => c.id === id);
         if (!ch || !ch.canvas) {
-          app.toast('Select a channel to load.');
+          app.toast(tr('Select a channel to load.'));
           return;
         }
         mask = maskFromChannelCanvas(d, ch.canvas);
       }
       d.selection.set(mask);
       d.commit('Load Channel as Selection');
-      app.toast('Channel loaded as a selection.', 'ok');
+      app.toast(tr('Channel loaded as a selection.'), 'ok');
     };
 
     const saveSelection = () => {
       const d = doc();
       if (!d) return;
       if (!d.selection.active) {
-        app.toast('There is no selection to save.', 'warn');
+        app.toast(tr('There is no selection to save.'), 'warn');
         return;
       }
       const ch = { id: uid('chan'), name: nextAlphaName(d), canvas: d.selection.toCanvas() };
@@ -171,7 +172,7 @@ registerPanel({
       if (!d) return;
       const i = d.alphaChannels.findIndex((c) => c.id === selectedId);
       if (i < 0) {
-        app.toast('Select an alpha channel to delete.', 'warn');
+        app.toast(tr('Select an alpha channel to delete.'), 'warn');
         return;
       }
       d.alphaChannels.splice(i, 1);
@@ -184,7 +185,7 @@ registerPanel({
       if (!d) return;
       d.quickMask = !d.quickMask;
       if (d.quickMask && !d.selection.active) {
-        app.toast('Quick Mask is on — it paints over the current selection.', 'info');
+        app.toast(tr('Quick Mask is on — it paints over the current selection.'), 'info');
       }
       // View state only: no history entry, but the canvas must repaint.
       d.touch('quick-mask');
@@ -219,7 +220,7 @@ registerPanel({
 
     const makeRow = ({ id, name, thumb, eye, onRename, dim }) => {
       const row = el('div.pkch-row' + (selectedId === id ? '.is-selected' : '') + (dim ? '.is-hidden' : ''), {
-        title: `${name} — Ctrl/Cmd-click to load as a selection`,
+        title: tr('{name} — Ctrl/Cmd-click to load as a selection', { name }),
       });
       const eyeCell = el('div.pkch-eye');
       if (eye) {
@@ -249,7 +250,7 @@ registerPanel({
       const d = doc();
       list.replaceChildren();
       if (!d) {
-        list.appendChild(el('div.pkch-empty', { text: 'No document open.' }));
+        list.appendChild(el('div.pkch-empty', { text: tr('No document open.') }));
         renderFooter();
         return;
       }
@@ -257,9 +258,9 @@ registerPanel({
       if (d.quickMask) {
         list.appendChild(makeRow({
           id: 'quickmask',
-          name: 'Quick Mask',
+          name: tr('Quick Mask'),
           thumb: canvasThumb(d.selection.active ? d.selection.toCanvas() : null),
-          eye: { on: true, title: 'Exit Quick Mask', onToggle: toggleQuickMask },
+          eye: { on: true, title: tr('Exit Quick Mask'), onToggle: toggleQuickMask },
         }));
       }
 
@@ -270,16 +271,16 @@ registerPanel({
       const allOn = isFullChannelView(cv);
       list.appendChild(makeRow({
         id: 'composite',
-        name: 'RGB',
+        name: tr('RGB'),
         thumb: base.canvas,
         dim: !allOn,
         eye: {
           on: allOn,
-          title: allOn ? 'Hide all channels' : 'Show all channels',
+          title: allOn ? tr('Hide all channels') : tr('Show all channels'),
           onToggle: toggleCompositeView,
         },
       }));
-      for (const [key, name, offset] of [['r', 'Red', 0], ['g', 'Green', 1], ['b', 'Blue', 2]]) {
+      for (const [key, name, offset] of [['r', tr('Red'), 0], ['g', tr('Green'), 1], ['b', tr('Blue'), 2]]) {
         list.appendChild(makeRow({
           id: key,
           name,
@@ -287,7 +288,9 @@ registerPanel({
           dim: !cv[key],
           eye: {
             on: cv[key],
-            title: `${cv[key] ? 'Hide' : 'Show'} the ${name.toLowerCase()} channel`,
+            title: cv[key]
+              ? tr('Hide the {channel} channel', { channel: name.toLowerCase() })
+              : tr('Show the {channel} channel', { channel: name.toLowerCase() }),
             onToggle: () => toggleChannelView(key),
           },
         }));
@@ -299,7 +302,7 @@ registerPanel({
           name: ch.name,
           thumb: canvasThumb(ch.canvas),
           onRename: async () => {
-            const next = await promptDialog('Channel name', ch.name, 'Rename Channel');
+            const next = await promptDialog(tr('Channel name'), ch.name, tr('Rename Channel'));
             if (next == null || !next.trim()) return;
             ch.name = next.trim();
             d.commit('Rename Channel');
@@ -312,12 +315,12 @@ registerPanel({
     const renderFooter = () => {
       const d = doc();
       footer.replaceChildren(
-        el('button.pk-icon-btn', { type: 'button', title: 'Load channel as selection', disabled: !d, onclick: () => loadSelection(selectedId) }, iconEl('marquee-rect')),
-        el('button.pk-icon-btn', { type: 'button', title: 'Save selection as channel', disabled: !d, onclick: saveSelection }, iconEl('mask')),
-        el('button.pk-icon-btn' + (d && d.quickMask ? '.active' : ''), { type: 'button', title: 'Toggle Quick Mask', disabled: !d, onclick: toggleQuickMask }, iconEl('adjustment')),
+        el('button.pk-icon-btn', { type: 'button', title: tr('Load channel as selection'), disabled: !d, onclick: () => loadSelection(selectedId) }, iconEl('marquee-rect')),
+        el('button.pk-icon-btn', { type: 'button', title: tr('Save selection as channel'), disabled: !d, onclick: saveSelection }, iconEl('mask')),
+        el('button.pk-icon-btn' + (d && d.quickMask ? '.active' : ''), { type: 'button', title: tr('Toggle Quick Mask'), disabled: !d, onclick: toggleQuickMask }, iconEl('adjustment')),
         el('div.pk-spacer'),
-        el('button.pk-icon-btn', { type: 'button', title: 'New channel', disabled: !d, onclick: newChannel }, iconEl('plus')),
-        el('button.pk-icon-btn', { type: 'button', title: 'Delete channel', disabled: !d, onclick: deleteChannel }, iconEl('trash'))
+        el('button.pk-icon-btn', { type: 'button', title: tr('New channel'), disabled: !d, onclick: newChannel }, iconEl('plus')),
+        el('button.pk-icon-btn', { type: 'button', title: tr('Delete channel'), disabled: !d, onclick: deleteChannel }, iconEl('trash'))
       );
     };
 

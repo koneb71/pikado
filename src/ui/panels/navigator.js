@@ -3,6 +3,7 @@ import { app } from '../../core/app.js';
 import { el, clamp, createCanvas } from '../../core/util.js';
 import { getComposite } from '../../render/compositor.js';
 import { iconEl } from '../icons.js';
+import { tr } from '../../core/i18n.js';
 import './panels.css';
 import './navigator.css';
 
@@ -109,7 +110,7 @@ registerPanel({
         ctx.fillStyle = 'rgba(255,255,255,.28)';
         ctx.font = '11px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('No document', view.width / 2, view.height / 2);
+        ctx.fillText(tr('No document'), view.width / 2, view.height / 2);
         return;
       }
       if (!fit) fit = computeFit(doc);
@@ -205,15 +206,15 @@ registerPanel({
     pct.addEventListener('keydown', (e) => { if (e.key === 'Enter') commitPct(); });
 
     const zoomOut = el('button.pk-icon-btn', {
-      type: 'button', title: 'Zoom out',
+      type: 'button', title: tr('Zoom out'),
       onclick: () => { if (app.activeDoc) { app.viewport.zoomStep(-1); app.emit('view-change'); app.requestRender(); syncZoom(); paint(); } },
     }, iconEl('minus'));
     const zoomIn = el('button.pk-icon-btn', {
-      type: 'button', title: 'Zoom in',
+      type: 'button', title: tr('Zoom in'),
       onclick: () => { if (app.activeDoc) { app.viewport.zoomStep(1); app.emit('view-change'); app.requestRender(); syncZoom(); paint(); } },
     }, iconEl('plus'));
     const fitBtn = el('button.pk-icon-btn', {
-      type: 'button', title: 'Fit on screen',
+      type: 'button', title: tr('Fit on screen'),
       onclick: () => { if (app.activeDoc) { app.fitView(); syncZoom(); paint(); } },
     }, iconEl('navigator'));
 

@@ -6,6 +6,7 @@ import { morph } from '../core/selection.js';
 import { compositeDocument, setLayerPreview } from '../render/compositor.js';
 import { getPatterns as builtinPatterns } from '../paint/patterns.js';
 import { Layer, LayerType } from '../core/layer.js';
+import { tr } from '../core/i18n.js';
 import { paramDialog, promptDialog } from '../ui/dialog.js';
 
 /**
@@ -60,19 +61,19 @@ export async function definePattern(doc) {
   const src = layer && layer.canvas ? layer.canvas : compositeDocument(doc);
   const b = doc.selection.active ? doc.selection.bounds() : { x: 0, y: 0, width: doc.width, height: doc.height };
   if (!b || b.width < 1 || b.height < 1) {
-    app.toast('Select a rectangle to define a pattern from.');
+    app.toast(tr('Select a rectangle to define a pattern from.'));
     return null;
   }
   const tile = createCanvas(b.width, b.height);
   tile.getContext('2d').drawImage(src, -b.x, -b.y);
 
-  const fallback = `Pattern ${customPatterns().length + 1}`;
-  const name = await promptDialog('Pattern name', fallback, 'Pattern Name');
+  const fallback = tr('Pattern {number}', { number: customPatterns().length + 1 });
+  const name = await promptDialog(tr('Pattern name'), fallback, tr('Pattern Name'));
   if (name == null) return null;
   const entry = { id: uid('pat'), name: name.trim() || fallback, canvas: tile };
   customPatterns().unshift(entry);
   app.emit('patterns-change', entry);
-  app.toast(`Defined pattern "${entry.name}" (${b.width} × ${b.height})`, 'ok');
+  app.toast(tr('Defined pattern "{name}" ({width} × {height})', { name: entry.name, width: b.width, height: b.height }), 'ok');
   return entry;
 }
 
@@ -90,15 +91,15 @@ function targetSurface(doc, layer) {
 
 function canEdit(doc, layer) {
   if (!layer) {
-    app.toast('No layer selected.');
+    app.toast(tr('No layer selected.'));
     return false;
   }
   if (layer.locked.all || layer.locked.pixels) {
-    app.toast(`Layer "${layer.name}" is locked.`);
+    app.toast(tr('Layer "{name}" is locked.', { name: layer.name }));
     return false;
   }
   if (!targetSurface(doc, layer)) {
-    app.toast('This layer has no pixels to fill. Rasterize it first.');
+    app.toast(tr('This layer has no pixels to fill. Rasterize it first.'));
     return false;
   }
   return true;
@@ -248,7 +249,7 @@ export function fillSelection(doc, opts = {}) {
   const surf = targetSurface(doc, layer);
   const paint = buildFillPaint(doc, layer, opts);
   if (!paint) {
-    app.toast(opts.use === 'pattern' ? 'That pattern is no longer available.' : 'Nothing to fill with.');
+    app.toast(opts.use === 'pattern' ? tr('That pattern is no longer available.') : tr('Nothing to fill with.'));
     return false;
   }
   const out = paintOnto(surf.canvas, clipToSelection(doc, paint), {
@@ -309,8 +310,11 @@ export async function showFillDialog(doc) {
     preserveTransparency: s.preserveTransparency,
   });
 
+  // A pattern the user defined keeps the name they gave it; a built-in one is
+  // named in the interface language.
+  const custom = customPatterns();
   const result = await paramDialog({
-    title: 'Fill',
+    title: tr('Fill'),
     width: 380,
     state,
     params: [
@@ -318,7 +322,9 @@ export async function showFillDialog(doc) {
       { key: 'color', label: 'Color', type: 'color', when: (s) => s.use === 'color' },
       {
         key: 'pattern', label: 'Pattern', type: 'select',
-        options: patterns.length ? patterns.map((p) => ({ value: p.id, label: p.name })) : [{ value: '', label: 'None defined' }],
+        options: () => (patterns.length
+          ? patterns.map((p) => ({ value: p.id, label: custom.includes(p) ? p.name : tr(p.name) }))
+          : [{ value: '', label: tr('None defined') }]),
         when: (s) => s.use === 'pattern',
       },
       { key: 'patternScale', label: 'Pattern Scale', type: 'slider', min: 0.1, max: 4, step: 0.1, when: (s) => s.use === 'pattern' },
@@ -341,7 +347,7 @@ export async function showFillDialog(doc) {
   setLayerPreview(layer.id, null);
   doc.touch('preview');
   if (!result) return;
-  await app.busy('Fill', async () => fillSelection(doc, toOpts(result)));
+  await app.busy(tr('Fill'), async () => fillSelection(doc, toOpts(result)));
 }
 
 /* ------------------------------------------------------------------ */
@@ -432,7 +438,7 @@ export async function showStrokeDialog(doc) {
   });
 
   const result = await paramDialog({
-    title: 'Stroke',
+    title: tr('Stroke'),
     width: 380,
     state,
     params: [
@@ -469,7 +475,7 @@ export async function showStrokeDialog(doc) {
   setLayerPreview(layer.id, null);
   doc.touch('preview');
   if (!result) return;
-  await app.busy('Stroke', async () => strokeSelection(doc, toOpts(result)));
+  await app.busy(tr('Stroke'), async () => strokeSelection(doc, toOpts(result)));
 }
 
 /* ------------------------------------------------------------------ */
@@ -670,18 +676,18 @@ export function contentAwareFill(doc, opts = {}) {
   const layer = doc.activeLayer();
   if (!canEdit(doc, layer)) return false;
   if (!doc.selection.active) {
-    app.toast('Select the area to remove first.');
+    app.toast(tr('Select the area to remove first.'));
     return false;
   }
   const rect = holeRect(doc);
   if (!rect || rect.width < 3 || rect.height < 3) {
-    app.toast('The selection is too small to fill.');
+    app.toast(tr('The selection is too small to fill.'));
     return false;
   }
 
   const source = opts.sampleAllLayers ? compositeDocument(doc) : layer.canvas;
   if (!source) {
-    app.toast('This layer has no pixels to sample.');
+    app.toast(tr('This layer has no pixels to sample.'));
     return false;
   }
 
@@ -700,7 +706,7 @@ export function contentAwareFill(doc, opts = {}) {
     }
   }
   if (!holeCount) {
-    app.toast('The selection is empty.');
+    app.toast(tr('The selection is empty.'));
     return false;
   }
 
@@ -747,7 +753,7 @@ export function contentAwareFill(doc, opts = {}) {
   pc.globalCompositeOperation = 'source-over';
 
   if (opts.output === 'new-layer') {
-    const nl = new Layer({ type: LayerType.RASTER, name: 'Content-Aware Fill', canvas: patch });
+    const nl = new Layer({ type: LayerType.RASTER, name: tr('Content-Aware Fill'), canvas: patch });
     doc.addLayer(nl);
     doc.commit('Content-Aware Fill');
     return true;
@@ -771,11 +777,11 @@ export function contentAwareFill(doc, opts = {}) {
 export async function showContentAwareFillDialog(doc) {
   if (!doc) return;
   if (!doc.selection.active) {
-    app.toast('Select the area to remove first.');
+    app.toast(tr('Select the area to remove first.'));
     return;
   }
   const result = await paramDialog({
-    title: 'Content-Aware Fill',
+    title: tr('Content-Aware Fill'),
     width: 380,
     preview: false,
     state: { sampleAllLayers: false, output: 'current' },
@@ -789,5 +795,5 @@ export async function showContentAwareFillDialog(doc) {
     ],
   });
   if (!result) return;
-  await app.busy('Content-Aware Fill', async () => contentAwareFill(doc, result));
+  await app.busy(tr('Content-Aware Fill'), async () => contentAwareFill(doc, result));
 }

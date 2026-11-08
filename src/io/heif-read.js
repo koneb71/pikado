@@ -1,4 +1,5 @@
 import { createCanvas, ctx2d } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { heifColour } from './heif-info.js';
 import { parseICC, getProfile, transformImageData } from '../color/icc.js';
 // A URL, not a module: see `loadLibheif`.
@@ -82,7 +83,7 @@ export async function decodeHEIF(source) {
     lib = await loadLibheif();
   } catch (err) {
     console.error('[heif] libheif failed to load', err);
-    throw new Error('the HEIC decoder could not be loaded — check your connection and try again');
+    throw new Error(tr('the HEIC decoder could not be loaded — check your connection and try again'));
   }
 
   const decoder = new lib.HeifDecoder();
@@ -92,16 +93,16 @@ export async function decodeHEIF(source) {
   } catch (err) {
     console.error('[heif] decode failed', err);
   }
-  if (!images.length) throw new Error('this HEIC file has no image the decoder can read');
+  if (!images.length) throw new Error(tr('this HEIC file has no image the decoder can read'));
 
   try {
     const image = images.find((im) => typeof im.is_primary === 'function' && im.is_primary()) || images[0];
     const width = image.get_width();
     const height = image.get_height();
-    if (!width || !height) throw new Error('the image has no pixels');
+    if (!width || !height) throw new Error(tr('the image has no pixels'));
     const data = new ImageData(width, height);
     await new Promise((resolve, reject) => {
-      image.display(data, (out) => (out ? resolve() : reject(new Error('the HEIC image could not be decoded'))));
+      image.display(data, (out) => (out ? resolve() : reject(new Error(tr('the HEIC image could not be decoded')))));
     });
     toSRGB(data, heifColour(bytes));
     const canvas = createCanvas(width, height);

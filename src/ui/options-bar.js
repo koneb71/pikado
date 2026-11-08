@@ -207,7 +207,8 @@ function renderOption(p, tool) {
     }
 
     case 'select': {
-      const sel = el('select.pk-select.pk-ob-select');
+      // A thunk's options are data (font names); keep page translation off them too.
+      const sel = el('select.pk-select.pk-ob-select', { translate: typeof p.options === 'function' ? 'no' : null });
       /*
        * Rebuilt on every sync rather than once, because a descriptor may
        * declare its options as a thunk when the list can change while the bar

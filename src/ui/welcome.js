@@ -130,9 +130,9 @@ function header() {
 
   return el('header.pk-wc-head', {},
     el('div.pk-wc-lock', {},
-      el('span.pk-wc-mark', { html: brandMark({ size: 56, title: BRAND.name }) }),
+      el('span.pk-wc-mark', { html: brandMark({ size: 56, title: BRAND.name }), translate: 'no' }),
       el('div', {},
-        el('div.pk-wc-word', { text: BRAND.name }),
+        el('div.pk-wc-word', { text: BRAND.name, translate: 'no' }),
         el('div.pk-wc-tag', { text: tr(BRAND.tagline) })
       )
     ),

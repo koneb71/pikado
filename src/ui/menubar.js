@@ -53,7 +53,7 @@ export function buildMenubar(rootEl) {
   rootEl.replaceChildren();
 
   rootEl.appendChild(
-    el('div.pk-brand', { title: `${BRAND.name} — ${tr(BRAND.tagline)}`, html: brandLock({ size: 21, wordSize: 15 }) })
+    el('div.pk-brand', { title: `${BRAND.name} — ${tr(BRAND.tagline)}`, html: brandLock({ size: 21, wordSize: 15 }), translate: 'no' })
   );
 
   bar.menus = el('nav.pk-menus', { role: 'menubar' });
@@ -126,7 +126,7 @@ function syncTitle() {
   // NB: replaceChildren() is the native DOM API and stringifies null to the
   // text "null" — unlike el(), it does not skip empty children. Filter first.
   bar.title.replaceChildren(...[
-    el('span.pk-doc-name', { text: doc.name }),
+    el('span.pk-doc-name', { text: doc.name, translate: 'no' }),
     el('span.pk-doc-meta', { text: `${doc.width} × ${doc.height}` }),
     doc.dirty ? el('span.pk-doc-dirty', { text: '●', title: tr('Unsaved changes') }) : null,
   ].filter(Boolean));
@@ -222,7 +222,7 @@ function buildItem(it, depth) {
     `div.pk-menu-item${enabled ? '' : '.disabled'}${hasChildren ? '.has-sub' : ''}`,
     { role: 'menuitem' },
     el('span.pk-menu-tick', { html: it.checked ? icon('check', { size: 11 }) : '' }),
-    el('span.pk-menu-label', { text: it.label }),
+    el('span.pk-menu-label', { text: it.label, translate: it.verbatim ? 'no' : null }),
     el('span.pk-menu-accel', { text: it.accel || '' }),
     el('span.pk-menu-arrow', { html: hasChildren ? icon('chevron-right', { size: 11 }) : '' })
   );
@@ -412,6 +412,7 @@ function adjustmentLayerItems() {
 function documentItems() {
   return app.docs.map((doc) => ({
     label: doc.name + (doc.dirty ? ' *' : ''),
+    verbatim: true,
     checked: doc === app.activeDoc,
     run: () => app.setActiveDoc(doc),
   }));
