@@ -655,3 +655,29 @@ suite('select / the refinement pipeline is neutral at its defaults', async (t) =
   t.gt(partial(shiftEdge(soft, W, H, 30)), softPartial * 0.5,
     'and so does Shift Edge');
 });
+
+suite('select: Quick Selection shows its crosshair, and its ring', async (t) => {
+  // QuickSelectTool kept the brush ring's position in `this.cursor` — the
+  // field Tool#getCursor() hands the canvas as a CSS cursor. The canvas got
+  // null, then an {x, y} object, and showed the default arrow throughout.
+  // Verified to fail: with the position stored in `cursor` again, getCursor()
+  // returns null before any movement and an object after it.
+  const app = t.app;
+  t.doc(80, 60, '#ffffff');
+  const prev = app.tool && app.tool.id;
+  try {
+    app.setTool('quick-select');
+    t.eq(app.tool.getCursor(), 'crosshair', 'a crosshair before the pointer moves');
+    app.tool.onPointerMove({ x: 30, y: 30, sx: 30, sy: 30, button: 0, buttons: 0 });
+    t.eq(app.tool.getCursor(), 'crosshair', 'and after it moves');
+    // The ring still follows the pointer under its new name.
+    const ctx = document.createElement('canvas').getContext('2d');
+    let arcs = 0;
+    const arc = ctx.arc.bind(ctx);
+    ctx.arc = (...a) => { arcs++; return arc(...a); };
+    app.tool.drawOverlay(ctx, app.viewport);
+    t.gt(arcs, 0, 'the brush ring is drawn where the pointer is');
+  } finally {
+    if (prev) app.setTool(prev);
+  }
+});

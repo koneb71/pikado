@@ -181,7 +181,10 @@ class QuickSelectTool extends SelectionTool {
       ],
     });
     this.painting = false;
-    this.cursor = null;
+    // Where the brush ring is drawn. Not `cursor`: that is Tool's CSS cursor,
+    // which getCursor() hands the canvas — storing a point there replaced the
+    // crosshair with the default arrow.
+    this.ringAt = null;
   }
 
   onPointerDown(e) {
@@ -215,14 +218,14 @@ class QuickSelectTool extends SelectionTool {
 
     this.painting = true;
     this.last = { x: e.x, y: e.y };
-    this.cursor = { x: e.x, y: e.y };
+    this.ringAt = { x: e.x, y: e.y };
     this.dab(e.x, e.y);
     this.grow(GROW_BUDGET);
     this.push(false);
   }
 
   onPointerMove(e) {
-    this.cursor = { x: e.x, y: e.y };
+    this.ringAt = { x: e.x, y: e.y };
     if (!this.painting) {
       this.app.requestRender();
       return;
@@ -383,8 +386,8 @@ class QuickSelectTool extends SelectionTool {
   }
 
   drawOverlay(ctx, view) {
-    if (!this.cursor) return;
-    const c = view.toScreen(this.cursor.x, this.cursor.y);
+    if (!this.ringAt) return;
+    const c = view.toScreen(this.ringAt.x, this.ringAt.y);
     const r = ((Number(this.state.size) || 30) / 2) * view.scale;
     if (r < 1) return;
     ctx.save();
