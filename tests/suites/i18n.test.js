@@ -509,11 +509,19 @@ suite('i18n: a helper\u2019s text position belongs to its own file unless export
   const files = [
     { path: 'a.js', source: "const push = (label) => out.push({ label });\npush('Interface A');\nexport function badge(title) { return el('span', { title }); }" },
     { path: 'b.js', source: "const L = []; const push = (...lines) => L.push(...lines);\npush('\\t/EngineDict');\nbadge('Interface B');" },
+    // A method is reached through an object, and an exported function through a
+    // namespace import: both look like `x.name(…)`, from any file.
+    { path: 'c.js', source: "export class Tool { applyPath(path, mode, label) { doc.commit(label); } }\nexport function setLayerProps(doc, l, props, label) { doc.commit(label); }" },
+    { path: 'd.js', source: "class Lasso extends Tool { up() { this.applyPath(p, 'add', 'Polygonal Lasso'); } }\nops.setLayerProps(doc, l, {}, 'Rename Layer');" },
   ];
   const found = [...extract(files).strings.keys()];
   t.ok(found.includes('Interface A'), 'a local helper is followed in its own file');
   t.notOk(found.includes('\t/EngineDict'), 'but a same-named function elsewhere is not that helper');
   t.ok(found.includes('Interface B'), 'an exported helper is followed wherever it is called');
+  // Verified to fail: with methods scoped like local functions, the lasso's
+  // and wand's history labels and every ops.setLayerProps label went missing.
+  t.ok(found.includes('Polygonal Lasso'), 'a method is followed wherever it is called as one');
+  t.ok(found.includes('Rename Layer'), 'and so is an exported function called through its namespace');
 });
 
 suite('i18n: a context separates one English word with two meanings', async (t) => {

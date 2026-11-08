@@ -359,10 +359,14 @@ function expressionEnd(toks, start) {
  * `label` (shorthand `{ key, label }` included), or the text position of
  * another such function; found to a fixed point, since helpers call helpers.
  *
- * A helper counts in its own file, and in others only if it is exported —
+ * A function counts in its own file, and in others only if it is exported —
  * otherwise one file's little `push(label)` would make every `push('…')`
  * everywhere look like interface text, which is exactly what it did to the
- * PSD writer's EngineData lines.
+ * PSD writer's EngineData lines. A method is different: it is reached through
+ * an object, never an import — the lasso calls `this.applyPath(…, 'Polygonal
+ * Lasso')`, defined on the marquee's class in another file — so a method
+ * counts wherever it is called *as a method*, `.name(…)`, as does an exported
+ * function called through a namespace import, `ops.setLayerProps(…)`.
  *
  * @returns {{positions(name: string, file: number): Set<number>}}
  */
@@ -382,6 +386,7 @@ function labelTakers(fileToks) {
       const prev = toks[k - 1];
       let open = -1;
       let exported = exportedNames.has(tok.value);
+      let method = false;
       if (prev && prev.type === 'id' && prev.value === 'function' && toks[k + 1] && toks[k + 1].value === '(') {
         open = k + 1;
         const before = toks[k - 2] && toks[k - 2].value === 'async' ? toks[k - 3] : toks[k - 2];
@@ -394,7 +399,7 @@ function labelTakers(fileToks) {
         exported = exported || !!(toks[k - 2] && toks[k - 2].value === 'export');
       } else if (toks[k + 1] && toks[k + 1].value === '(' && prev && prev.type === 'punct' && ['{', '}', ';', ','].includes(prev.value)) {
         // method shorthand: name(…) { … }
-        if (toks[closing(toks, k + 1) + 1] && toks[closing(toks, k + 1) + 1].value === '{') open = k + 1;
+        if (toks[closing(toks, k + 1) + 1] && toks[closing(toks, k + 1) + 1].value === '{') { open = k + 1; method = true; }
       }
       if (open < 0) continue;
       const { args, end } = argRanges(toks, open);
@@ -403,23 +408,35 @@ function labelTakers(fileToks) {
       if (toks[bodyStart] && toks[bodyStart].value === '=>') bodyStart++;
       const opener = toks[bodyStart] && toks[bodyStart].value;
       const bodyEnd = opener === '{' || opener === '(' ? closing(toks, bodyStart) : expressionEnd(toks, bodyStart);
-      if (params.some(Boolean)) fns.push({ name: tok.value, params, toks, file, exported, bodyStart, bodyEnd });
+      if (params.some(Boolean)) fns.push({ name: tok.value, params, toks, file, exported, method, bodyStart, bodyEnd });
     }
   });
 
   const SINKS = new Map(['commit', 'record', 'replaceTop', 'tr', 'msg'].map((n) => [n, new Set([0])]));
   const global = new Map();
   const local = new Map(); // `${file}:${name}` → positions
+  const methods = new Map();
   const EMPTY = new Set();
-  const positions = (name, file) => {
+  /**
+   * Positions for a call. `name(…)` finds the functions in scope; `x.name(…)`
+   * finds methods, and exported functions too, since that is also how a
+   * namespace import calls one (`img.transformLayers(…)`).
+   */
+  const positions = (name, file, asMethod) => {
+    if (asMethod) {
+      // `doc.commit(label)` is itself a method call: the sinks count here too.
+      const sets = [SINKS.get(name), methods.get(name), global.get(name)].filter(Boolean);
+      if (sets.length < 2) return sets[0] || EMPTY;
+      return new Set(sets.flatMap((x) => [...x]));
+    }
     const a = SINKS.get(name) || global.get(name);
     const b = local.get(`${file}:${name}`);
     if (!b) return a || EMPTY;
     return a ? new Set([...a, ...b]) : b;
   };
   const mark = (f, p) => {
-    const store = f.exported ? global : local;
-    const key = f.exported ? f.name : `${f.file}:${f.name}`;
+    const store = f.method ? methods : f.exported ? global : local;
+    const key = f.method || f.exported ? f.name : `${f.file}:${f.name}`;
     if (!store.has(key)) store.set(key, new Set());
     if (store.get(key).has(p)) return false;
     store.get(key).add(p);
@@ -448,9 +465,9 @@ function labelTakers(fileToks) {
           }
           continue;
         }
-        // commit(param), tr(param), helper(…, param, …)
+        // commit(param), tr(param), helper(…, param, …), this.helper(…)
         if (!next || next.value !== '(') continue;
-        const takes = positions(tok.value, f.file);
+        const takes = positions(tok.value, f.file, !!prev && (prev.value === '.' || prev.value === '?.'));
         if (!takes.size) continue;
         const { args } = argRanges(f.toks, k + 1);
         for (const i of takes) {
@@ -465,7 +482,7 @@ function labelTakers(fileToks) {
     }
   }
   // The sinks themselves are found directly, as calls and methods.
-  return { positions: (name, file) => (SINKS.has(name) ? EMPTY : positions(name, file)) };
+  return { positions: (name, file, asMethod) => (SINKS.has(name) ? EMPTY : positions(name, file, asMethod)) };
 }
 
 export { labelTakers as _labelTakers };
@@ -535,7 +552,7 @@ export function extract(files) {
       }
 
       // A history label on its way to .commit() through a helper.
-      const takes = next && next.value === '(' && !(prev && prev.type === 'id' && prev.value === 'function') ? takers.positions(tok.value, file) : null;
+      const takes = next && next.value === '(' && !(prev && prev.type === 'id' && prev.value === 'function') ? takers.positions(tok.value, file, isMethod) : null;
       if (takes && takes.size) {
         const { args } = argRanges(toks, k + 1);
         for (const i of takes) {
