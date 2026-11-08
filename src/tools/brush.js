@@ -219,6 +219,11 @@ function paintColorFor(layer, color) {
  * That is fixed at the source, so the subclass has nothing left to override —
  * it stays as an alias so existing callers keep working.
  *
+ * Only for callers outside this module: `export { A as B }` binds no local
+ * name, so code in this file must say `PaintStroke`. Saying `BlendPaintStroke`
+ * here once threw from the Brush and Pencil tools' makeStroke, which their
+ * onPointerDown caught and logged — and neither tool painted at all.
+ *
  * @deprecated Use `PaintStroke` with a `blendMode` option.
  */
 export { PaintStroke as BlendPaintStroke };
@@ -501,7 +506,7 @@ class BrushTool extends BrushToolBase {
   }
 
   makeStroke(e, doc, layer) {
-    return new BlendPaintStroke({
+    return new PaintStroke({
       doc,
       layer,
       target: layer.paintTarget(),
@@ -549,7 +554,7 @@ class PencilTool extends BrushToolBase {
       // "Starts on foreground" means the pixel already carries the paint colour.
       if (px && px.a > 0.5 && colorDistance(px, app.foreground) < 24) color = app.background;
     }
-    return new BlendPaintStroke({
+    return new PaintStroke({
       doc,
       layer,
       target: layer.paintTarget(),
