@@ -397,19 +397,37 @@ input.pk-range-mini { height: 16px; min-width: 40px; }
   font-weight: 600;
   letter-spacing: .07em;
   text-transform: uppercase;
+  /* One line, as a German DECKKRAFT is by nature: Chinese and Japanese may
+     break between any two characters, and 不透明度 split in two. */
+  white-space: nowrap;
 }
-/* Both amount groups keep the same column geometry, so OPACITY and FILL read as
-   one grid rather than two independent rows. */
 .pk-lay-hrow > .pk-lay-hlabel { flex: 0 0 38px; }
 .pk-lay-hrow > .pk-lay-filter-text { flex: 1 1 auto; min-width: 0; }
 .pk-lay-hrow > .pk-lay-filter-kind { flex: 0 0 78px; min-width: 0; }
 .pk-lay-hrow > .pk-lay-filter-toggle { flex: 0 0 auto; }
 .pk-lay-filter-toggle.off { opacity: .4; }
 
-.pk-lay-op { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
-.pk-lay-op > .pk-lay-hlabel { flex: 0 0 40px; }
+/* An amount — OPACITY 100 ─● — takes its label and number first; the slider
+   gets what room is left, up to its full width; and when even label and number
+   do not fit, the amount moves to a line of its own rather than lose any of
+   it. Words are long in some languages: Russian's НЕПРОЗРАЧНОСТЬ squeezed the
+   blend mode to "Обычн", and Portuguese's PREENCHIMENTO pushed FILL's slider
+   off the panel. Both amounts end at the panel's edge with the same number and
+   slider, so OPACITY and FILL still read as one grid. */
+.pk-lay-hrow:has(> .pk-lay-op) { flex-wrap: wrap; row-gap: 6px; }
+.pk-lay-hrow:has(> .pk-lay-op) > .pk-select { flex: 1 1 0; min-width: 96px; }
+.pk-lay-op {
+  display: grid;
+  grid-template-columns: max-content 43px minmax(0, 46px);
+  align-items: center;
+  gap: 5px;
+  flex: 1000 1 auto;
+  flex-basis: min-content;
+  max-width: max-content;
+  margin-left: auto;
+}
 .pk-lay-op input.pk-num-mini { width: 43px; }
-.pk-lay-op .pk-range { min-width: 44px; width: 46px; flex: 0 0 auto; }
+.pk-lay-op .pk-range { width: 100%; min-width: 0; }
 
 .pk-lay-locks { display: flex; align-items: center; gap: 1px; flex: 0 0 auto; }
 .pk-lay-locks .pk-icon-btn { width: 21px; height: 21px; border-radius: var(--r-xs); }
