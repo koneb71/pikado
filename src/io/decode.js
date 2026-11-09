@@ -1,4 +1,5 @@
 import { createCanvas, ctx2d, loadImage } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { isHEIF } from './heif-info.js';
 import { decodeHEIF } from './heif-read.js';
 import { isICNS, readICNS } from './icns.js';
@@ -28,7 +29,7 @@ export async function decodeToCanvas(blob) {
   const img = await loadImage(blob);
   const w = img.naturalWidth || img.width;
   const h = img.naturalHeight || img.height;
-  if (!w || !h) throw new Error('The image has no pixels');
+  if (!w || !h) throw new Error(tr('The image has no pixels'));
   const canvas = createCanvas(w, h);
   ctx2d(canvas).drawImage(img, 0, 0);
   return canvas;

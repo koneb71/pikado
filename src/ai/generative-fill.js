@@ -1,6 +1,7 @@
 import { app } from '../core/app.js';
 import { Layer, LayerType } from '../core/layer.js';
 import { createCanvas, ctx2d } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { getComposite } from '../render/compositor.js';
 import { planFrame, cropToRequest, requestMask, patchFromResult, maskToGreyCanvas } from './geometry.js';
 import { hasCredential } from './credentials.js';
@@ -26,7 +27,7 @@ const TIMEOUT_MS = 120000;
  */
 export function layerNameFor(prompt) {
   const s = String(prompt || '').trim().replace(/\s+/g, ' ');
-  if (!s) return 'Generative Fill';
+  if (!s) return tr('Generative Fill');
   if (s.length <= 28) return s;
   const cut = s.slice(0, 28);
   const space = cut.lastIndexOf(' ');
@@ -163,7 +164,9 @@ export async function runGenerativeFill(doc, opts) {
     );
   }
   if (rw && rw < size) {
-    app.toast(`${provider.name} returned ${rw}x${rh} instead of ${size}x${size}; the fill will be softer.`, 'warn', 4000);
+    app.toast(tr('{provider} returned {width}x{height} instead of {size}x{size}; the fill will be softer.', {
+      provider: provider.name, width: rw, height: rh, size,
+    }), 'warn', 4000);
   }
 
   const patch = patchFromResult(result.image, frame);

@@ -17,6 +17,8 @@
  * the Viewport.
  */
 
+import { tr } from '../core/i18n.js';
+
 /** @type {Map<string, Tool>} */
 export const tools = new Map();
 /** Tool groups shown as fly-outs in the toolbar, in order. */
@@ -93,6 +95,9 @@ export class Tool {
    * enabled state from the command registry, so a tool never has to restate
    * them. See src/ui/canvas-menu.js — it appends the shared transform/view
    * entries after whatever the tool returns, so returning `[]` is fine.
+   * An explicit `label` or `header` (including a label override on a command
+   * ref) is shown as given: pass interface text through `tr()`, and leave a
+   * user's names, such as layer names, as they are.
    *
    * @param {object} e normalised pointer event at the click position
    * @returns {Array<object>}
@@ -130,24 +135,24 @@ export class Tool {
     const doc = this.doc;
     const l = doc && doc.activeLayer();
     if (!l) {
-      if (warn && this.app) this.app.toast('No layer selected.');
+      if (warn && this.app) this.app.toast(tr('No layer selected.'));
       return false;
     }
     if (l.locked.all || l.locked.pixels) {
-      if (warn && this.app) this.app.toast(`Layer "${l.name}" is locked.`);
+      if (warn && this.app) this.app.toast(tr('Layer "{name}" is locked.', { name: l.name }));
       return false;
     }
     if (l.editingMask && l.mask) return true;
     if (l.type === 'group') {
-      if (warn && this.app) this.app.toast('Cannot paint on a group. Select a layer inside it.');
+      if (warn && this.app) this.app.toast(tr('Cannot paint on a group. Select a layer inside it.'));
       return false;
     }
     if (l.type === 'adjustment' && !l.mask) {
-      if (warn && this.app) this.app.toast('Adjustment layers can only be painted on their mask.');
+      if (warn && this.app) this.app.toast(tr('Adjustment layers can only be painted on their mask.'));
       return false;
     }
     if (l.type === 'text' && !l.editingMask) {
-      if (warn && this.app) this.app.toast('Rasterize the text layer before painting on it.');
+      if (warn && this.app) this.app.toast(tr('Rasterize the text layer before painting on it.'));
       return false;
     }
     return true;

@@ -1,5 +1,6 @@
 import '../ui/dialogs/dialogs.css';
 import { app } from '../core/app.js';
+import { msg, tr, trn } from '../core/i18n.js';
 import { createCanvas, cloneCanvas, el, clamp, clamp255, deg2rad, uid } from '../core/util.js';
 import { Selection } from '../core/selection.js';
 import { Layer, LayerType } from '../core/layer.js';
@@ -67,7 +68,7 @@ export function convertToRGB(doc) {
   if (doc.colorMode === 'rgb') return;
   doc.colorMode = 'rgb';
   doc.commit('RGB Color');
-  app.toast('Document mode set to RGB. Colour lost in a previous conversion is not restored.');
+  app.toast(tr('Document mode set to RGB. Colour lost in a previous conversion is not restored.'));
 }
 
 /** Image > Mode > Grayscale — desaturates every layer. */
@@ -96,7 +97,7 @@ const BAYER8 = [
 /** Image > Mode > Bitmap — flattens to a single 1-bit layer. */
 export async function convertToBitmap(doc) {
   const opts = await paramDialog({
-    title: 'Bitmap',
+    title: tr('Bitmap'),
     width: 380,
     preview: false,
     state: { method: 'threshold', threshold: 128 },
@@ -152,7 +153,7 @@ export async function convertToBitmap(doc) {
     }
   }
 
-  const nl = new Layer({ type: LayerType.RASTER, name: 'Background', canvas: toCanvas(img), isBackground: true });
+  const nl = new Layer({ type: LayerType.RASTER, name: tr('Background'), canvas: toCanvas(img), isBackground: true });
   doc.layers = [nl];
   doc.activeLayerId = nl.id;
   doc.selectedLayerIds = [nl.id];
@@ -195,7 +196,7 @@ export function rotateDocumentArbitrary(doc, degrees) {
   doc.guides = [];
   doc.invalidate();
   doc.emit('resize');
-  doc.commit(`Rotate ${degrees}°`);
+  doc.commit(msg('Rotate {degrees}°', { degrees }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -282,9 +283,9 @@ function layerBounds(doc, layer) {
  */
 export function alignLayers(doc, mode) {
   const layers = doc.selectedLayers().filter((l) => !l.locked.all && !l.locked.position);
-  if (!layers.length) { app.toast('Select the layers to align.'); return; }
+  if (!layers.length) { app.toast(tr('Select the layers to align.')); return; }
   const boxes = layers.map((l) => ({ layer: l, box: layerBounds(doc, l) })).filter((e) => e.box);
-  if (!boxes.length) { app.toast('The selected layers are empty.'); return; }
+  if (!boxes.length) { app.toast(tr('The selected layers are empty.')); return; }
 
   let ref;
   if (doc.selection.active && doc.selection.bounds()) ref = doc.selection.bounds();
@@ -323,7 +324,7 @@ export function distributeLayers(doc, axis) {
     .filter((l) => !l.locked.all && !l.locked.position)
     .map((l) => ({ layer: l, box: layerBounds(doc, l) }))
     .filter((e) => e.box);
-  if (entries.length < 3) { app.toast('Select at least three layers to distribute.'); return; }
+  if (entries.length < 3) { app.toast(tr('Select at least three layers to distribute.')); return; }
 
   const centre = (b) => (axis === 'horizontal' ? b.x + b.width / 2 : b.y + b.height / 2);
   entries.sort((a, b) => centre(a.box) - centre(b.box));
@@ -351,7 +352,7 @@ export function distributeLayers(doc, axis) {
  */
 export function defringe(doc, layer, width = 1) {
   const l = layer || doc.activeLayer();
-  if (!l || !l.canvas) { app.toast('No pixel layer selected.'); return; }
+  if (!l || !l.canvas) { app.toast(tr('No pixel layer selected.')); return; }
   doc.beginEdit(l);
   const img = readPixels(l.canvas);
   const w = img.width, h = img.height, d = img.data;
@@ -393,7 +394,7 @@ export function defringe(doc, layer, width = 1) {
  */
 export function removeMatte(doc, layer, matte = 'white') {
   const l = layer || doc.activeLayer();
-  if (!l || !l.canvas) { app.toast('No pixel layer selected.'); return; }
+  if (!l || !l.canvas) { app.toast(tr('No pixel layer selected.')); return; }
   const m = matte === 'black' ? 0 : 255;
   doc.beginEdit(l);
   const img = readPixels(l.canvas);
@@ -445,14 +446,17 @@ export function canFade(doc) {
 export async function showFadeDialog(doc) {
   const layer = doc.activeLayer();
   const before = previousPixels(doc, layer);
-  if (!before) { app.toast('There is nothing to fade.'); return; }
+  if (!before) { app.toast(tr('There is nothing to fade.')); return; }
   const after = layer.canvas;
-  const label = doc.history.states[doc.history.index].label;
+  // What is being faded, kept as a message so the new step can be shown in
+  // whichever language the History panel is in.
+  const entry = doc.history.states[doc.history.index];
+  const action = entry.message || msg(entry.label);
 
   const build = (s) => blendCanvases(before, after, s.blendMode, s.opacity / 100);
 
   const result = await paramDialog({
-    title: `Fade ${label}`,
+    title: tr('Fade {action}', { action }),
     width: 380,
     state: { opacity: 100, blendMode: 'normal' },
     params: [
@@ -471,7 +475,7 @@ export async function showFadeDialog(doc) {
   const faded = build(result);
   doc.beginEdit(layer);
   layer.canvas = faded;
-  doc.commit(`Fade ${label}`);
+  doc.commit(msg('Fade {action}', { action }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -489,7 +493,7 @@ const CHANNELS = [
 
 function layerOptions(doc, extra = []) {
   return [
-    { value: '__merged__', label: 'Merged' },
+    { value: '__merged__', label: tr('Merged') },
     ...extra,
     ...doc.flatLayers().filter((l) => l.canvas || l.type === LayerType.GROUP).map((l) => ({ value: l.id, label: l.name })),
   ];
@@ -523,7 +527,7 @@ function channelCanvas(src, channel, invert) {
 /** Image > Apply Image — blends another layer/channel onto the active layer. */
 export async function showApplyImageDialog(doc) {
   const target = doc.activeLayer();
-  if (!target || !target.canvas) { app.toast('Apply Image needs a pixel layer.'); return; }
+  if (!target || !target.canvas) { app.toast(tr('Apply Image needs a pixel layer.')); return; }
 
   const build = (s) => {
     const src = channelCanvas(sourceCanvasFor(doc, s.source), s.channel, s.invert);
@@ -550,7 +554,7 @@ export async function showApplyImageDialog(doc) {
   };
 
   const result = await paramDialog({
-    title: 'Apply Image',
+    title: tr('Apply Image'),
     width: 420,
     state: {
       source: '__merged__', channel: 'rgb', invert: false,
@@ -558,7 +562,7 @@ export async function showApplyImageDialog(doc) {
       preserveTransparency: true, useSelection: doc.selection.active,
     },
     params: [
-      { key: 'source', label: 'Source Layer', type: 'select', options: layerOptions(doc) },
+      { key: 'source', label: 'Source Layer', type: 'select', options: () => layerOptions(doc) },
       { key: 'channel', label: 'Channel', type: 'select', options: CHANNELS },
       { key: 'invert', label: 'Invert', type: 'checkbox' },
       { type: 'separator' },
@@ -606,7 +610,7 @@ export async function showCalculationsDialog(doc) {
   };
 
   const result = await paramDialog({
-    title: 'Calculations',
+    title: tr('Calculations'),
     width: 430,
     preview: false,
     state: {
@@ -616,12 +620,12 @@ export async function showCalculationsDialog(doc) {
     },
     params: [
       { type: 'label', label: 'Source 1' },
-      { key: 'source1', label: 'Layer', type: 'select', options: layerOptions(doc) },
+      { key: 'source1', label: 'Layer', type: 'select', options: () => layerOptions(doc) },
       { key: 'channel1', label: 'Channel', type: 'select', options: CHANNELS },
       { key: 'invert1', label: 'Invert', type: 'checkbox' },
       { type: 'separator' },
       { type: 'label', label: 'Source 2' },
-      { key: 'source2', label: 'Layer', type: 'select', options: layerOptions(doc) },
+      { key: 'source2', label: 'Layer', type: 'select', options: () => layerOptions(doc) },
       { key: 'channel2', label: 'Channel', type: 'select', options: CHANNELS },
       { key: 'invert2', label: 'Invert', type: 'checkbox' },
       { type: 'separator' },
@@ -641,8 +645,8 @@ export async function showCalculationsDialog(doc) {
 
   const grey = build(result);
   if (result.output === 'document') {
-    const nd = new PikaDocument({ width: doc.width, height: doc.height, name: `${doc.name} Calculation` });
-    const nl = new Layer({ type: LayerType.RASTER, name: 'Background', canvas: grey, isBackground: true });
+    const nd = new PikaDocument({ width: doc.width, height: doc.height, name: tr('{name} Calculation', { name: doc.name }) });
+    const nl = new Layer({ type: LayerType.RASTER, name: tr('Background'), canvas: grey, isBackground: true });
     nd.layers.push(nl);
     nd.activeLayerId = nl.id;
     nd.selectedLayerIds = [nl.id];
@@ -659,14 +663,14 @@ export async function showCalculationsDialog(doc) {
   }
   doc.alphaChannels.push({
     id: uid('chan'),
-    name: `Alpha ${doc.alphaChannels.length + 1}`,
+    name: tr('Alpha {number}', { number: doc.alphaChannels.length + 1 }),
     width: doc.width,
     height: doc.height,
     mask,
     canvas: grey,
   });
   doc.commit('Calculations');
-  app.toast('Result stored as a new alpha channel.', 'ok');
+  app.toast(tr('Result stored as a new alpha channel.'), 'ok');
 }
 
 /* ------------------------------------------------------------------ */
@@ -769,24 +773,24 @@ export async function showColorRangeDialog(doc) {
     samples: [{ r: 128, g: 128, b: 128, x: null, y: null }],
   };
 
-  const dlg = new Dialog({ title: 'Color Range', width: 520, className: 'pkd-colorrange' });
+  const dlg = new Dialog({ title: tr('Color Range'), width: 520, className: 'pkd-colorrange' });
 
-  const kindSelect = el('select.pk-select', {}, ...RANGE_KINDS.map((k) => el('option', { value: k.value, text: k.label })));
+  const kindSelect = el('select.pk-select', {}, ...RANGE_KINDS.map((k) => el('option', { value: k.value, text: tr(k.label) })));
   const fuzzRange = el('input.pk-range', { type: 'range', min: 0, max: 200, step: 1, value: state.fuzziness });
   const fuzzNum = el('input.pk-num', { type: 'number', min: 0, max: 200, step: 1, value: state.fuzziness });
   const localizedInput = el('input', { type: 'checkbox' });
   const rangeRow = el('div.pk-field');
   const rangeInput = el('input.pk-range', { type: 'range', min: 1, max: 100, step: 1, value: state.range });
-  rangeRow.append(el('label', { text: 'Range' }), rangeInput);
+  rangeRow.append(el('label', { text: tr('Range') }), rangeInput);
   const invertInput = el('input', { type: 'checkbox' });
   const showSelect = el('select.pk-select', {},
-    el('option', { value: 'selection', text: 'Selection' }),
-    el('option', { value: 'image', text: 'Image' }));
+    el('option', { value: 'selection', text: tr('Selection') }),
+    el('option', { value: 'image', text: tr('Image') }));
   const swatchRow = el('div.pkd-row');
   const previewBox = el('div.pkd-preview', { style: { height: `${Math.min(260, ph)}px`, cursor: 'crosshair' } });
   const previewCanvas = el('canvas', { width: pw, height: ph });
   previewBox.appendChild(previewCanvas);
-  const hint = el('div.pkd-note', { text: 'Click the preview to sample a colour. Shift-click adds, Alt-click removes.' });
+  const hint = el('div.pkd-note', { text: tr('Click the preview to sample a colour. Shift-click adds, Alt-click removes.') });
 
   let maskCache = null;
 
@@ -816,7 +820,7 @@ export async function showColorRangeDialog(doc) {
       ...state.samples.map((s, i) =>
         el('button.pk-color-swatch', {
           type: 'button',
-          title: `Remove sample ${i + 1}`,
+          title: tr('Remove sample {number}', { number: i + 1 }),
           style: { background: `rgb(${s.r},${s.g},${s.b})` },
           onclick: () => {
             if (state.samples.length > 1) {
@@ -826,7 +830,7 @@ export async function showColorRangeDialog(doc) {
           },
         })
       ),
-      el('span.pk-hint', { text: `${state.samples.length} sample${state.samples.length === 1 ? '' : 's'}` })
+      el('span.pk-hint', { text: trn('{count} sample', '{count} samples', state.samples.length) })
     );
 
     maskCache = colorRangeMask(proxyImg, { ...currentOpts(), samples: scaledSamples(scale) });
@@ -889,12 +893,12 @@ export async function showColorRangeDialog(doc) {
   dlg.setBody(
     el('div.pkd-cols', {},
       el('div.pkd-col.grow', {},
-        el('div.pk-field', {}, el('label', { text: 'Select' }), kindSelect),
-        el('div.pk-field', {}, el('label', { text: 'Fuzziness' }), el('div.pk-slider-row', {}, fuzzRange, fuzzNum)),
-        el('label.pk-check', {}, localizedInput, el('span', { text: 'Localized Color Clusters' })),
+        el('div.pk-field', {}, el('label', { text: tr('Select|color range') }), kindSelect),
+        el('div.pk-field', {}, el('label', { text: tr('Fuzziness') }), el('div.pk-slider-row', {}, fuzzRange, fuzzNum)),
+        el('label.pk-check', {}, localizedInput, el('span', { text: tr('Localized Color Clusters') })),
         rangeRow,
-        el('label.pk-check', {}, invertInput, el('span', { text: 'Invert' })),
-        el('div.pk-field', {}, el('label', { text: 'Selection Preview' }), showSelect),
+        el('label.pk-check', {}, invertInput, el('span', { text: tr('Invert') })),
+        el('div.pk-field', {}, el('label', { text: tr('Selection Preview') }), showSelect),
         swatchRow,
         hint
       ),
@@ -903,20 +907,20 @@ export async function showColorRangeDialog(doc) {
   );
 
   dlg.setButtons([
-    { label: 'Cancel', value: null, subtle: true },
-    { label: 'OK', primary: true, onClick: (d) => { d.close({ ...currentOpts(), samples: [...state.samples] }); return false; } },
+    { label: tr('Cancel'), value: null, subtle: true },
+    { label: tr('OK'), primary: true, onClick: (d) => { d.close({ ...currentOpts(), samples: [...state.samples] }); return false; } },
   ]);
 
   refresh();
   const result = await dlg.open();
   if (!result) return;
 
-  await app.busy('Color Range', async () => {
+  await app.busy(tr('Color Range'), async () => {
     const mask = colorRangeMask(full, result);
     let any = false;
     for (let i = 0; i < mask.length; i++) if (mask[i] !== 0) { any = true; break; }
     if (!any) {
-      app.toast('No pixels matched — try a higher fuzziness.', 'warn');
+      app.toast(tr('No pixels matched — try a higher fuzziness.'), 'warn');
       return;
     }
     doc.selection.set(mask);
@@ -931,7 +935,7 @@ export async function showColorRangeDialog(doc) {
 
 /** Image > Duplicate — a full independent copy of the document. */
 export function duplicateDocument(doc, name) {
-  const copy = new PikaDocument({ width: doc.width, height: doc.height, name: name || `${doc.name} copy`, resolution: doc.resolution });
+  const copy = new PikaDocument({ width: doc.width, height: doc.height, name: name || tr('{name} copy', { name: doc.name }), resolution: doc.resolution });
   copy.colorMode = doc.colorMode;
   copy.layers = doc.layers.map((l) => l.clone(true));
   for (const l of copy.layers) l.parent = null;
@@ -985,7 +989,7 @@ export function printDocument(doc) {
 /** Image > Trim… — asks which edges/colour to trim, then crops. */
 export async function showTrimDialog(doc, trimFn) {
   const result = await paramDialog({
-    title: 'Trim',
+    title: tr('Trim'),
     width: 340,
     preview: false,
     state: { mode: 'transparent' },
@@ -1007,7 +1011,7 @@ export async function showTrimDialog(doc, trimFn) {
 /** Image > Image Rotation > Arbitrary… */
 export async function showArbitraryRotationDialog(doc) {
   const result = await paramDialog({
-    title: 'Rotate Canvas',
+    title: tr('Rotate Canvas'),
     width: 340,
     preview: false,
     state: { angle: 15, direction: 'cw' },
@@ -1021,10 +1025,10 @@ export async function showArbitraryRotationDialog(doc) {
   });
   if (!result || !result.angle) return;
   const deg = result.direction === 'ccw' ? -result.angle : result.angle;
-  await app.busy('Rotate Canvas', async () => rotateDocumentArbitrary(doc, deg));
+  await app.busy(tr('Rotate Canvas'), async () => rotateDocumentArbitrary(doc, deg));
 }
 
 /** Confirmation used before destructive mode changes. */
 export function confirmFlatten(message) {
-  return confirmDialog(message, 'Change Mode', 'Flatten');
+  return confirmDialog(message, tr('Change Mode'), tr('Flatten'));
 }

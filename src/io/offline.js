@@ -1,5 +1,6 @@
 import { app } from '../core/app.js';
 import { el } from '../core/util.js';
+import { msg, tr } from '../core/i18n.js';
 import './offline.css';
 
 /**
@@ -17,8 +18,8 @@ import './offline.css';
  */
 
 const SETTLE_MS = 1400;
-const OFFLINE_TOAST = 'Offline — your work is saved in this browser.';
-const ONLINE_TOAST = 'Back online.';
+const OFFLINE_TOAST = msg('Offline — your work is saved in this browser.');
+const ONLINE_TOAST = msg('Back online.');
 
 let installed = false;
 let indicator = null;
@@ -103,7 +104,7 @@ function registerWorker() {
     // stroke or a half-filled dialog, and losing that to a background upgrade
     // would be a far worse bug than running a version-old build for a minute.
     if (updateBtn) updateBtn.hidden = false;
-    app.toast('A new version of Pikado is ready — refresh when you are done to load it.', 'info', 7000);
+    app.toast(tr('A new version of Pikado is ready — refresh when you are done to load it.'), 'info', 7000);
   };
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -137,19 +138,19 @@ function buildIndicator() {
 
   indicator = el('div.pk-net', {
     hidden: true,
-    title: 'No network connection. Pikado runs locally and keeps your projects in this browser.',
+    title: tr('No network connection. Pikado runs locally and keeps your projects in this browser.'),
   },
   el('span.pk-net-dot'),
-  el('span.pk-net-label.pk-micro', { text: 'Offline' }));
+  el('span.pk-net-label.pk-micro', { text: tr('Offline') }));
 
   updateBtn = el('button.pk-net.pk-net-update', {
     hidden: true,
     type: 'button',
-    title: 'Reload to run the newest version of Pikado.',
+    title: tr('Reload to run the newest version of Pikado.'),
     onclick: () => location.reload(),
   },
   el('span.pk-net-dot'),
-  el('span.pk-net-label.pk-micro', { text: 'Update ready' }));
+  el('span.pk-net-label.pk-micro', { text: tr('Update ready') }));
 
   host.append(indicator, updateBtn);
 }
@@ -174,7 +175,7 @@ function onNetworkChange() {
     const state = isOffline() ? 'offline' : 'online';
     if (state === announced) return;
     announced = state;
-    if (state === 'offline') app.toast(OFFLINE_TOAST, 'info', 5000);
-    else app.toast(ONLINE_TOAST, 'ok', 2000);
+    if (state === 'offline') app.toast(tr(OFFLINE_TOAST), 'info', 5000);
+    else app.toast(tr(ONLINE_TOAST), 'ok', 2000);
   }, SETTLE_MS);
 }

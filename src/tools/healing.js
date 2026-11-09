@@ -8,6 +8,7 @@ import { BrushToolBase, tweakDefaults, blurImageData, brushContextMenu } from '.
 import { makeTiledCanvas, patternOptions } from '../paint/patterns.js';
 import { OVERLAY } from '../ui/brand.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Healing family: Spot Healing Brush, Healing Brush, Patch and Red Eye.
@@ -341,7 +342,7 @@ class SpotHealingTool extends BrushToolBase {
       strokeLabel: 'Spot Healing Brush',
       options: [
         ...tweakDefaults(brushOptionDescriptors({ opacity: false, flow: false, airbrush: false }), { size: 30, hardness: 100 }),
-        { key: 'type', label: 'Type', type: 'radio', default: 'content-aware',
+        { key: 'type', label: 'Type|kind', type: 'radio', default: 'content-aware',
           options: [
             { value: 'content-aware', label: 'Content-Aware' },
             { value: 'texture', label: 'Create Texture' },
@@ -422,7 +423,7 @@ class HealingBrushTool extends BrushToolBase {
     if (e.button === 0 && e.altKey) {
       this.source = { x: e.x, y: e.y };
       this.offset = null;
-      app.toast('Healing source set.', 'ok', 1200);
+      app.toast(tr('Healing source set.'), 'ok', 1200);
       app.requestRender();
       return;
     }
@@ -432,7 +433,7 @@ class HealingBrushTool extends BrushToolBase {
   beforeStroke(e) {
     if (this.state.source === 'pattern') return true;
     if (!this.source) {
-      app.toast('Alt-click to define a healing source first.', 'warn');
+      app.toast(tr('Alt-click to define a healing source first.'), 'warn');
       return false;
     }
     return true;
@@ -531,13 +532,13 @@ class HealingBrushTool extends BrushToolBase {
     // In Pattern mode there is no sample point at all, so the row would be
     // meaningless — leave it out rather than showing a dead entry.
     const extra = this.state.source === 'pattern' ? [] : [{
-      label: 'Reset Healing Source',
+      label: tr('Reset Healing Source'),
       disabled: !this.source,
       run: () => {
         this.source = null;
         this.offset = null;
         this.livePoint = null;
-        app.toast('Healing source cleared.', 'info', 1200);
+        app.toast(tr('Healing source cleared.'), 'info', 1200);
         app.requestRender();
       },
     }];
@@ -711,20 +712,20 @@ class PatchTool extends Tool {
     });
     const items = [];
     if (this.points.length) {
-      items.push({ label: 'Discard Patch Area', accel: 'Esc', run: () => this.cancel() });
+      items.push({ label: tr('Discard Patch Area'), accel: 'Esc', run: () => this.cancel() });
       items.push(sep());
     }
-    items.push({ header: 'Patch' });
-    items.push(pick('mode', 'normal', 'Normal'));
-    items.push(pick('mode', 'content-aware', 'Content-Aware'));
+    items.push({ header: tr('Patch') });
+    items.push(pick('mode', 'normal', tr('Normal')));
+    items.push(pick('mode', 'content-aware', tr('Content-Aware')));
     items.push({
-      label: 'Transparent',
+      label: tr('Transparent'),
       checked: !!s.transparent,
       run: () => this.setOption('transparent', !s.transparent),
     });
-    items.push({ header: 'Patch From' });
-    items.push(pick('patchSource', 'source', 'Source'));
-    items.push(pick('patchSource', 'destination', 'Destination'));
+    items.push({ header: tr('Patch From') });
+    items.push(pick('patchSource', 'source', tr('Source')));
+    items.push(pick('patchSource', 'destination', tr('Destination')));
     items.push(sep());
     items.push(cmd('edit.undo'));
     return items;
@@ -755,7 +756,7 @@ class PatchTool extends Tool {
     const grown = morph(destMask, w, h, ringW, true);
     const bounds = maskBounds(grown, w, h);
     if (!bounds) {
-      app.toast('The patch area is empty.', 'warn');
+      app.toast(tr('The patch area is empty.'), 'warn');
       return;
     }
     const bx = Math.max(0, bounds.x - 1), by = Math.max(0, bounds.y - 1);
@@ -999,9 +1000,9 @@ class RedEyeTool extends Tool {
       run: () => this.setOption(key, pct),
     });
     return [
-      { header: 'Pupil Size' },
+      { header: tr('Pupil Size') },
       row('pupilSize', 25), row('pupilSize', 50), row('pupilSize', 75),
-      { header: 'Darken Amount' },
+      { header: tr('Darken Amount') },
       row('darkenAmount', 25), row('darkenAmount', 50), row('darkenAmount', 75),
       sep(),
       cmd('edit.undo'),
@@ -1062,7 +1063,7 @@ class RedEyeTool extends Tool {
     }
 
     if (!touched) {
-      app.toast('No red-eye pixels found in that area.', 'warn');
+      app.toast(tr('No red-eye pixels found in that area.'), 'warn');
       return;
     }
     surface.getContext('2d').putImageData(img, x0, y0);

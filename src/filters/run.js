@@ -4,6 +4,7 @@ import { getAdjustment, applyAdjustment } from '../adjustments/registry.js';
 import { setLayerPreview } from '../render/compositor.js';
 import { paramDialog } from '../ui/dialog.js';
 import { app } from '../core/app.js';
+import { commandName, tr } from '../core/i18n.js';
 
 /**
  * Runs filters and destructive adjustments against a layer, honouring the
@@ -114,7 +115,7 @@ export async function applyFilterCommand(id, preset) {
   const f = getFilter(id);
   if (!doc || !f) return;
   const layer = doc.activeLayer();
-  if (!layer) { app.toast('No layer selected.'); return; }
+  if (!layer) { app.toast(tr('No layer selected.')); return; }
 
   // Smart objects stack filters instead of burning them into pixels. Editing
   // the layer's *mask* is still a normal destructive pixel op.
@@ -124,19 +125,20 @@ export async function applyFilterCommand(id, preset) {
     return;
   }
 
+  // The history step and Filter > Last Filter keep it, and translate it when
+  // they show it.
+  const label = commandName(f.name);
   const surf = operableSurface(doc, layer);
-  if (!surf) { app.toast(`Cannot apply "${f.name}" to this layer.`); return; }
+  if (!surf) { app.toast(tr('Cannot apply "{name}" to this layer.', { name: tr(label) })); return; }
 
   const runWith = (params) =>
     processSurface(doc, layer, (imageData, ctx) =>
       runFilter(id, imageData, params, { ...ctx, width: imageData.width, height: imageData.height, app })
     );
 
-  const label = f.name.replace(/\.\.\.$/, '');
-
   if (preset || !f.needsDialog) {
     const params = preset || f.defaults;
-    await app.busy(label, async () => {
+    await app.busy(tr(label), async () => {
       commitSurface(doc, layer, runWith(params), label);
     });
     app.lastFilter = { id, params: preset || f.defaults, label };
@@ -145,7 +147,7 @@ export async function applyFilterCommand(id, preset) {
 
   const state = { ...f.defaults, ...(app.lastFilterParams?.[id] || {}) };
   const result = await paramDialog({
-    title: label,
+    title: tr(label),
     params: f.params,
     state,
     width: f.dialogWidth || 400,
@@ -162,7 +164,7 @@ export async function applyFilterCommand(id, preset) {
   setLayerPreview(layer.id, null);
   if (!result) { doc.touch('preview'); return; }
 
-  await app.busy(label, async () => {
+  await app.busy(tr(label), async () => {
     commitSurface(doc, layer, runWith(result), label);
   });
   app.lastFilterParams = { ...(app.lastFilterParams || {}), [id]: result };
@@ -175,9 +177,9 @@ export async function applyAdjustmentCommand(id, preset) {
   const a = getAdjustment(id);
   if (!doc || !a) return;
   const layer = doc.activeLayer();
-  if (!layer) { app.toast('No layer selected.'); return; }
+  if (!layer) { app.toast(tr('No layer selected.')); return; }
   const surf = operableSurface(doc, layer);
-  if (!surf) { app.toast(`Cannot apply "${a.name}" to this layer.`); return; }
+  if (!surf) { app.toast(tr('Cannot apply "{name}" to this layer.', { name: commandName(a.name) })); return; }
 
   const runWith = (params) =>
     processSurface(doc, layer, (imageData, ctx) => {
@@ -185,18 +187,18 @@ export async function applyAdjustmentCommand(id, preset) {
       return imageData;
     });
 
-  const label = a.name.replace(/\.\.\.$/, '');
+  const label = commandName(a.name);
   const hasUI = (a.params && a.params.length) || a.renderUI;
 
   if (preset || !hasUI) {
-    await app.busy(label, async () => {
+    await app.busy(tr(label), async () => {
       commitSurface(doc, layer, runWith(preset || a.defaults), label);
     });
     return;
   }
 
   const result = await paramDialog({
-    title: label,
+    title: tr(label),
     params: a.params || [],
     state: { ...a.defaults },
     width: a.dialogWidth || 400,
@@ -210,13 +212,13 @@ export async function applyAdjustmentCommand(id, preset) {
   setLayerPreview(layer.id, null);
   if (!result) { doc.touch('preview'); return; }
 
-  await app.busy(label, async () => {
+  await app.busy(tr(label), async () => {
     commitSurface(doc, layer, runWith(result), label);
   });
 }
 
 /** Re-run the previous filter (Ctrl+F). */
 export async function repeatLastFilter() {
-  if (!app.lastFilter) { app.toast('No filter to repeat.'); return; }
+  if (!app.lastFilter) { app.toast(tr('No filter to repeat.')); return; }
   await applyFilterCommand(app.lastFilter.id, app.lastFilter.params);
 }

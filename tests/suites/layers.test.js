@@ -358,11 +358,23 @@ suite('layers / adjustment layers and clipping', async (t) => {
   t.ok(adj.mask, 'and a mask');
   t.eq(t.px(adj.mask, 30, 30), '255,255,255,255', 'a full-white mask when nothing is selected');
   t.eq(t.px(compositeDocument(doc), 30, 30), '0,0,0,255', 'invert turns the white document black');
-  t.eq(doc.history.labels().at(-1), 'New invert Layer', 'it records a labelled history entry');
+  // Named after its adjustment and numbered per kind, as Photoshop names them.
+  // This used to be the adjustment's id — "invert", "hue-saturation" — and the
+  // history step "New invert Layer".
+  // Verified to fail: with createAdjustmentLayer's `name || kind` fallback as
+  // the only naming, these read "invert", "invert", "levels" and
+  // "hue-saturation", and the label "New invert Layer".
+  t.eq(adj.name, 'Invert 1', 'it is named after its adjustment');
+  t.eq(doc.history.labels().at(-1), 'New Invert Layer', 'and records "New Invert Layer"');
 
   doc.history.undo();
   t.eq(t.px(compositeDocument(doc), 30, 30), '255,255,255,255', 'undo removes the adjustment');
   doc.history.redo();
+  t.eq(addAdjustmentLayer(doc, 'invert').name, 'Invert 2', 'a second one of the same kind is numbered on');
+  t.eq(addAdjustmentLayer(doc, 'levels').name, 'Levels 1', 'each kind counts for itself');
+  t.eq(addAdjustmentLayer(doc, 'hue-saturation').name, 'Hue/Saturation 1', 'with its display name, not its id');
+  t.eq(addAdjustmentLayer(doc, 'levels', null, 'Mine').name, 'Mine', 'and a name the caller gives is kept');
+  for (let i = 0; i < 4; i++) doc.history.undo();
 
   // With a selection the adjustment is masked to it.
   const doc2 = t.doc(60, 60, '#ffffff', 'adj2');

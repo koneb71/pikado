@@ -1,5 +1,6 @@
 import { el, formatBytes, clamp, rafThrottle } from '../core/util.js';
 import { app } from '../core/app.js';
+import { msg, tr } from '../core/i18n.js';
 import './statusbar.css';
 
 /**
@@ -7,51 +8,55 @@ import './statusbar.css';
  * readout, the current tool, memory use and a modifier-key hint.
  */
 
+/**
+ * The status readouts. Each is the select's value as English — `String(m)`,
+ * which `statusValue` switches on — and its label translated.
+ */
 const STATUS_MODES = [
-  'Document Sizes',
-  'Document Profile',
-  'Document Dimensions',
-  'Scratch Sizes',
-  'Efficiency',
-  'Timing',
-  'Current Tool',
+  msg('Document Sizes'),
+  msg('Document Profile'),
+  msg('Document Dimensions'),
+  msg('Scratch Sizes'),
+  msg('Efficiency'),
+  msg('Timing'),
+  msg('Current Tool'),
 ];
 
 const ZOOM_PRESETS = [1600, 800, 400, 200, 100, 66.67, 50, 33.33, 25, 12.5];
 
 /** Modifier hints per tool id, falling back to the tool group. */
 const TOOL_HINTS = {
-  move: 'Alt+drag duplicates · Shift constrains to an axis · Ctrl auto-selects',
-  crop: 'Shift keeps the ratio · Alt resizes from the centre · Enter applies',
-  eyedropper: 'Alt samples the background colour · Shift adds a sampler',
-  gradient: 'Shift constrains the angle · Alt reverses the gradient',
-  bucket: 'Shift fills everywhere · Alt samples the background colour',
-  wand: 'Shift adds · Alt subtracts · Shift+Alt intersects',
-  'quick-select': 'Shift adds · Alt subtracts · [ ] change the brush size',
-  hand: 'Space+drag pans from any tool · Ctrl+0 fits the screen',
-  zoom: 'Alt+click zooms out · Ctrl+= in · Ctrl+- out · Ctrl+1 for 100%',
-  type: 'Enter adds a line · Esc commits · Ctrl+Enter commits',
-  'clone-stamp': 'Alt+click sets the clone source · [ ] change the brush size',
-  'history-brush': 'Alt+click sets the source state · [ ] change the brush size',
+  move: msg('Alt+drag duplicates · Shift constrains to an axis · Ctrl auto-selects'),
+  crop: msg('Shift keeps the ratio · Alt resizes from the centre · Enter applies'),
+  eyedropper: msg('Alt samples the background colour · Shift adds a sampler'),
+  gradient: msg('Shift constrains the angle · Alt reverses the gradient'),
+  bucket: msg('Shift fills everywhere · Alt samples the background colour'),
+  wand: msg('Shift adds · Alt subtracts · Shift+Alt intersects'),
+  'quick-select': msg('Shift adds · Alt subtracts · [ ] change the brush size'),
+  hand: msg('Space+drag pans from any tool · Ctrl+0 fits the screen'),
+  zoom: msg('Alt+click zooms out · Ctrl+= in · Ctrl+- out · Ctrl+1 for 100%'),
+  type: msg('Enter adds a line · Esc commits · Ctrl+Enter commits'),
+  'clone-stamp': msg('Alt+click sets the clone source · [ ] change the brush size'),
+  'history-brush': msg('Alt+click sets the source state · [ ] change the brush size'),
 };
 
 const GROUP_HINTS = {
-  marquee: 'Shift constrains/adds · Alt draws from the centre/subtracts · Space moves',
-  lasso: 'Shift adds · Alt subtracts · Backspace removes the last point',
-  brush: '[ ] size · Shift+[ ] hardness · Alt samples a colour · Shift draws a line',
-  eraser: '[ ] size · Shift+[ ] hardness · Shift erases a straight line',
-  stamp: 'Alt+click sets the source · [ ] change the brush size',
-  focus: '[ ] size · Alt inverts the effect',
-  tone: '[ ] size · Alt inverts dodge/burn',
-  healing: 'Alt+click sets the source · [ ] change the brush size',
-  pen: 'Alt converts a point · Ctrl moves a point · Shift constrains the angle',
-  shape: 'Shift constrains proportions · Alt draws from the centre',
-  'path-select': 'Shift selects more · Alt duplicates the path',
-  nav: 'Space+drag pans · Ctrl+wheel zooms · Ctrl+0 fits the screen',
+  marquee: msg('Shift constrains/adds · Alt draws from the centre/subtracts · Space moves'),
+  lasso: msg('Shift adds · Alt subtracts · Backspace removes the last point'),
+  brush: msg('[ ] size · Shift+[ ] hardness · Alt samples a colour · Shift draws a line'),
+  eraser: msg('[ ] size · Shift+[ ] hardness · Shift erases a straight line'),
+  stamp: msg('Alt+click sets the source · [ ] change the brush size'),
+  focus: msg('[ ] size · Alt inverts the effect'),
+  tone: msg('[ ] size · Alt inverts dodge/burn'),
+  healing: msg('Alt+click sets the source · [ ] change the brush size'),
+  pen: msg('Alt converts a point · Ctrl moves a point · Shift constrains the angle'),
+  shape: msg('Shift constrains proportions · Alt draws from the centre'),
+  'path-select': msg('Shift selects more · Alt duplicates the path'),
+  nav: msg('Space+drag pans · Ctrl+wheel zooms · Ctrl+0 fits the screen'),
 };
 
 let nodes = null;
-let statusMode = STATUS_MODES[0];
+let statusMode = String(STATUS_MODES[0]);
 let lastTiming = 0;
 let busyStart = 0;
 
@@ -63,7 +68,7 @@ export function buildStatusBar(rootEl) {
   if (!rootEl) return;
   rootEl.replaceChildren();
 
-  const zoomInput = el('input.pk-input.pk-sb-zoom', { type: 'text', value: '100', title: 'Zoom level' });
+  const zoomInput = el('input.pk-input.pk-sb-zoom', { type: 'text', value: '100', title: tr('Zoom level') });
   const commitZoom = () => {
     const v = parseFloat(String(zoomInput.value).replace(/[^0-9.\-]/g, ''));
     if (!Number.isFinite(v) || v <= 0) { syncZoom(); return; }
@@ -78,10 +83,10 @@ export function buildStatusBar(rootEl) {
     if (e.key === 'Enter') { e.stopPropagation(); commitZoom(); zoomInput.blur(); }
   });
 
-  const zoomSelect = el('select.pk-select.pk-sb-zoomsel', { title: 'Zoom presets' },
-    el('option', { value: '', text: 'Custom' }),
-    el('option', { value: 'fit', text: 'Fit on Screen' }),
-    el('option', { value: 'fill', text: 'Fill Screen' }),
+  const zoomSelect = el('select.pk-select.pk-sb-zoomsel', { title: tr('Zoom presets') },
+    el('option', { value: '', text: tr('Custom') }),
+    el('option', { value: 'fit', text: tr('Fit on Screen') }),
+    el('option', { value: 'fill', text: tr('Fill Screen') }),
     ...ZOOM_PRESETS.map((z) => el('option', { value: String(z), text: `${z}%` }))
   );
   zoomSelect.addEventListener('change', () => {
@@ -100,8 +105,8 @@ export function buildStatusBar(rootEl) {
   });
 
   const dims = el('span.pk-sb-dims');
-  const statusSelect = el('select.pk-select.pk-sb-mode', { title: 'Status information' },
-    ...STATUS_MODES.map((m) => el('option', { value: m, text: m }))
+  const statusSelect = el('select.pk-select.pk-sb-mode', { title: tr('Status information') },
+    ...STATUS_MODES.map((m) => el('option', { value: String(m), text: tr(m) }))
   );
   statusSelect.value = statusMode;
   statusSelect.addEventListener('change', () => {
@@ -167,10 +172,10 @@ function sync() {
   syncZoom();
 
   nodes.dims.textContent = doc ? `${doc.width} × ${doc.height} px` : '—';
-  nodes.toolName.textContent = app.tool ? app.tool.name : '—';
-  nodes.memory.textContent = doc ? `Mem: ${formatBytes(doc.memoryUse())}` : 'Mem: —';
+  nodes.toolName.textContent = app.tool ? tr(app.tool.name) : '—';
+  nodes.memory.textContent = tr('Mem: {size}', { size: doc ? formatBytes(doc.memoryUse()) : '—' });
   nodes.statusText.textContent = statusValue(doc);
-  nodes.hint.textContent = hintFor(app.tool);
+  nodes.hint.textContent = tr(hintFor(app.tool));
 }
 
 function heapLimit() {
@@ -202,16 +207,17 @@ function statusValue(doc) {
     case 'Timing':
       return `${lastTiming.toFixed(2)}s`;
     case 'Current Tool':
-      return app.tool ? app.tool.name : '—';
+      return app.tool ? tr(app.tool.name) : '—';
     default:
       return '—';
   }
 }
 
+/** The modifier hint for a tool: English, as a string or a `msg()` — translate it to show it. */
 function hintFor(tool) {
-  if (!tool) return 'Space+drag pans · Ctrl+wheel zooms';
+  if (!tool) return msg('Space+drag pans · Ctrl+wheel zooms');
   if (tool.hint) return tool.hint;
   if (TOOL_HINTS[tool.id]) return TOOL_HINTS[tool.id];
   if (GROUP_HINTS[tool.group]) return GROUP_HINTS[tool.group];
-  return 'Space+drag pans · Ctrl+wheel zooms · Tab hides the panels';
+  return msg('Space+drag pans · Ctrl+wheel zooms · Tab hides the panels');
 }

@@ -4,9 +4,7 @@ import { el } from '../../core/util.js';
 import { app } from '../../core/app.js';
 import { Dialog, confirmDialog } from '../dialog.js';
 import { iconEl } from '../icons.js';
-import {
-  FONT_FAMILIES, fontStack, googleNameFor, normalizeFontId, GOOGLE_PREFIX,
-} from '../../text/fonts.js';
+import { FONT_FAMILIES, fontStack, googleNameFor, normalizeFontId, GOOGLE_PREFIX, familyDisplayName } from '../../text/fonts.js';
 import { loadCatalog, searchFamilies, catalogCategories, catalogSize } from '../../text/font-catalog.js';
 import {
   installedFamilies, isInstalled, downloadFamily, removeFamily, hydrateInstalledFonts, webfontsAllowed,
@@ -14,6 +12,7 @@ import {
 import { fontsUsedBy } from '../../text/font-table.js';
 import { requestPreviews, previewState, onPreviewState, setPreviewText, retryFailedPreviews } from '../../text/font-previews.js';
 import { isOffline } from '../../io/offline.js';
+import { msg, tr, trn } from '../../core/i18n.js';
 
 /**
  * The font browser.
@@ -35,6 +34,15 @@ const ROW_H = 34;
 const OVERSCAN = 6;
 const PREVIEW_KEY = 'pikado.fonts.preview';
 
+/** What the catalogue's categories are called, translated when drawn. */
+const CATEGORY_NAMES = {
+  'sans-serif': msg('Sans Serif'),
+  serif: msg('Serif'),
+  display: msg('Display'),
+  handwriting: msg('Handwriting'),
+  monospace: msg('Monospace'),
+};
+
 /** Built-ins presented in the same shape as a catalogue entry. */
 function builtinRows() {
   return FONT_FAMILIES.map((f) => ({
@@ -55,7 +63,7 @@ function catalogRow(e) {
  * @returns {Promise<string|null>} the chosen font id, or null
  */
 export async function showFontsDialog(opts = {}) {
-  const dlg = new Dialog({ title: 'Fonts', width: 760, className: 'pkf-dialog' });
+  const dlg = new Dialog({ title: tr('Fonts'), width: 760, className: 'pkf-dialog' });
   await Promise.all([loadCatalog(), hydrateInstalledFonts()]);
 
   let chosen = normalizeFontId(opts.initial || '');
@@ -71,8 +79,8 @@ export async function showFontsDialog(opts = {}) {
 
   /* --- controls ---------------------------------------------------- */
 
-  const search = el('input.pk-input.pkf-search', { type: 'search', placeholder: 'Search fonts…' });
-  const previewInput = el('input.pk-input.pkf-sample', { type: 'text', placeholder: 'Preview text…', value: sample });
+  const search = el('input.pk-input.pkf-search', { type: 'search', placeholder: tr('Search fonts…') });
+  const previewInput = el('input.pk-input.pkf-sample', { type: 'text', placeholder: tr('Preview text…'), value: sample });
 
   const cats = el('div.pkd-cats');
   const catButton = (value, label) => {
@@ -80,11 +88,13 @@ export async function showFontsDialog(opts = {}) {
     b.dataset.value = value;
     return b;
   };
-  const catButtons = [catButton('', 'All'), ...catalogCategories().map((c) => catButton(c, c.replace('-serif', ' Serif').replace(/^\w/, (m) => m.toUpperCase())))];
+  const categoryName = (c) => (CATEGORY_NAMES[c] ? tr(CATEGORY_NAMES[c])
+    : c.replace('-serif', ' Serif').replace(/^\w/, (m) => m.toUpperCase()));
+  const catButtons = [catButton('', tr('All')), ...catalogCategories().map((c) => catButton(c, categoryName(c)))];
   cats.append(...catButtons);
 
   const scopes = el('div.pkd-seg');
-  const scopeButtons = [['all', 'All'], ['downloaded', 'Downloaded'], ['document', 'In document']].map(([v, label]) => {
+  const scopeButtons = [['all', tr('All')], ['downloaded', tr('Downloaded')], ['document', tr('In document')]].map(([v, label]) => {
     const b = el('button.pk-seg-btn', { type: 'button', text: label, onclick: () => { scope = v; paintChips(); rebuild(); } });
     b.dataset.value = v;
     return b;
@@ -113,7 +123,8 @@ export async function showFontsDialog(opts = {}) {
 
   const rowNode = () => {
     const name = el('div.pkf-name.pk-truncate');
-    const spec = el('div.pkf-spec');
+    // The specimen is sample text in the face, not interface prose.
+    const spec = el('div.pkf-spec', { translate: 'no' });
     const action = el('div.pkf-action');
     const row = el('button.pkf-row', { type: 'button', role: 'option' }, name, spec, action);
     row.addEventListener('click', () => {
@@ -127,37 +138,39 @@ export async function showFontsDialog(opts = {}) {
     n.row.dataset.index = String(index);
     n.row.id = `pkf-opt-${index}`;
     n.row.classList.toggle('active', index === active);
-    n.name.textContent = entry.family;
+    // A family's name is its own — except the two built-ins that describe a kind of face.
+    n.name.textContent = entry.builtin ? familyDisplayName(entry.id, entry.family) : entry.family;
+    n.name.translate = entry.builtin && n.name.textContent !== entry.family;
 
     const st = entry.builtin || isInstalled(entry.id) ? 'ready' : previewState(entry.family);
     n.spec.textContent = sample || 'The quick brown fox';
     n.spec.style.fontFamily = st === 'ready' ? fontStack(entry.id, entry.category) : '';
     n.spec.classList.toggle('waiting', st === 'loading' || st === 'unknown');
     n.spec.classList.toggle('unavailable', st === 'failed' || st === 'offline');
-    n.spec.title = st === 'offline' ? 'No preview while offline'
-      : st === 'failed' ? 'The preview could not be loaded' : '';
+    n.spec.title = st === 'offline' ? tr('No preview while offline')
+      : st === 'failed' ? tr('The preview could not be loaded') : '';
 
     n.action.replaceChildren(...actionFor(entry));
   };
 
   const actionFor = (entry) => {
-    if (entry.builtin && !entry.google) return [el('span.pkf-tag', { text: 'Built-in' })];
+    if (entry.builtin && !entry.google) return [el('span.pkf-tag', { text: tr('Built-in') })];
     if (isInstalled(entry.id)) {
       const meta = installedFamilies().find((f) => f.family === googleNameFor(entry.id));
       return [
-        el('span.pkf-tag.ok', { text: meta ? `${Math.max(1, Math.round(meta.bytes / 1024))} KB` : 'Ready' }),
+        el('span.pkf-tag.ok', { text: meta ? `${Math.max(1, Math.round(meta.bytes / 1024))} KB` : tr('Ready') }),
         el('button.pk-icon-btn.pkf-trash', {
-          type: 'button', title: `Remove ${entry.family}`,
+          type: 'button', title: tr('Remove {family}', { family: entry.family }),
           onclick: async (ev) => { ev.stopPropagation(); await remove(entry); },
         }, iconEl('trash')),
       ];
     }
     const btn = el('button.pk-btn.subtle.pkf-get', {
       type: 'button',
-      text: 'Get',
+      text: tr('Get'),
       disabled: isOffline() || !webfontsAllowed(),
-      title: isOffline() ? 'You are offline'
-        : !webfontsAllowed() ? 'Downloading fonts is turned off in Preferences' : '',
+      title: isOffline() ? tr('You are offline')
+        : !webfontsAllowed() ? tr('Downloading fonts is turned off in Preferences') : '',
       onclick: (ev) => { ev.stopPropagation(); get(entry, btn); },
     });
     return [btn];
@@ -166,19 +179,19 @@ export async function showFontsDialog(opts = {}) {
   async function get(entry, btn) {
     const family = googleNameFor(entry.id) || entry.family;
     btn.disabled = true;
-    btn.textContent = 'Getting…';
+    btn.textContent = tr('Getting…');
     try {
       await downloadFamily(family, {
-        onProgress: (done, total) => { btn.textContent = total > 1 ? `${done}/${total}` : 'Getting…'; },
+        onProgress: (done, total) => { btn.textContent = total > 1 ? `${done}/${total}` : tr('Getting…'); },
       });
       render();
       syncPrimary();
     } catch (err) {
       btn.disabled = false;
-      btn.textContent = 'Retry';
+      btn.textContent = tr('Retry');
       // A user-initiated download that fails should say so out loud, not only
       // as a tooltip on a row they may already have scrolled past.
-      app.toast((err && err.message) || `${family} could not be downloaded.`, 'error', 5000);
+      app.toast((err && err.message) || tr('{family} could not be downloaded.', { family }), 'error', 5000);
     }
   }
 
@@ -187,9 +200,10 @@ export async function showFontsDialog(opts = {}) {
     const users = [...app.docs].reduce((n, d) => n + ([...fontsUsedBy(d)].includes(entry.id) ? 1 : 0), 0);
     const ok = await confirmDialog(
       users
-        ? `${family} is used by ${users} open ${users === 1 ? 'document' : 'documents'}. They will render in a substitute face.`
-        : `Remove ${family}?`,
-      `Remove ${family}`, 'Remove', { danger: true },
+        ? trn('{family} is used by {count} open document. They will render in a substitute face.',
+          '{family} is used by {count} open documents. They will render in a substitute face.', users, { family })
+        : tr('Remove {family}?', { family }),
+      tr('Remove {family}', { family }), tr('Remove'), { danger: true },
     );
     if (!ok) return;
     await removeFamily(family);
@@ -240,9 +254,9 @@ export async function showFontsDialog(opts = {}) {
     const total = catalogSize() + FONT_FAMILIES.length;
     const filtered = query || category || scope !== 'all';
     footer.textContent = (filtered
-      ? `${rows.length.toLocaleString()} of ${total.toLocaleString()} families`
-      : `${rows.length.toLocaleString()} families`)
-      + ` · ${installedFamilies().length} downloaded`;
+      ? trn('{shown} of {count} family', '{shown} of {count} families', total, { shown: rows.length.toLocaleString(), count: total.toLocaleString() })
+      : trn('{count} family', '{count} families', rows.length, { count: rows.length.toLocaleString() }))
+      + ` · ${tr('{count} downloaded', { count: installedFamilies().length })}`;
   }
 
   function rebuild() {
@@ -275,9 +289,9 @@ export async function showFontsDialog(opts = {}) {
     active = rows.findIndex((e) => normalizeFontId(e.id) === chosen);
     empty.hidden = rows.length > 0;
     empty.replaceChildren(
-      el('p', { text: query ? `Nothing matches “${query}”.` : 'Nothing here yet.' }),
+      el('p', { text: query ? tr('Nothing matches “{query}”.', { query }) : tr('Nothing here yet.') }),
       el('button.pk-btn.subtle', {
-        type: 'button', text: 'Clear filters',
+        type: 'button', text: tr('Clear filters'),
         onclick: () => { query = ''; category = ''; scope = 'all'; search.value = ''; paintChips(); rebuild(); },
       }),
     );
@@ -292,9 +306,9 @@ export async function showFontsDialog(opts = {}) {
     strip.hidden = !off && !anyFailed;
     if (strip.hidden) return;
     strip.replaceChildren(
-      el('span', { text: off ? 'Offline — previews and downloads are unavailable.' : 'Some previews could not be loaded.' }),
+      el('span', { text: off ? tr('Offline — previews and downloads are unavailable.') : tr('Some previews could not be loaded.') }),
       ...(off ? [] : [el('button.pk-btn.subtle', {
-        type: 'button', text: 'Retry previews',
+        type: 'button', text: tr('Retry previews'),
         onclick: () => { retryFailedPreviews(); render(); },
       })]),
     );
@@ -359,16 +373,16 @@ export async function showFontsDialog(opts = {}) {
     const entry = rows[active];
     const needsGet = entry && !entry.builtin && !isInstalled(entry.id);
     dlg.setButtons([
-      { label: 'Cancel', value: null, subtle: true },
+      { label: tr('Cancel'), value: null, subtle: true },
       {
-        label: needsGet ? 'Download and use' : 'Use font',
+        label: needsGet ? tr('Download and use') : tr('Use font'),
         primary: true,
         onClick: async (d) => {
           const e = rows[active];
           if (!e) { d.close(null); return false; }
           if (!e.builtin && !isInstalled(e.id)) {
             try { await downloadFamily(googleNameFor(e.id) || e.family); } catch (err) {
-              app.toast((err && err.message) || 'The font could not be downloaded.', 'error', 5000);
+              app.toast((err && err.message) || tr('The font could not be downloaded.'), 'error', 5000);
               return false;
             }
           }

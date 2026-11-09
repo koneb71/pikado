@@ -1,5 +1,6 @@
 import './open.css';
 import { app } from '../core/app.js';
+import { tr, trn } from '../core/i18n.js';
 import { PikaDocument } from '../core/document.js';
 import { createRasterLayer } from '../core/layer.js';
 import { createCanvas, ctx2d, el, readFileAsArrayBuffer, readFileAsText } from '../core/util.js';
@@ -28,24 +29,32 @@ async function askAboutOversizePSD(info) {
   const mb = Math.round(info.projectedBytes / 1048576);
   const budgetMb = Math.round(info.budgetBytes / 1048576);
   const { Dialog } = await import('../ui/dialog.js');
-  const dialog = new Dialog({ title: 'This PSD is bigger than it looks', width: 500 });
+  const dialog = new Dialog({ title: tr('This PSD is bigger than it looks'), width: 500 });
   dialog.setBody(
     el('div.pk-msg', {
-      text: `It has ${info.layers} layers on a ${info.width} x ${info.height} canvas. `
-        + `Pikado keeps every layer at full canvas size, so opening them all needs about `
-        + `${mb} MB — well past the ${budgetMb} MB budget in Preferences. That is usually `
-        + `enough to make the tab unresponsive or close it outright.`,
+      text: trn(
+        'It has {count} layer on a {width} x {height} canvas. '
+          + 'Pikado keeps every layer at full canvas size, so opening them all needs about '
+          + '{size} MB — well past the {budget} MB budget in Preferences. That is usually '
+          + 'enough to make the tab unresponsive or close it outright.',
+        'It has {count} layers on a {width} x {height} canvas. '
+          + 'Pikado keeps every layer at full canvas size, so opening them all needs about '
+          + '{size} MB — well past the {budget} MB budget in Preferences. That is usually '
+          + 'enough to make the tab unresponsive or close it outright.',
+        info.layers,
+        { width: info.width, height: info.height, size: mb, budget: budgetMb },
+      ),
     }),
     el('div.pk-hint', {
-      text: 'Opening it flattened uses the composite Photoshop already stored in the file. '
+      text: tr('Opening it flattened uses the composite Photoshop already stored in the file. '
         + 'You get the picture, at one layer, immediately. Opening every layer may still '
-        + 'work if you have the memory to spare — it is your call, not a refusal.',
+        + 'work if you have the memory to spare — it is your call, not a refusal.'),
     }),
   );
   dialog.setButtons([
-    { label: 'Cancel', value: 'cancel', subtle: true },
-    { label: 'Open all layers anyway', value: 'proceed' },
-    { label: 'Open flattened', value: 'flatten', primary: true },
+    { label: tr('Cancel'), value: 'cancel', subtle: true },
+    { label: tr('Open all layers anyway'), value: 'proceed' },
+    { label: tr('Open flattened'), value: 'flatten', primary: true },
   ]);
   const choice = await dialog.open();
   return choice || 'cancel';
@@ -74,7 +83,7 @@ function extensionOf(name) {
 }
 
 function stemOf(name) {
-  return String(name || 'Untitled').replace(/\.[a-z0-9]{1,6}$/i, '') || 'Untitled';
+  return String(name || tr('Untitled')).replace(/\.[a-z0-9]{1,6}$/i, '') || tr('Untitled');
 }
 
 /* ------------------------------------------------------------------ */
@@ -126,7 +135,7 @@ async function decodeGifFrames(blob) {
 
 function documentFromCanvas(canvas, name) {
   const doc = new PikaDocument({ width: canvas.width, height: canvas.height, name });
-  const layer = createRasterLayer(canvas.width, canvas.height, 'Background');
+  const layer = createRasterLayer(canvas.width, canvas.height, tr('Background'));
   ctx2d(layer.canvas).drawImage(canvas, 0, 0);
   layer.isBackground = true;
   layer.locked = { ...layer.locked, position: true };
@@ -141,7 +150,7 @@ function documentFromCanvas(canvas, name) {
 function documentFromFrames(frames, name) {
   const doc = new PikaDocument({ width: frames[0].width, height: frames[0].height, name });
   doc.layers = frames.map((frame, i) => {
-    const layer = createRasterLayer(doc.width, doc.height, `Frame ${i + 1}`);
+    const layer = createRasterLayer(doc.width, doc.height, tr('Frame {number}', { number: i + 1 }));
     ctx2d(layer.canvas).drawImage(frame, 0, 0);
     return layer;
   });
@@ -170,7 +179,7 @@ export function placeAsLayer(doc, source, name) {
   c.drawImage(source, Math.round((doc.width - w) / 2), Math.round((doc.height - h) / 2), w, h);
   doc.addLayer(layer);
   doc.commit('Place');
-  app.toast(`Placed “${name}” as a new layer`, 'ok');
+  app.toast(tr('Placed “{name}” as a new layer', { name }), 'ok');
   return layer;
 }
 
@@ -190,14 +199,14 @@ function adopt(doc) {
  * @param {string} [name]
  * @param {{asLayer?:boolean, doc?:PikaDocument}} [opts]
  */
-export async function openImageBlob(blob, name = 'Image', opts = {}) {
+export async function openImageBlob(blob, name = tr('Image'), opts = {}) {
   const target = opts.asLayer ? (opts.doc || app.activeDoc) : null;
   const isGif = blob.type === 'image/gif' || extensionOf(name) === 'gif';
 
   if (!target && isGif) {
     const frames = await decodeGifFrames(blob);
     if (frames && frames.length > 1) {
-      app.toast(`Imported ${frames.length} GIF frames as layers`, 'ok');
+      app.toast(trn('Imported {count} GIF frame as a layer', 'Imported {count} GIF frames as layers', frames.length), 'ok');
       return adopt(documentFromFrames(frames, name));
     }
   }
@@ -237,7 +246,7 @@ async function noteProfileOf(blob, doc) {
  * @returns {Promise<PikaDocument|import('../core/layer.js').Layer>}
  */
 export async function openFile(file, opts = {}) {
-  const name = file.name || 'Untitled';
+  const name = file.name || tr('Untitled');
   const ext = extensionOf(name);
   const type = (file.type || '').toLowerCase();
   const target = opts.asLayer ? (opts.doc || app.activeDoc) : null;
@@ -277,7 +286,9 @@ export async function openFile(file, opts = {}) {
 export async function openFiles(files, opts = {}) {
   const list = [...(files || [])].filter(Boolean);
   if (!list.length) return [];
-  const label = list.length > 1 ? `Opening ${list.length} files…` : `Opening ${list[0].name || 'file'}…`;
+  const label = list.length > 1
+    ? trn('Opening {count} file…', 'Opening {count} files…', list.length)
+    : list[0].name ? tr('Opening {name}…', { name: list[0].name }) : tr('Opening file…');
   const result = await app.busy(label, async () => {
     const opened = [];
     for (const file of list) {
@@ -286,8 +297,8 @@ export async function openFiles(files, opts = {}) {
         if (out) opened.push(out);
       } catch (err) {
         console.error(err);
-        const why = err && err.message ? err.message : 'the file could not be opened';
-        app.toast(`${file.name || 'File'}: ${why}`, 'error', 6000);
+        const why = err && err.message ? err.message : tr('the file could not be opened');
+        app.toast(`${file.name || tr('File')}: ${why}`, 'error', 6000);
       }
     }
     return opened;
@@ -379,15 +390,15 @@ function nameForUrl(url, alt) {
   } catch (err) {
     name = (alt || '').trim();
   }
-  return name.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 120) || 'Image';
+  return name.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 120) || tr('Image');
 }
 
 /** The host to name in a failure message. */
 function hostOf(url) {
   try {
-    return new URL(url).hostname || 'That site';
+    return new URL(url).hostname || tr('That site');
   } catch (err) {
-    return 'That site';
+    return tr('That site');
   }
 }
 
@@ -413,19 +424,19 @@ async function fetchDroppedImage(url, name) {
     res = await fetch(url, { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' });
   } catch (err) {
     app.toast(
-      `${hostOf(url)} does not let another site read its images. Right-click the image, `
-      + 'choose Copy image, then press Ctrl+V here.',
+      tr('{host} does not let another site read its images. Right-click the image, '
+        + 'choose Copy image, then press Ctrl+V here.', { host: hostOf(url) }),
       'error', 8000,
     );
     return null;
   }
   if (!res.ok) {
-    app.toast(`${hostOf(url)} refused the image (HTTP ${res.status}).`, 'error', 6000);
+    app.toast(tr('{host} refused the image (HTTP {status}).', { host: hostOf(url), status: res.status }), 'error', 6000);
     return null;
   }
   const blob = await res.blob();
   if (!blob.size) {
-    app.toast('That image came back empty.', 'error');
+    app.toast(tr('That image came back empty.'), 'error');
     return null;
   }
   const type = (blob.type || '').toLowerCase();
@@ -442,7 +453,7 @@ async function fetchDroppedImage(url, name) {
     || type === 'application/octet-stream'
     || type === 'application/x-pikado';
   if (!openable) {
-    app.toast('That link points at a page, not an image.', 'error', 5000);
+    app.toast(tr('That link points at a page, not an image.'), 'error', 5000);
     return null;
   }
   return new File([blob], name, { type });
@@ -457,7 +468,7 @@ async function openDroppedUrl(url, alt, opts) {
   const name = nameForUrl(url, alt);
   // `app.busy` lowers the overlay in a `finally`, so two of them cannot be
   // nested — this one has to finish before `openFiles` starts its own.
-  const file = await app.busy(`Fetching ${name}…`, () => fetchDroppedImage(url, name));
+  const file = await app.busy(tr('Fetching {name}…', { name }), () => fetchDroppedImage(url, name));
   if (!file) return null;
   return openFiles([file], opts);
 }
@@ -473,8 +484,9 @@ async function openDroppedUrl(url, alt, opts) {
  */
 export function installFileDrop(areaEl) {
   const host = areaEl || document.body;
-  const title = el('div.pk-drop-title', { text: 'Drop to open' });
-  const hint = el('div.pk-drop-hint', {}, 'Hold ', el('kbd', { text: 'Shift' }), ' to place into the current document');
+  const title = el('div.pk-drop-title', { text: tr('Drop to open') });
+  const [hintStart, hintEnd] = tr('Hold {key} to place into the current document').split('{key}');
+  const hint = el('div.pk-drop-hint', {}, hintStart, el('kbd', { text: tr('Shift') }), hintEnd);
   const overlay = el('div.pk-drop-overlay', {}, el('div.pk-drop-card', {}, title, hint));
   host.appendChild(overlay);
 
@@ -484,7 +496,7 @@ export function installFileDrop(areaEl) {
 
   const describe = (shift) => {
     const asLayer = shift && !!app.activeDoc;
-    title.textContent = asLayer ? 'Drop as a new layer' : 'Drop to open';
+    title.textContent = asLayer ? tr('Drop as a new layer') : tr('Drop to open');
     hint.style.visibility = app.activeDoc ? 'visible' : 'hidden';
   };
 

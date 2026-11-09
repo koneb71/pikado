@@ -11,6 +11,7 @@ import { buildForm } from '../dialog.js';
 import { toHex, parseColor } from '../../core/color.js';
 import { FONT_WEIGHTS, ensureFont, BROWSE_FONTS } from '../../text/fonts.js';
 import { fontOptions, resolveFontChoice } from '../font-field.js';
+import { commandName, msg, tr, trn } from '../../core/i18n.js';
 import * as ops from '../../layers/ops.js';
 import {
   isSmartLayer, getSmartTransform, getSmartFilters, decomposeMatrix, composeMatrix, authoredParams,
@@ -116,7 +117,7 @@ function buildPropertiesPanel(bodyEl) {
     root.replaceChildren();
 
     if (!doc) {
-      root.appendChild(el('div.pk-panel-empty', { text: 'No document open.' }));
+      root.appendChild(el('div.pk-panel-empty', { text: tr('No document open.') }));
       return;
     }
 
@@ -180,12 +181,12 @@ function headerFor(doc, layer, mode) {
           : mode === 'smart' ? 'image'
             : layer ? 'copy' : 'image';
   const title = mode === 'document' || !layer ? doc.name : layer.name;
-  const kind = mode === 'mask' ? 'Layer Mask'
-    : mode === 'adjustment' ? 'Adjustment'
-      : mode === 'text' ? 'Type'
-        : mode === 'shape' ? 'Shape'
-          : mode === 'smart' ? 'Smart Object'
-            : 'Document';
+  const kind = mode === 'mask' ? tr('Layer Mask')
+    : mode === 'adjustment' ? tr('Adjustment')
+      : mode === 'text' ? tr('Type')
+        : mode === 'shape' ? tr('Shape')
+          : mode === 'smart' ? tr('Smart Object')
+            : tr('Document');
   return el('div.pk-prop-head', {},
     el('span.pk-prop-ico', { html: icon(iconName, { size: 15 }) }),
     el('span.pk-prop-name', { text: title }),
@@ -198,7 +199,7 @@ function headerFor(doc, layer, mode) {
  * `touch()` fires on every change for a live preview; `commit()` lands once the
  * user stops (or lets go of) the control *and* every re-render has finished.
  *
- * @param {string|(()=>string)} label history label
+ * @param {string|import('../../core/i18n.js').Message|(()=>string)} label history label
  * @param {{layerFor?:()=>object, before?:Function}} [opts]
  *   `layerFor` names the layer to `beginEdit` at the start of a burst;
  *   `before` runs immediately before the snapshot to land coalesced work.
@@ -277,14 +278,14 @@ function adjustmentSection(doc, layer) {
   const node = el('div.pk-panel-section');
 
   if (!def) {
-    node.appendChild(el('div.pk-panel-note', { text: `Unknown adjustment "${kind}".` }));
+    node.appendChild(el('div.pk-panel-note', { text: tr('Unknown adjustment "{kind}".', { kind }) }));
     return { node };
   }
 
   const state = { ...(def.defaults || {}), ...(layer.adjustment.params || {}) };
   layer.adjustment.params = state;
 
-  const committer = makeCommitter(`${def.name.replace(/(\.\.\.|…)$/, '')} Layer`);
+  const committer = makeCommitter(msg('{adjustment} Layer', { adjustment: commandName(def.name) }));
   const form = buildForm(def.params || [], state, (key, value) => {
     state[key] = value;
     form.refresh();
@@ -295,19 +296,19 @@ function adjustmentSection(doc, layer) {
   node.appendChild(form.node);
   node.appendChild(el('div.pk-prop-actions', {},
     el('button.pk-mini-btn', {
-      type: 'button', text: 'Reset',
+      type: 'button', text: tr('Reset'),
       onclick: () => {
         Object.assign(state, defaultParams(kind));
         form.refresh();
-        doc.commit(`Reset ${def.name.replace(/(\.\.\.|…)$/, '')}`);
+        doc.commit(msg('Reset {adjustment}', { adjustment: commandName(def.name) }));
       },
     }),
     el('button.pk-mini-btn', {
-      type: 'button', text: layer.clipped ? 'Release Clip' : 'Clip to Layer',
+      type: 'button', text: layer.clipped ? tr('Release Clip') : tr('Clip to Layer'),
       onclick: () => ops.toggleClipping(doc, layer),
     }),
     el('button.pk-mini-btn', {
-      type: 'button', text: 'Delete',
+      type: 'button', text: tr('Delete'),
       onclick: () => ops.deleteLayers(doc, [layer]),
     })
   ));
@@ -411,12 +412,12 @@ function maskSection(doc, layer) {
 
   node.appendChild(form.node);
   node.appendChild(el('div.pk-panel-note', {
-    text: 'Density fades the mask toward fully revealed; Feather softens its edges. Both are baked into the mask pixels when you commit.',
+    text: tr('Density fades the mask toward fully revealed; Feather softens its edges. Both are baked into the mask pixels when you commit.'),
   }));
 
   node.appendChild(el('div.pk-prop-actions', {},
     el('button.pk-mini-btn', {
-      type: 'button', text: 'Invert',
+      type: 'button', text: tr('Invert'),
       onclick: () => {
         doc.beginEdit(layer);
         layer.maskInverted = !layer.maskInverted;
@@ -426,11 +427,11 @@ function maskSection(doc, layer) {
       },
     }),
     el('button.pk-mini-btn', {
-      type: 'button', text: layer.maskEnabled ? 'Disable' : 'Enable',
+      type: 'button', text: layer.maskEnabled ? tr('Disable') : tr('Enable'),
       onclick: () => ops.toggleMaskEnabled(doc, layer),
     }),
-    el('button.pk-mini-btn', { type: 'button', text: 'Apply', onclick: () => ops.applyLayerMask(doc, layer) }),
-    el('button.pk-mini-btn', { type: 'button', text: 'Delete', onclick: () => ops.deleteLayerMask(doc, layer) })
+    el('button.pk-mini-btn', { type: 'button', text: tr('Apply'), onclick: () => ops.applyLayerMask(doc, layer) }),
+    el('button.pk-mini-btn', { type: 'button', text: tr('Delete'), onclick: () => ops.deleteLayerMask(doc, layer) })
   ));
 
   const off = commitOnRelease(node, committer);
@@ -523,18 +524,18 @@ function textSection(doc, layer) {
       await ensureFont(state.font, state.weight, t.style).catch(() => false);
       if (mine !== token) return;
       const fn = mod.rasterizeTextLayer;
-      if (typeof fn !== 'function') throw new Error('Text renderer is unavailable.');
+      if (typeof fn !== 'function') throw new Error(tr('Text renderer is unavailable.'));
       layer.canvas = fn(layer, doc);
       doc.touch('text');
     } catch (err) {
       console.error(err);
-      app.toast(err && err.message ? err.message : 'Could not render the text layer.', 'error');
+      app.toast(err && err.message ? err.message : tr('Could not render the text layer.'), 'error');
     }
   };
 
   const form = buildForm([
     { key: 'content', label: 'Text', type: 'textarea', rows: 3 },
-    { key: 'font', label: 'Font', type: 'select', options: families },
+    { key: 'font', label: 'Font', type: 'select', options: () => families },
     { key: 'weight', label: 'Weight', type: 'select', options: FONT_WEIGHTS },
     { key: 'size', label: 'Size', type: 'slider', min: 4, max: 400, step: 1, unit: 'px' },
     { key: 'color', label: 'Color', type: 'color' },
@@ -551,7 +552,7 @@ function textSection(doc, layer) {
 
   node.appendChild(form.node);
   node.appendChild(el('div.pk-prop-actions', {},
-    el('button.pk-mini-btn', { type: 'button', text: 'Rasterize', onclick: () => ops.rasterizeLayer(doc, layer) })
+    el('button.pk-mini-btn', { type: 'button', text: tr('Rasterize'), onclick: () => ops.rasterizeLayer(doc, layer) })
   ));
 
   const off = commitOnRelease(node, committer);
@@ -680,12 +681,12 @@ function shapeSection(doc, layer) {
         s.subpaths = [roundedRectSubpath(box, s.corners)];
       }
       const fn = mod.rasterizeShapeLayer;
-      if (typeof fn !== 'function') throw new Error('Shape renderer is unavailable.');
+      if (typeof fn !== 'function') throw new Error(tr('Shape renderer is unavailable.'));
       layer.canvas = fn(layer, doc);
       doc.touch('shape');
     } catch (err) {
       console.error(err);
-      app.toast(err && err.message ? err.message : 'Could not render the shape layer.', 'error');
+      app.toast(err && err.message ? err.message : tr('Could not render the shape layer.'), 'error');
     }
   };
 
@@ -711,14 +712,17 @@ function shapeSection(doc, layer) {
   node.appendChild(form.node);
   if (complexFill) {
     node.appendChild(el('div.pk-panel-note', {
-      text: `This layer uses a ${fill.type === 'pattern' ? 'pattern' : 'gradient'} fill. Turn Fill off to remove it, or edit it with the shape tools.`,
+      text: fill.type === 'pattern'
+        ? tr('This layer uses a pattern fill. Turn Fill off to remove it, or edit it with the shape tools.')
+        : tr('This layer uses a gradient fill. Turn Fill off to remove it, or edit it with the shape tools.'),
     }));
   }
   node.appendChild(el('div.pk-panel-note', {
-    text: `${(s.subpaths || []).length} subpath${(s.subpaths || []).length === 1 ? '' : 's'} · edit the geometry with the Path Selection tools.`,
+    text: trn('{count} subpath · edit the geometry with the Path Selection tools.',
+      '{count} subpaths · edit the geometry with the Path Selection tools.', (s.subpaths || []).length),
   }));
   node.appendChild(el('div.pk-prop-actions', {},
-    el('button.pk-mini-btn', { type: 'button', text: 'Rasterize', onclick: () => ops.rasterizeLayer(doc, layer) })
+    el('button.pk-mini-btn', { type: 'button', text: tr('Rasterize'), onclick: () => ops.rasterizeLayer(doc, layer) })
   ));
 
   const off = commitOnRelease(node, committer);
@@ -825,9 +829,9 @@ function smartSection(doc, layer) {
   const shapeText = () => {
     const p = getSmartPerspective(layer);
     const bits = [];
-    if (p[0] || p[1]) bits.push(`perspective ${round2(p[0] * 1000)}, ${round2(p[1] * 1000)} ‰`);
-    if (getSmartWarp(layer)) bits.push('warp mesh');
-    return bits.length ? bits.join(' · ') : 'None';
+    if (p[0] || p[1]) bits.push(tr('perspective {x}, {y} ‰', { x: round2(p[0] * 1000), y: round2(p[1] * 1000) }));
+    if (getSmartWarp(layer)) bits.push(tr('warp mesh'));
+    return bits.length ? bits.join(' · ') : tr('None');
   };
   const sizeVal = el('span.pk-panel-val', { text: `${s.sourceWidth} × ${s.sourceHeight} px` });
   const scaleVal = el('span.pk-panel-val', { text: scaleText() });
@@ -835,43 +839,43 @@ function smartSection(doc, layer) {
   const shapeVal = el('span.pk-panel-val', { text: shapeText() });
   const layerVal = el('span.pk-panel-val', { text: String(s.source.flatLayers().length) });
   const filterVal = el('span.pk-panel-val', {
-    text: filters.length ? `${filters.length} (${filters.filter((f) => f.enabled).length} on)` : 'None',
+    text: filters.length ? tr('{count} ({enabled} on)', { count: filters.length, enabled: filters.filter((f) => f.enabled).length }) : tr('None'),
   });
 
   node.appendChild(el('div.pk-panel-grid.pk-prop-smart-grid', {},
-    el('span.pk-panel-key', { text: 'Source size' }), sizeVal,
-    el('span.pk-panel-key', { text: 'Source layers' }), layerVal,
-    el('span.pk-panel-key', { text: 'Scale' }), scaleVal,
-    el('span.pk-panel-key', { text: 'Center' }), posVal,
-    el('span.pk-panel-key', { text: 'Distortion' }), shapeVal,
-    el('span.pk-panel-key', { text: 'Smart filters' }), filterVal
+    el('span.pk-panel-key', { text: tr('Source size') }), sizeVal,
+    el('span.pk-panel-key', { text: tr('Source layers') }), layerVal,
+    el('span.pk-panel-key', { text: tr('Scale') }), scaleVal,
+    el('span.pk-panel-key', { text: tr('Center') }), posVal,
+    el('span.pk-panel-key', { text: tr('Distortion') }), shapeVal,
+    el('span.pk-panel-key', { text: tr('Smart filters') }), filterVal
   ));
 
   node.appendChild(el('div.pk-panel-note', {
-    text: 'Centre, scale, rotation and skew are one matrix; perspective and warp ride alongside it. All of them, plus the smart filters, are re-applied to the embedded source on every render, so nothing here is baked into pixels until you rasterize.',
+    text: tr('Centre, scale, rotation and skew are one matrix; perspective and warp ride alongside it. All of them, plus the smart filters, are re-applied to the embedded source on every render, so nothing here is baked into pixels until you rasterize.'),
   }));
 
   const clearBtn = el('button.pk-mini-btn', {
-    type: 'button', text: 'Clear Distortion',
+    type: 'button', text: tr('Clear Distortion'),
     onclick: () => { clearSmartShape(doc, layer); sync(); },
   });
 
   node.appendChild(el('div.pk-prop-actions', {},
-    el('button.pk-mini-btn', { type: 'button', text: 'Edit Contents', onclick: () => editSmartContents(doc, layer) }),
+    el('button.pk-mini-btn', { type: 'button', text: tr('Edit Contents'), onclick: () => editSmartContents(doc, layer) }),
     el('button.pk-mini-btn', {
-      type: 'button', text: 'Replace…',
+      type: 'button', text: tr('Replace…'),
       onclick: async () => {
         const mod = await import('../dialogs/smart-object.js');
         await mod.showReplaceContentsDialog(doc, layer);
       },
     }),
-    el('button.pk-mini-btn', { type: 'button', text: 'Export…', onclick: () => exportSmartContents(doc, layer) }),
+    el('button.pk-mini-btn', { type: 'button', text: tr('Export…'), onclick: () => exportSmartContents(doc, layer) }),
     clearBtn,
     el('button.pk-mini-btn', {
-      type: 'button', text: 'Reset',
+      type: 'button', text: tr('Reset'),
       onclick: () => { resetSmartTransform(doc, layer); sync(); },
     }),
-    el('button.pk-mini-btn', { type: 'button', text: 'Rasterize', onclick: () => ops.rasterizeLayer(doc, layer) })
+    el('button.pk-mini-btn', { type: 'button', text: tr('Rasterize'), onclick: () => ops.rasterizeLayer(doc, layer) })
   ));
 
   const off = commitOnRelease(node, committer);
@@ -902,10 +906,10 @@ function smartSection(doc, layer) {
     scaleVal.textContent = scaleText();
     posVal.textContent = `${Math.round(state.x)}, ${Math.round(state.y)}`;
     shapeVal.textContent = shapeText();
-    clearBtn.style.display = shapeVal.textContent === 'None' ? 'none' : '';
+    clearBtn.style.display = shapeVal.textContent === tr('None') ? 'none' : '';
     layerVal.textContent = String(layer.smart.source.flatLayers().length);
     const fl = getSmartFilters(layer);
-    filterVal.textContent = fl.length ? `${fl.length} (${fl.filter((f) => f.enabled).length} on)` : 'None';
+    filterVal.textContent = fl.length ? tr('{count} ({enabled} on)', { count: fl.length, enabled: fl.filter((f) => f.enabled).length }) : tr('None');
   };
   sync();
   return { node, sync, dispose: () => { off(); committer.flush(); } };
@@ -935,7 +939,7 @@ function documentSection(doc) {
   });
 
   const applyBtn = el('button.pk-btn.primary', {
-    type: 'button', text: 'Apply',
+    type: 'button', text: tr('Apply'),
     onclick: () => {
       const w = clamp(Math.round(Number(wIn.value) || doc.width), 1, 20000);
       const h = clamp(Math.round(Number(hIn.value) || doc.height), 1, 20000);
@@ -953,24 +957,24 @@ function documentSection(doc) {
 
   node.append(
     el('div.pk-panel-grid', {},
-      el('span.pk-panel-key', { text: 'Width' }), wIn,
-      el('span.pk-panel-key', { text: 'Height' }), hIn,
-      el('span.pk-panel-key', { text: 'Resolution' }), el('div.pk-slider-row', {}, resIn, el('span.pk-unit', { text: 'ppi' })),
-      el('span.pk-panel-key', { text: 'Color mode' }), el('span.pk-panel-val', { text: colorModeLabel(doc) }),
-      el('span.pk-panel-key', { text: 'Layers' }), el('span.pk-panel-val.pk-doc-layers', { text: String(doc.flatLayers().length) })
+      el('span.pk-panel-key', { text: tr('Width') }), wIn,
+      el('span.pk-panel-key', { text: tr('Height') }), hIn,
+      el('span.pk-panel-key', { text: tr('Resolution') }), el('div.pk-slider-row', {}, resIn, el('span.pk-unit', { text: tr('ppi') })),
+      el('span.pk-panel-key', { text: tr('Color mode') }), el('span.pk-panel-val', { text: colorModeLabel(doc) }),
+      el('span.pk-panel-key', { text: tr('Layers') }), el('span.pk-panel-val.pk-doc-layers', { text: String(doc.flatLayers().length) })
     ),
-    el('label.pk-check', {}, constrain, el('span', { text: 'Constrain proportions' })),
+    el('label.pk-check', {}, constrain, el('span', { text: tr('Constrain proportions') })),
     el('div.pk-prop-actions', {}, applyBtn)
   );
 
   node.appendChild(el('hr.pk-sep'));
   node.appendChild(el('div.pk-prop-actions', {},
-    el('button.pk-mini-btn', { type: 'button', text: 'Fit on Screen', onclick: () => app.fitView(8) }),
-    el('button.pk-mini-btn', { type: 'button', text: 'Trim', onclick: () => ops.trimDocument(doc, 'transparent') }),
-    el('button.pk-mini-btn', { type: 'button', text: 'Flatten', onclick: () => ops.flattenImage(doc) }),
-    el('button.pk-mini-btn', { type: 'button', text: 'New Layer', onclick: () => ops.addRasterLayer(doc) }),
+    el('button.pk-mini-btn', { type: 'button', text: tr('Fit on Screen'), onclick: () => app.fitView(8) }),
+    el('button.pk-mini-btn', { type: 'button', text: tr('Trim'), onclick: () => ops.trimDocument(doc, 'transparent') }),
+    el('button.pk-mini-btn', { type: 'button', text: tr('Flatten'), onclick: () => ops.flattenImage(doc) }),
+    el('button.pk-mini-btn', { type: 'button', text: tr('New Layer'), onclick: () => ops.addRasterLayer(doc) }),
     el('button.pk-mini-btn', {
-      type: 'button', text: 'Add Mask',
+      type: 'button', text: tr('Add Mask'),
       onclick: () => {
         const l = doc.activeLayer();
         if (!l) return;
@@ -992,7 +996,7 @@ function documentSection(doc) {
 
 function colorModeLabel(doc) {
   const m = String(doc.colorMode || 'rgb').toLowerCase();
-  if (m === 'gray' || m === 'grayscale') return 'Grayscale · 8 bit';
-  if (m === 'cmyk') return 'CMYK · 8 bit';
-  return 'RGB Color · 8 bit';
+  if (m === 'gray' || m === 'grayscale') return tr('Grayscale · 8 bit');
+  if (m === 'cmyk') return tr('CMYK · 8 bit');
+  return tr('RGB Color · 8 bit');
 }

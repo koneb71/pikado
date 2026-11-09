@@ -1,6 +1,7 @@
 import { app } from '../core/app.js';
 import { Emitter } from '../core/emitter.js';
 import { createCanvas } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { getComposite } from '../render/compositor.js';
 import { savePKD, loadPKD } from './pkd.js';
 import {
@@ -46,8 +47,18 @@ const state = {
   restoring: false,
 };
 
-/** @type {Map<string, {timer:any, lastSaveAt:number, signature:string, pending:boolean}>} */
+/** @type {Map<string, {timer:any, lastSaveAt:number, signature:string, pending:boolean, failed:boolean}>} */
 const tracked = new Map();
+
+/** The save running now, if any, so a flush can wait for it rather than skip it. */
+let running = null;
+
+function entryOf(doc) {
+  const id = storeIdOf(doc);
+  let entry = tracked.get(id);
+  if (!entry) tracked.set(id, (entry = { timer: null, lastSaveAt: 0, signature: '', pending: false, failed: false }));
+  return entry;
+}
 
 export function sessionState() {
   return { ...state };
@@ -107,8 +118,7 @@ async function makeThumb(doc) {
 export async function saveDocNow(doc, opts = {}) {
   if (!state.enabled || !doc || state.restoring) return false;
   const id = storeIdOf(doc);
-  const entry = tracked.get(id) || { timer: null, lastSaveAt: 0, signature: '', pending: false };
-  tracked.set(id, entry);
+  const entry = entryOf(doc);
 
   const sig = signatureOf(doc);
   if (!opts.force && sig === entry.signature) return false;
@@ -122,11 +132,12 @@ export async function saveDocNow(doc, opts = {}) {
   state.saving = true;
   state.error = null;
   emit();
+  let done;
+  running = new Promise((resolve) => { done = resolve; });
   try {
     const [data, thumb] = await Promise.all([savePKD(doc), makeThumb(doc)]);
     if (data.size > DOC_LIMIT_BYTES) {
-      state.error = 'too-large';
-      app.toast(`"${doc.name}" is too large to keep locally, so it will not be restored after a refresh.`, 'warn', 6000);
+      failed(entry, 'too-large', tr('"{name}" is too large to keep locally, so it will not be restored after a refresh.', { name: doc.name }));
       return false;
     }
     await putDoc({
@@ -140,15 +151,20 @@ export async function saveDocNow(doc, opts = {}) {
     });
     entry.signature = sig;
     entry.lastSaveAt = Date.now();
+    entry.failed = false;
     state.lastSavedAt = entry.lastSaveAt;
     await writeSessionPointer();
     return true;
   } catch (err) {
-    state.error = (err && err.message) || String(err);
-    console.warn('[session] save failed:', state.error);
+    console.warn('[session] save failed:', (err && err.message) || err);
+    failed(entry, (err && err.message) || String(err), err && err.name === 'QuotaExceededError'
+      ? tr('This browser’s storage is full, so "{name}" will not be restored after a refresh.', { name: doc.name })
+      : tr('"{name}" could not be kept locally, so it will not be restored after a refresh.', { name: doc.name }));
     return false;
   } finally {
     state.saving = false;
+    running = null;
+    done();
     emit();
     if (entry.pending) {
       entry.pending = false;
@@ -158,12 +174,33 @@ export async function saveDocNow(doc, opts = {}) {
   }
 }
 
+/**
+ * A save that did not go through. Said once rather than at every attempt —
+ * a failing save is retried after each edit, and a warning every few seconds
+ * would bury everything else — and said again if a later save succeeds and
+ * then one fails anew.
+ */
+function failed(entry, error, message) {
+  state.error = error;
+  if (!entry.failed) app.toast(message, 'warn', 8000);
+  entry.failed = true;
+}
+
+/**
+ * Whether autosave is keeping this document: it is on, and the document's last
+ * save went through. A refresh then costs at most the moments since that save;
+ * otherwise it can cost the document.
+ */
+export function isKept(doc) {
+  if (!state.enabled) return false;
+  const entry = tracked.get(storeIdOf(doc));
+  return !(entry && entry.failed);
+}
+
 /** Debounced autosave for one document. */
 function schedule(doc) {
   if (!state.enabled || state.restoring || !doc) return;
-  const id = storeIdOf(doc);
-  const entry = tracked.get(id) || { timer: null, lastSaveAt: 0, signature: '', pending: false };
-  tracked.set(id, entry);
+  const entry = entryOf(doc);
 
   clearTimeout(entry.timer);
   const since = Date.now() - entry.lastSaveAt;
@@ -174,7 +211,12 @@ function schedule(doc) {
   }, wait);
 }
 
-/** Save every open document that has changed. Used when the tab goes away. */
+/**
+ * Save every open document that has changed. Used when the tab goes away, and
+ * before the reload a language change makes — which is why a save already
+ * running is waited for rather than skipped: afterwards, `isKept()` says
+ * whether each document as it is now is stored.
+ */
 export async function flushAll() {
   if (!state.enabled) return;
   for (const doc of [...app.docs]) {
@@ -182,6 +224,7 @@ export async function flushAll() {
     if (entry && entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
     // Sequential on purpose: concurrent encodes of several large documents is
     // the one thing guaranteed not to finish before the tab dies.
+    while (running) await running;
     await saveDocNow(doc);
   }
 }
@@ -225,7 +268,7 @@ export async function restoreSession() {
         if (ref.view) app._views.set(doc.id, ref.view);
         // Restored work is already on disk; do not rewrite it immediately.
         tracked.set(ref.id, {
-          timer: null, lastSaveAt: Date.now(), signature: signatureOf(doc), pending: false,
+          timer: null, lastSaveAt: Date.now(), signature: signatureOf(doc), pending: false, failed: false,
         });
         restored++;
       } catch (err) {
@@ -247,7 +290,7 @@ export async function restoreSession() {
   }
 
   if (firstFailure && !restored) {
-    app.toast('Your previous session could not be restored.', 'warn', 5000);
+    app.toast(tr('Your previous session could not be restored.'), 'warn', 5000);
   }
   return restored;
 }
@@ -266,9 +309,9 @@ export async function openRecent(id) {
   const already = app.docs.find((d) => d._storeId === id);
   if (already) { app.setActiveDoc(already); return already; }
 
-  return app.busy('Opening…', async () => {
+  return app.busy(tr('Opening…'), async () => {
     const blob = await getDocData(id);
-    if (!blob) { app.toast('That project is no longer stored locally.', 'warn'); return null; }
+    if (!blob) { app.toast(tr('That project is no longer stored locally.'), 'warn'); return null; }
     const doc = await loadPKD(await blob.arrayBuffer());
     doc._storeId = id;
     doc.dirty = false;

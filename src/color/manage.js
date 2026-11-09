@@ -2,6 +2,7 @@ import { app } from '../core/app.js';
 import { ctx2dRead, ctx2d } from '../core/util.js';
 import { registerProofRenderer } from '../render/compositor.js';
 import { parseColor, toHex } from '../core/color.js';
+import { msg, tr } from '../core/i18n.js';
 import {
   BUILTIN_PROFILES, DEFAULT_PROFILE_ID, getProfile, profileOf, transformImageData,
   makeTransform, isInGamut, intentIsExact, parseICC, extractEmbeddedProfile,
@@ -62,7 +63,7 @@ export function assignProfile(doc, profile) {
   // Pixels do not change, but the *interpretation* does, so anything caching a
   // rendered version has to redraw.
   doc.invalidate();
-  doc.commit(`Assign Profile: ${doc.profile.name}`);
+  doc.commit(msg('Assign Profile: {profile}', { profile: doc.profile.name }));
   return doc.profile;
 }
 
@@ -93,7 +94,7 @@ export async function convertToProfile(doc, profile, opts = {}) {
   if (!to) return null;
   const from = profileOf(doc);
   if (from === to || (from.id === to.id && !from.embedded && !to.embedded)) {
-    app.toast(`This document is already ${to.name}.`, 'info');
+    app.toast(tr('This document is already {profile}.', { profile: to.name }), 'info');
     return null;
   }
   // Text, shape and smart layers have to be re-rendered, which needs modules a
@@ -103,7 +104,7 @@ export async function convertToProfile(doc, profile, opts = {}) {
   convertSurfaces(doc, from, to, opts);
   doc.profile = to;
   doc.invalidate();
-  doc.commit(`Convert to Profile: ${to.name}`);
+  doc.commit(msg('Convert to Profile: {profile}', { profile: to.name }));
   return to;
 }
 
@@ -347,7 +348,13 @@ export function proofLabel(doc) {
   const proof = proofOf(doc);
   const to = getProfile(proof.profileId);
   const exact = intentIsExact(proof.intent);
-  return `Proof: ${to.name}${exact ? '' : ' (relative)'}${proof.gamutWarning ? ' + gamut warning' : ''}`;
+  const profile = to.name;
+  if (proof.gamutWarning) {
+    return exact
+      ? tr('Proof: {profile} + gamut warning', { profile })
+      : tr('Proof: {profile} (relative) + gamut warning', { profile });
+  }
+  return exact ? tr('Proof: {profile}', { profile }) : tr('Proof: {profile} (relative)', { profile });
 }
 
 /** The colour a gamut warning paints over out-of-gamut pixels. */

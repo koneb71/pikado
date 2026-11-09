@@ -1,4 +1,5 @@
 import { app } from '../core/app.js';
+import { tr, trn } from '../core/i18n.js';
 import {
   css2Url, googleNameFor, normalizeFontId, invalidateFontMetrics, getFontFamily,
 } from './fonts.js';
@@ -90,8 +91,8 @@ function noticeOnce() {
   if (getPref('webfontNoticeSeen', false)) return;
   setPrefs({ webfontNoticeSeen: true });
   app.toast(
-    'Fonts are downloaded from Google Fonts and kept on this device, so they work '
-    + 'offline afterwards. Nothing of yours is sent. Turn it off in Preferences.',
+    tr('Fonts are downloaded from Google Fonts and kept on this device, so they work '
+      + 'offline afterwards. Nothing of yours is sent. Turn it off in Preferences.'),
     'info', 8000,
   );
 }
@@ -250,18 +251,18 @@ export function downloadFamily(family, opts = {}) {
 
   const job = (async () => {
     if (!webfontsAllowed()) {
-      throw new FontError('refused', 'Downloading fonts is turned off in Preferences.');
+      throw new FontError('refused', tr('Downloading fonts is turned off in Preferences.'));
     }
     noticeOnce();
     const entry = await describe(name);
-    if (!entry) throw new FontError('unknown', `${name} is not in the font catalogue.`);
+    if (!entry) throw new FontError('unknown', tr('{family} is not in the font catalogue.', { family: name }));
 
     const css = await fetch(css2Url([entry])).then((r) => {
-      if (!r.ok) throw new FontError('unavailable', `Google answered ${r.status} for ${name}.`);
+      if (!r.ok) throw new FontError('unavailable', tr('Google answered {status} for {family}.', { status: r.status, family: name }));
       return r.text();
     }).catch((err) => {
       if (err instanceof FontError) throw err;
-      throw new FontError('offline', `Could not reach Google Fonts for ${name}.`);
+      throw new FontError('offline', tr('Could not reach Google Fonts for {family}.', { family: name }));
     });
 
     const all = parseFontFaces(css);
@@ -269,7 +270,7 @@ export function downloadFamily(family, opts = {}) {
     if (!wanted.length) {
       // Never store an empty record: a format change on Google's side would
       // otherwise be cached as "downloaded" and fail silently forever.
-      throw new FontError('empty', `${name} returned no usable faces.`);
+      throw new FontError('empty', tr('{family} returned no usable faces.', { family: name }));
     }
 
     const used = await fontUsage();
@@ -277,11 +278,11 @@ export function downloadFamily(family, opts = {}) {
     let done = 0;
     for (const f of wanted) {
       const buf = await fetch(f.url).then((r) => {
-        if (!r.ok) throw new FontError('unavailable', `${name}: a font file answered ${r.status}.`);
+        if (!r.ok) throw new FontError('unavailable', tr('{family}: a font file answered {status}.', { family: name, status: r.status }));
         return r.arrayBuffer();
       }).catch((err) => {
         if (err instanceof FontError) throw err;
-        throw new FontError('offline', `${name}: a font file could not be fetched.`);
+        throw new FontError('offline', tr('{family}: a font file could not be fetched.', { family: name }));
       });
       faces.push({ weight: f.weight, style: f.style, unicodeRange: f.unicodeRange, buffer: buf });
       done += 1;
@@ -290,7 +291,7 @@ export function downloadFamily(family, opts = {}) {
 
     const bytes = faces.reduce((n, f) => n + f.buffer.byteLength, 0);
     if (used + bytes > FONT_LIMIT_BYTES) {
-      throw new FontError('full', `There is no room for ${name}. Remove a downloaded font first.`);
+      throw new FontError('full', tr('There is no room for {family}. Remove a downloaded font first.', { family: name }));
     }
 
     const meta = {
@@ -314,7 +315,7 @@ export function downloadFamily(family, opts = {}) {
   })();
 
   inFlight.set(name, job);
-  job.catch((err) => { failed.set(name, (err && err.message) || 'Download failed.'); })
+  job.catch((err) => { failed.set(name, (err && err.message) || tr('Download failed.')); })
     .finally(() => { inFlight.delete(name); });
   return job;
 }
@@ -447,12 +448,12 @@ export async function ensureDocumentFonts(doc) {
      * the author's choice.
      */
     const names = missing.map((m) => m.family);
-    const list = names.length === 1 ? names[0]
-      : `${names.slice(0, 2).join(', ')}${names.length > 2 ? ` and ${names.length - 2} more` : ''}`;
-    const why = missing.every((m) => m.reason === 'off')
-      ? 'Downloading fonts is turned off'
-      : 'They could not be downloaded';
-    app.toast(`${list} — showing a substitute face. ${why}.`, 'warn', 6000);
+    const list = names.length <= 2 ? names.join(', ')
+      : trn('{fonts} and {count} more', '{fonts} and {count} more', names.length - 2, { fonts: names.slice(0, 2).join(', ') });
+    const message = missing.every((m) => m.reason === 'off')
+      ? tr('{fonts} — showing a substitute face. Downloading fonts is turned off.', { fonts: list })
+      : tr('{fonts} — showing a substitute face. They could not be downloaded.', { fonts: list });
+    app.toast(message, 'warn', 6000);
     app.emit('doc-fonts', doc);
   }
   return missing;

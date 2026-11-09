@@ -448,3 +448,38 @@ suite('paint / brushFromOptions maps 0..100 onto 0..1', async (t) => {
     'the `extra` argument overrides the mapped values');
   t.eq(brushFromOptions({ airbrush: 1 }).airbrush, true, 'airbrush is coerced to a boolean');
 });
+
+suite('paint: the Brush and Pencil tools paint when you drag them', async (t) => {
+  // Both tools built their stroke with `new BlendPaintStroke({…})`, a name
+  // that brush.js only ever exported (`export { PaintStroke as BlendPaintStroke }`)
+  // and so never had as a local binding. makeStroke threw a ReferenceError,
+  // onPointerDown caught and logged it, and the tool painted nothing. Every
+  // other test builds its PaintStroke directly, which is how none noticed —
+  // so this one drags the tools themselves.
+  // Verified to fail: with BlendPaintStroke back at the two call sites, both
+  // strokes leave 0 red pixels and record no history step.
+  const app = t.app;
+  const doc = t.doc(120, 80, '#ffffff');
+  const prevTool = app.tool && app.tool.id;
+  const prevFg = app.foreground;
+  app.setForeground('#ff0000');
+  const base = { pressure: 1, pointerType: 'mouse', button: 0, buttons: 1, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false };
+  try {
+    for (const [id, y, label] of [['brush', 25, 'Brush'], ['pencil', 55, 'Pencil']]) {
+      app.setTool(id);
+      const steps = doc.history.states.length;
+      app.tool.onPointerDown({ ...base, x: 20, y, sx: 20, sy: y });
+      app.tool.onPointerMove({ ...base, x: 100, y, sx: 100, sy: y });
+      app.tool.onPointerUp({ ...base, x: 100, y, sx: 100, sy: y });
+      const d = doc.activeLayer().canvas.getContext('2d').getImageData(0, y - 1, 120, 3).data;
+      let red = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 80 && d[i + 2] < 80) red++;
+      t.gt(red, 60, `${id}: a drag from x=20 to x=100 paints red along it (${red} px)`);
+      t.eq(doc.history.states.length, steps + 1, `${id}: and records one history step`);
+      t.eq(doc.history.states[doc.history.index].label, label, `${id}: labelled "${label}"`);
+    }
+  } finally {
+    app.setForeground(prevFg);
+    if (prevTool) app.setTool(prevTool);
+  }
+});

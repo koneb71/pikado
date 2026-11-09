@@ -1,6 +1,7 @@
 import { app } from '../core/app.js';
 import { getViewComposite } from '../render/compositor.js';
 import { createCanvas } from '../core/util.js';
+import { trn } from '../core/i18n.js';
 import { snapLines } from '../core/snapping.js';
 import { OVERLAY } from './brand.js';
 import {
@@ -440,7 +441,7 @@ export class CanvasView {
     if (tool.drag && typeof tool.abortDrag === 'function') tool.abortDrag();
     tool.blocked = null;
     const { doc: source, layers } = held;
-    const name = layers.length === 1 ? layers[0].name : `${layers.length} layers`;
+    const name = layers.length === 1 ? layers[0].name : trn('{count} layer', '{count} layers', layers.length);
     copyIntoDocument(dest, artworkOf(source, layers), name);
     return true;
   }

@@ -3,9 +3,10 @@ import { createCanvas, cloneCanvas } from '../core/util.js';
 import { compositeDocument, flattenLayers, getComposite } from '../render/compositor.js';
 import { rasterizeTextLayer } from '../text/text-render.js';
 import { rasterizeShapeLayer } from '../vector/path.js';
-import { defaultParams } from '../adjustments/registry.js';
+import { defaultParams, getAdjustment } from '../adjustments/registry.js';
 import { createSmartObject, renderSmartObject, isSmartLayer } from '../core/smart.js';
 import { app } from '../core/app.js';
+import { commandName, msg, tr } from '../core/i18n.js';
 
 /**
  * Layer operations shared by the Layers panel, the Layer menu and shortcuts.
@@ -22,8 +23,8 @@ export function addRasterLayer(doc, name) {
 export function nextLayerName(doc) {
   let n = 1;
   const names = new Set(doc.flatLayers().map((l) => l.name));
-  while (names.has(`Layer ${n}`)) n++;
-  return `Layer ${n}`;
+  while (names.has(tr('Layer {number}', { number: n }))) n++;
+  return tr('Layer {number}', { number: n });
 }
 
 export function duplicateLayers(doc, layers) {
@@ -40,7 +41,7 @@ export function deleteLayers(doc, layers) {
   const list = layers && layers.length ? layers : doc.selectedLayers();
   if (!list.length) return;
   if (doc.flatLayers().length <= list.length) {
-    app.toast('A document needs at least one layer.');
+    app.toast(tr('A document needs at least one layer.'));
     return;
   }
   for (const l of list) doc.removeLayer(l);
@@ -65,8 +66,8 @@ export function groupLayers(doc, layers) {
   const group = createGroupLayer('Group 1');
   let n = 1;
   const names = new Set(doc.flatLayers().map((l) => l.name));
-  while (names.has(`Group ${n}`)) n++;
-  group.name = `Group ${n}`;
+  while (names.has(tr('Group {number}', { number: n }))) n++;
+  group.name = tr('Group {number}', { number: n });
 
   for (const l of list) {
     const li = doc.locate(l);
@@ -150,8 +151,8 @@ export function mergeDown(doc, layer) {
   const loc = doc.locate(l);
   if (!loc) return;
   const below = loc.list[loc.index + 1];
-  if (!below) { app.toast('Nothing below to merge into.'); return; }
-  if (below.type === LayerType.GROUP) { app.toast('Cannot merge into a group. Merge the group first.'); return; }
+  if (!below) { app.toast(tr('Nothing below to merge into.')); return; }
+  if (below.type === LayerType.GROUP) { app.toast(tr('Cannot merge into a group. Merge the group first.')); return; }
 
   const keepName = below.name;
   const wasBackground = below.isBackground;
@@ -217,7 +218,7 @@ export function mergeVisible(doc) {
     if (!doomed.has(l.id)) index++;
   }
   for (const l of [...visible]) doc.removeLayer(l);
-  const nl = new Layer({ type: LayerType.RASTER, name: keepBackground ? 'Background' : 'Merged', canvas: merged, isBackground: keepBackground });
+  const nl = new Layer({ type: LayerType.RASTER, name: keepBackground ? tr('Background') : tr('Merged'), canvas: merged, isBackground: keepBackground });
   doc.layers.splice(index, 0, nl);
   doc.activeLayerId = nl.id;
   doc.selectedLayerIds = [nl.id];
@@ -234,7 +235,7 @@ export function flattenImage(doc) {
   c.fillRect(0, 0, doc.width, doc.height);
   c.drawImage(merged, 0, 0);
   doc.layers = [];
-  const nl = new Layer({ type: LayerType.RASTER, name: 'Background', canvas: flat, isBackground: true });
+  const nl = new Layer({ type: LayerType.RASTER, name: tr('Background'), canvas: flat, isBackground: true });
   doc.layers.push(nl);
   doc.activeLayerId = nl.id;
   doc.selectedLayerIds = [nl.id];
@@ -245,7 +246,7 @@ export function flattenImage(doc) {
 /** Merge the selected layers into a new layer, keeping the originals. */
 export function stampVisible(doc) {
   const merged = compositeDocument(doc);
-  const nl = new Layer({ type: LayerType.RASTER, name: 'Stamp', canvas: merged });
+  const nl = new Layer({ type: LayerType.RASTER, name: tr('Stamp'), canvas: merged });
   doc.addLayer(nl, { above: doc.layers[0] });
   doc.commit('Stamp Visible');
   return nl;
@@ -333,7 +334,7 @@ export function rasterizeLayerStyle(doc, layer) {
 export function addLayerMask(doc, layer, kind = 'reveal-all') {
   const l = layer || doc.activeLayer();
   if (!l) return;
-  if (l.mask) { app.toast('Layer already has a mask.'); return; }
+  if (l.mask) { app.toast(tr('Layer already has a mask.')); return; }
   doc.beginEdit(l);
   const mask = createCanvas(doc.width, doc.height);
   const c = mask.getContext('2d');
@@ -400,8 +401,27 @@ export function toggleMaskEnabled(doc, layer) {
 /* Adjustment layers                                                   */
 /* ------------------------------------------------------------------ */
 
+/** An adjustment's name, as its menu item says it: 'Levels', 'Hue/Saturation'. */
+function adjustmentName(kind) {
+  const a = getAdjustment(kind);
+  return a && a.name ? commandName(a.name) : kind;
+}
+
+/**
+ * "Levels 1", "Levels 2", "Curves 1" — numbered per kind and named in the
+ * interface language, as Photoshop names them. Without it a layer fell back
+ * to the adjustment's id: "levels", "hue-saturation".
+ */
+function nextAdjustmentLayerName(doc, kind) {
+  const base = tr(adjustmentName(kind));
+  const names = new Set(doc.flatLayers().map((l) => l.name));
+  let n = 1;
+  while (names.has(`${base} ${n}`)) n++;
+  return `${base} ${n}`;
+}
+
 export function addAdjustmentLayer(doc, kind, params, name) {
-  const l = createAdjustmentLayer(kind, params || defaultParams(kind), doc.width, doc.height, name);
+  const l = createAdjustmentLayer(kind, params || defaultParams(kind), doc.width, doc.height, name || nextAdjustmentLayerName(doc, kind));
   if (doc.selection.active) {
     const mask = createCanvas(doc.width, doc.height);
     const c = mask.getContext('2d');
@@ -414,13 +434,14 @@ export function addAdjustmentLayer(doc, kind, params, name) {
     l.addMask(doc.width, doc.height, '#ffffff');
   }
   doc.addLayer(l);
-  doc.commit(`New ${l.name} Layer`);
+  // "New Levels Layer": the kind of adjustment, not the layer's numbered name.
+  doc.commit(msg('New {name} Layer', { name: adjustmentName(kind) }));
   return l;
 }
 
 /** Fill/solid-colour, gradient and pattern layers. */
 export function addFillLayer(doc, kind, params) {
-  const l = new Layer({ type: LayerType.SHAPE, name: kind === 'solid' ? 'Color Fill' : kind === 'gradient' ? 'Gradient Fill' : 'Pattern Fill' });
+  const l = new Layer({ type: LayerType.SHAPE, name: kind === 'solid' ? tr('Color Fill') : kind === 'gradient' ? tr('Gradient Fill') : tr('Pattern Fill') });
   l.shape = { kind: 'fill', fillKind: kind, ...params, subpaths: [{ closed: true, points: rectPoints(doc.width, doc.height) }] };
   l.canvas = rasterizeShapeLayer(l, doc);
   l.addMask(doc.width, doc.height, '#ffffff');
@@ -443,7 +464,7 @@ export function toggleClipping(doc, layer) {
   const l = layer || doc.activeLayer();
   if (!l) return;
   const loc = doc.locate(l);
-  if (!loc || loc.index >= loc.list.length - 1) { app.toast('No layer below to clip to.'); return; }
+  if (!loc || loc.index >= loc.list.length - 1) { app.toast(tr('No layer below to clip to.')); return; }
   l.clipped = !l.clipped;
   doc.commit(l.clipped ? 'Create Clipping Mask' : 'Release Clipping Mask');
 }
@@ -475,7 +496,7 @@ export function convertLayerToBackground(doc, layer) {
   doc.beginEdit(l);
   l.canvas = flat;
   l.isBackground = true;
-  l.name = 'Background';
+  l.name = tr('Background');
   l.opacity = 1;
   l.blendMode = 'normal';
   // The background must sit at the bottom of the root list.
@@ -514,8 +535,8 @@ export function trimDocument(doc, mode = 'transparent') {
       }
     }
   }
-  if (maxX < 0) { app.toast('Nothing to trim.'); return; }
-  if (minX === 0 && minY === 0 && maxX === w - 1 && maxY === h - 1) { app.toast('Nothing to trim.'); return; }
+  if (maxX < 0) { app.toast(tr('Nothing to trim.')); return; }
+  if (minX === 0 && minY === 0 && maxX === w - 1 && maxY === h - 1) { app.toast(tr('Nothing to trim.')); return; }
   doc.crop({ x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 });
   doc.commit('Trim');
 }

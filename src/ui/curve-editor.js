@@ -1,5 +1,6 @@
 import './curve-editor.css';
 import { el, clamp } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { sampleLUT } from '../adjustments/registry.js';
 import { drawHistogram, setupHiDPI, currentHistogram, emptyHistogram } from './histogram.js';
 
@@ -296,7 +297,7 @@ function buildCurveEditor(container, cfg) {
   }
 
   const chanSelect = el('select.pk-select.pk-curve-chan');
-  for (const c of channels) chanSelect.appendChild(el('option', { value: c.id, text: c.label }));
+  for (const c of channels) chanSelect.appendChild(el('option', { value: c.id, text: tr(c.label) }));
   chanSelect.value = value.channel;
   chanSelect.addEventListener('change', () => {
     const next = cloneValue(value);
@@ -305,7 +306,7 @@ function buildCurveEditor(container, cfg) {
   });
 
   const presetSelect = el('select.pk-select.pk-curve-preset');
-  for (const name of Object.keys(CURVE_PRESETS)) presetSelect.appendChild(el('option', { value: name, text: name }));
+  for (const name of Object.keys(CURVE_PRESETS)) presetSelect.appendChild(el('option', { value: name, text: tr(name) }));
   presetSelect.addEventListener('change', () => {
     const next = curvesFromPreset(presetSelect.value);
     next.channel = value.channel;
@@ -313,8 +314,8 @@ function buildCurveEditor(container, cfg) {
   });
 
   const resetBtn = el('button.pk-btn.subtle.pk-curve-reset', {
-    type: 'button', text: 'Reset',
-    title: 'Reset the current channel to a straight line',
+    type: 'button', text: tr('Reset'),
+    title: tr('Reset the current channel to a straight line'),
     onclick: () => {
       const next = cloneValue(value);
       next[next.channel] = clonePoints(IDENTITY);
@@ -325,11 +326,11 @@ function buildCurveEditor(container, cfg) {
 
   const canvas = el('canvas.pk-curve-canvas', { width: W, height: W });
   const ctx = setupHiDPI(canvas, W, W);
-  const readout = el('div.pk-curve-readout', { text: 'Input: —   Output: —' });
+  const readout = el('div.pk-curve-readout', { text: tr('Input: {input}   Output: {output}', { input: '—', output: '—' }) });
 
   const head = el('div.pk-curve-head', {},
-    el('span.pk-curve-lbl', { text: 'Channel' }), chanSelect,
-    showPresets ? el('span.pk-curve-lbl', { text: 'Preset' }) : null,
+    el('span.pk-curve-lbl', { text: tr('Channel') }), chanSelect,
+    showPresets ? el('span.pk-curve-lbl', { text: tr('Preset') }) : null,
     showPresets ? presetSelect : null
   );
   const foot = el('div.pk-curve-foot', {}, readout, el('div.pk-spacer'), resetBtn);
@@ -475,7 +476,7 @@ function buildCurveEditor(container, cfg) {
   const setReadout = (px, py) => {
     const v = toVal(px, py);
     const lut = curveToLUT(value[value.channel]);
-    readout.textContent = `Input: ${v.x}   Output: ${lut[v.x]}`;
+    readout.textContent = tr('Input: {input}   Output: {output}', { input: v.x, output: lut[v.x] });
   };
 
   canvas.addEventListener('pointerdown', (e) => {

@@ -1,4 +1,5 @@
 import { app } from '../core/app.js';
+import { msg, tr } from '../core/i18n.js';
 
 /**
  * Central command registry. Menus, keyboard shortcuts, panel buttons and the
@@ -15,6 +16,11 @@ import { app } from '../core/app.js';
  *     dynamicLabel: () => string, // optional
  *     run: async () => void,
  *   }
+ *
+ * `label` is English and stays English — `labelOf()` translates it for
+ * display. A `dynamicLabel` returns text ready to show, so it translates
+ * itself (`tr('Undo {action}', …)`); it often carries data, such as a file
+ * name, that must not be translated.
  */
 
 /** @type {Map<string, object>} */
@@ -55,6 +61,7 @@ export function isChecked(id) {
   }
 }
 
+/** A command's label as the interface shows it, in the current language. */
 export function labelOf(id) {
   const c = commands.get(id);
   if (!c) return id;
@@ -62,10 +69,10 @@ export function labelOf(id) {
     try {
       return c.dynamicLabel();
     } catch {
-      return c.label;
+      return tr(c.label);
     }
   }
-  return c.label;
+  return tr(c.label);
 }
 
 let running = false;
@@ -96,10 +103,22 @@ export async function runCommand(id, ...args) {
 
 export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
+/**
+ * Key names as the keyboard prints them. A German keyboard says Strg, Umschalt
+ * and Entf, and so do its menus; the bindings themselves never change. Delete
+ * carries a context because the command of the same name is a different word
+ * in most languages.
+ */
+const KEY_NAMES = {
+  Ctrl: msg('Ctrl'), Shift: msg('Shift'), Alt: msg('Alt'), Esc: msg('Esc'), Enter: msg('Enter'),
+  Delete: msg('Delete|key'), Backspace: msg('Backspace'), PageUp: msg('PageUp'), PageDown: msg('PageDown'),
+};
+const KEY_NAME_RE = new RegExp(`\\b(${Object.keys(KEY_NAMES).join('|')})\\b`, 'g');
+
 /** Human-readable accelerator for menus. */
 export function formatAccel(accel) {
   if (!accel) return '';
-  if (!IS_MAC) return accel;
+  if (!IS_MAC) return accel.replace(KEY_NAME_RE, (k) => tr(KEY_NAMES[k]));
   return accel
     .replace(/Ctrl\+/g, '⌘')
     .replace(/Cmd\+/g, '⌘')

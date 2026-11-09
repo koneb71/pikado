@@ -1,0 +1,58 @@
+/*
+ * Typography per script.
+ *
+ * Han characters are shared by Chinese and Japanese but drawn differently in
+ * each, so the `lang` attribute src/core/i18n.js puts on <html> does real
+ * work: it is how the browser picks the right forms. These stacks then name
+ * the faces each platform draws them well in. The Latin faces stay first so
+ * numbers and Latin words keep the interface's own look; anything they cannot
+ * draw falls through to the CJK face.
+ */
+:root:lang(zh-CN) {
+  --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", sans-serif;
+}
+:root:lang(zh-TW) {
+  --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "PingFang TC", "Microsoft JhengHei UI",
+    "Microsoft JhengHei", "Noto Sans CJK TC", "Source Han Sans TC", sans-serif;
+}
+:root:lang(ja) {
+  --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN",
+    "Yu Gothic UI", "Meiryo UI", "Meiryo", "Noto Sans CJK JP", "Source Han Sans JP", sans-serif;
+}
+:root:lang(ko) {
+  --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic",
+    "Noto Sans CJK KR", "Source Han Sans KR", sans-serif;
+}
+
+/*
+ * A ten-pixel Han character has a dozen strokes in the space a Latin letter
+ * spends on three; the micro size that suits small capitals is too small to
+ * read here. One pixel more, and no more than that: rows are fixed heights.
+ */
+:root:is(:lang(zh), :lang(ja), :lang(ko)) {
+  --fs-micro: 11px;
+}
+
+/*
+ * Tracking and capitals are Latin conventions. Across CJK text tracking only
+ * opens gaps, and there is nothing to capitalise. `!important` because this is
+ * a rule for a script, not a component, and must win over every component's
+ * own tracking; nothing in the interface sets letter-spacing inline (text
+ * layers track on the canvas, not in the DOM), so it cannot reach user text.
+ */
+:root:is(:lang(zh), :lang(ja), :lang(ko)) * {
+  letter-spacing: normal !important;
+}
+
+/* The start screen's language picker: quiet until it is wanted. */
+.pk-lang-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+}
+.pk-lang-pick svg { flex: none; opacity: .8; }
+.pk-lang-pick select {
+  max-width: 200px;
+}

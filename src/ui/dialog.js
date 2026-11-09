@@ -1,5 +1,6 @@
 import { el } from '../core/util.js';
 import { toHex, parseColor } from '../core/color.js';
+import { tr } from '../core/i18n.js';
 import { OVERLAY } from './brand.js';
 
 /**
@@ -22,6 +23,16 @@ import { OVERLAY } from './brand.js';
  * src/ui/gradient-editor.js, and nothing needed a dual-handle range. They were
  * listed here for a while without being implemented, which meant a descriptor
  * using one silently rendered nothing.
+ *
+ * **Language.** A descriptor is declared data, so its text is English and the
+ * form translates it: `label`, `hint`, `unit` and the labels of a literal
+ * `options` array. Options that are data — layer names, patterns, profiles —
+ * are given as a function instead, and what it returns is shown exactly as
+ * returned (and marked `translate="no"`, so a browser's page translation leaves
+ * them alone too); translate any interface text in that list yourself. A label you
+ * build with `${}` is composed, not declared: pass it through `tr()` with
+ * placeholders. The dialog's own title and buttons are composed by whoever
+ * opens it, and translated there.
  */
 
 let zTop = 1000;
@@ -38,7 +49,7 @@ export class Dialog {
     this.root = el('div.pk-dialog' + (className ? `.${className}` : ''), { style: { width: `${width}px` } });
     this.header = el('div.pk-dialog-header', {},
       el('span.pk-dialog-title', { text: title }),
-      el('button.pk-dialog-close', { title: 'Close', onclick: () => this.close(null) }, '×')
+      el('button.pk-dialog-close', { title: tr('Close'), onclick: () => this.close(null) }, '×')
     );
     this.body = el('div.pk-dialog-body');
     this.footer = el('div.pk-dialog-footer');
@@ -152,7 +163,7 @@ export class Dialog {
 export function alertDialog(message, title = 'Pikado') {
   const d = new Dialog({ title, width: 340 });
   d.setBody(el('p.pk-msg', { text: message }));
-  d.setButtons([{ label: 'OK', value: true, primary: true }]);
+  d.setButtons([{ label: tr('OK'), value: true, primary: true }]);
   return d.open();
 }
 
@@ -168,11 +179,11 @@ export function alertDialog(message, title = 'Pikado') {
  * @param {{danger?:boolean}} [opts]
  * @returns {Promise<boolean>}
  */
-export function confirmDialog(message, title = 'Pikado', okLabel = 'OK', opts = {}) {
+export function confirmDialog(message, title = 'Pikado', okLabel = tr('OK'), opts = {}) {
   const d = new Dialog({ title, width: 360 });
   d.setBody(el('p.pk-msg', { text: message }));
   d.setButtons([
-    { label: 'Cancel', value: false, subtle: true },
+    { label: tr('Cancel'), value: false, subtle: true },
     { label: okLabel, value: true, primary: !opts.danger, danger: !!opts.danger },
   ]);
   return d.open();
@@ -183,8 +194,8 @@ export function promptDialog(message, initial = '', title = 'Pikado') {
   const input = el('input.pk-input', { type: 'text', value: initial });
   d.setBody(el('div.pk-field', {}, el('label', { text: message }), input));
   d.setButtons([
-    { label: 'Cancel', value: null, subtle: true },
-    { label: 'OK', primary: true, onClick: (dlg) => { dlg.close(input.value); return false; } },
+    { label: tr('Cancel'), value: null, subtle: true },
+    { label: tr('OK'), primary: true, onClick: (dlg) => { dlg.close(input.value); return false; } },
   ]);
   const p = d.open();
   requestAnimationFrame(() => { input.focus(); input.select(); });
@@ -218,14 +229,14 @@ export function paramDialog({ title, params, state, width = 400, onPreview, onCo
         if (onPreview) onPreview(previewOn ? working : null);
       },
     }),
-    el('span', { text: 'Preview' })
+    el('span', { text: tr('Preview') })
   );
 
   d.setBody(form.node);
   d.setButtons([
     ...(preview ? [] : []),
-    { label: 'Cancel', value: null, subtle: true },
-    { label: 'OK', primary: true, onClick: (dlg) => { dlg.close({ ...working }); return false; } },
+    { label: tr('Cancel'), value: null, subtle: true },
+    { label: tr('OK'), primary: true, onClick: (dlg) => { dlg.close({ ...working }); return false; } },
     ...extraButtons,
   ]);
   if (preview) d.footer.prepend(previewToggle);
@@ -275,14 +286,25 @@ export function buildForm(params, state, onChange) {
   return { node, refresh, controls, state };
 }
 
+/**
+ * A descriptor's options, and whether to show their labels as they are. A
+ * literal array is interface text; a function supplies data.
+ */
+export function optionsOf(p) {
+  if (typeof p.options === 'function') return { list: p.options() || [], verbatim: true };
+  return { list: p.options || [], verbatim: false };
+}
+
 function buildControl(p, state, onChange, controls) {
   const change = (v) => onChange(p.key, v);
+  const label = p.label ? tr(p.label) : '';
+  const unitText = p.unit ? tr(p.unit) : '';
 
   if (p.type === 'separator') return el('hr.pk-sep');
-  if (p.type === 'label') return el('div.pk-form-label', { text: p.label, class: p.className || '' });
+  if (p.type === 'label') return el('div.pk-form-label', { text: label, class: p.className || '' });
   if (p.type === 'custom') {
     const holder = el('div.pk-field.pk-custom');
-    if (p.label) holder.appendChild(el('label', { text: p.label }));
+    if (label) holder.appendChild(el('label', { text: label }));
     const inner = el('div.pk-custom-body');
     holder.appendChild(inner);
     if (p.render) {
@@ -292,11 +314,11 @@ function buildControl(p, state, onChange, controls) {
     return holder;
   }
   if (p.type === 'button') {
-    return el('div.pk-field', {}, el('button.pk-btn.subtle', { text: p.label, onclick: () => p.onClick && p.onClick(state, onChange) }));
+    return el('div.pk-field', {}, el('button.pk-btn.subtle', { text: label, onclick: () => p.onClick && p.onClick(state, onChange) }));
   }
 
   const row = el('div.pk-field' + (p.type === 'checkbox' ? '.inline' : ''));
-  if (p.label && p.type !== 'checkbox') row.appendChild(el('label', { text: p.label, for: `pk_${p.key}` }));
+  if (label && p.type !== 'checkbox') row.appendChild(el('label', { text: label, for: `pk_${p.key}` }));
 
   switch (p.type) {
     case 'slider': {
@@ -310,7 +332,7 @@ function buildControl(p, state, onChange, controls) {
         type: 'number', min: p.min, max: p.max, step: p.step == null ? 1 : p.step,
         value: state[p.key],
       });
-      const unit = p.unit ? el('span.pk-unit', { text: p.unit }) : null;
+      const unit = unitText ? el('span.pk-unit', { text: unitText }) : null;
       range.addEventListener('input', () => { num.value = range.value; change(Number(range.value)); });
       num.addEventListener('input', () => {
         let v = Number(num.value);
@@ -337,7 +359,7 @@ function buildControl(p, state, onChange, controls) {
         if (p.max != null) v = Math.min(p.max, v);
         change(v);
       });
-      const holder = p.unit ? el('div.pk-slider-row', {}, num, el('span.pk-unit', { text: p.unit })) : num;
+      const holder = unitText ? el('div.pk-slider-row', {}, num, el('span.pk-unit', { text: unitText })) : num;
       row.appendChild(holder);
       controls.set(p.key, { sync: (v) => { if (document.activeElement !== num) num.value = v; } });
       break;
@@ -358,16 +380,17 @@ function buildControl(p, state, onChange, controls) {
       break;
     }
     case 'select': {
-      const sel = el('select.pk-select', { id: `pk_${p.key}` });
-      for (const o of p.options || []) {
+      const { list, verbatim } = optionsOf(p);
+      const sel = el('select.pk-select', { id: `pk_${p.key}`, translate: verbatim ? 'no' : null });
+      for (const o of list) {
         const val = typeof o === 'object' ? o.value : o;
         const lab = typeof o === 'object' ? o.label : String(o);
-        sel.appendChild(el('option', { value: val, text: lab }));
+        sel.appendChild(el('option', { value: val, text: verbatim ? lab : tr(lab) }));
       }
       sel.value = state[p.key];
       sel.addEventListener('change', () => {
         const raw = sel.value;
-        const opt = (p.options || []).find((o) => String(typeof o === 'object' ? o.value : o) === raw);
+        const opt = list.find((o) => String(typeof o === 'object' ? o.value : o) === raw);
         change(typeof opt === 'object' ? opt.value : (Number.isFinite(Number(raw)) && raw !== '' && typeof (typeof opt === 'object' ? opt.value : opt) === 'number' ? Number(raw) : raw));
       });
       row.appendChild(sel);
@@ -376,9 +399,10 @@ function buildControl(p, state, onChange, controls) {
     }
     case 'radio': {
       const group = el('div.pk-radio-group');
-      for (const o of p.options || []) {
+      const { list, verbatim } = optionsOf(p);
+      for (const o of list) {
         const val = typeof o === 'object' ? o.value : o;
-        const lab = typeof o === 'object' ? o.label : String(o);
+        const lab = verbatim ? (typeof o === 'object' ? o.label : String(o)) : tr(typeof o === 'object' ? o.label : String(o));
         const input = el('input', {
           type: 'radio', name: `pk_${p.key}`, value: val,
           checked: state[p.key] === val,
@@ -397,7 +421,7 @@ function buildControl(p, state, onChange, controls) {
     case 'checkbox': {
       const input = el('input', { type: 'checkbox', id: `pk_${p.key}`, checked: !!state[p.key] });
       input.addEventListener('change', () => change(input.checked));
-      row.appendChild(el('label.pk-check', {}, input, el('span', { text: p.label })));
+      row.appendChild(el('label.pk-check', {}, input, el('span', { text: label })));
       controls.set(p.key, { sync: (v) => { input.checked = !!v; } });
       break;
     }
@@ -450,7 +474,7 @@ function buildControl(p, state, onChange, controls) {
       return null;
   }
 
-  if (p.hint) row.appendChild(el('div.pk-hint', { text: p.hint }));
+  if (p.hint) row.appendChild(el('div.pk-hint', { text: tr(p.hint) }));
   return row;
 }
 

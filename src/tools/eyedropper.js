@@ -5,6 +5,7 @@ import { rgb, toCss, toHex } from '../core/color.js';
 import { getComposite } from '../render/compositor.js';
 import { promptDialog } from '../ui/dialog.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
+import { tr, trn } from '../core/i18n.js';
 
 /**
  * The eyedropper fly-out: colour picker, colour samplers, ruler and notes.
@@ -65,11 +66,11 @@ function copyToClipboard(text, what) {
   const clip = navigator.clipboard;
   if (clip && clip.writeText) {
     clip.writeText(text)
-      .then(() => app.toast(`Copied ${text}`, 'ok'))
-      .catch(() => app.toast(`Clipboard blocked — ${what} is ${text}`, 'warn'));
+      .then(() => app.toast(tr('Copied {value}', { value: text }), 'ok'))
+      .catch(() => app.toast(tr('Clipboard blocked — {item} is {value}', { item: what, value: text }), 'warn'));
     return;
   }
-  app.toast(`Clipboard unavailable — ${what} is ${text}`, 'warn');
+  app.toast(tr('Clipboard unavailable — {item} is {value}', { item: what, value: text }), 'warn');
 }
 
 /* ------------------------------------------------------------------ */
@@ -150,11 +151,11 @@ class EyedropperTool extends Tool {
     const items = [];
     if (c) {
       const hex = toHex(rgb(c.r, c.g, c.b, 1)).toUpperCase();
-      items.push({ label: 'Copy Color as HTML', run: () => copyToClipboard(`color="${hex}"`, 'the colour') });
-      items.push({ label: 'Copy Color as Hex', run: () => copyToClipboard(hex, 'the colour') });
+      items.push({ label: tr('Copy Color as HTML'), run: () => copyToClipboard(`color="${hex}"`, tr('the colour')) });
+      items.push({ label: tr('Copy Color as Hex'), run: () => copyToClipboard(hex, tr('the colour')) });
       items.push(sep());
     }
-    items.push(cmd('layer.new', { label: 'New Layer' }));
+    items.push(cmd('layer.new', { label: tr('New Layer') }));
     return items;
   }
 
@@ -280,7 +281,7 @@ class ColorSamplerTool extends Tool {
       return;
     }
     if (list.length >= MAX_SAMPLERS) {
-      this.app.toast(`A document can hold ${MAX_SAMPLERS} colour samplers.`);
+      this.app.toast(trn('A document can hold {count} colour sampler.', 'A document can hold {count} colour samplers.', MAX_SAMPLERS));
       return;
     }
     list.push({ x: Math.round(e.x), y: Math.round(e.y) });
@@ -310,12 +311,12 @@ class ColorSamplerTool extends Tool {
     const items = [];
     if (i >= 0) {
       items.push({
-        label: `Delete Sampler ${i + 1}`,
+        label: tr('Delete Sampler {number}', { number: i + 1 }),
         run: () => { list.splice(i, 1); doc.touch('samplers'); },
       });
     }
     items.push({
-      label: 'Clear All Samplers',
+      label: tr('Clear All Samplers'),
       run: () => { doc.colorSamplers = []; doc.touch('samplers'); },
     });
     return items;
@@ -380,14 +381,14 @@ function crosshair(ctx, p) {
 export function straightenFromRuler(doc) {
   const m = doc && doc.measurement;
   if (!m) {
-    app.toast('Drag the Ruler tool along the edge you want to straighten first.');
+    app.toast(tr('Drag the Ruler tool along the edge you want to straighten first.'));
     return false;
   }
   let rot = -Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
   while (rot > Math.PI / 4) rot -= Math.PI / 2;
   while (rot < -Math.PI / 4) rot += Math.PI / 2;
   if (Math.abs(rot) < 1e-4) {
-    app.toast('The measurement is already straight.');
+    app.toast(tr('The measurement is already straight.'));
     return false;
   }
 
@@ -512,8 +513,8 @@ class RulerTool extends Tool {
     const doc = this.doc;
     if (!doc || !doc.measurement) return [];
     return [
-      { label: 'Straighten Layer', run: () => straightenFromRuler(doc) },
-      { label: 'Clear Measurement', run: () => { doc.measurement = null; doc.touch('measure'); } },
+      { label: tr('Straighten Layer'), run: () => straightenFromRuler(doc) },
+      { label: tr('Clear Measurement'), run: () => { doc.measurement = null; doc.touch('measure'); } },
     ];
   }
 
@@ -638,7 +639,7 @@ class NoteTool extends Tool {
         return;
       }
     }
-    const note = { id: uid('note'), x: Math.round(e.x), y: Math.round(e.y), text: '', author: this.state.author || 'Me' };
+    const note = { id: uid('note'), x: Math.round(e.x), y: Math.round(e.y), text: '', author: this.state.author || tr('Me') };
     notesOf(doc).push(note);
     this.selectedId = note.id;
     this.justCreated = { id: note.id, t: performance.now(), sx: e.sx, sy: e.sy };
@@ -666,7 +667,7 @@ class NoteTool extends Tool {
   }
 
   async edit(doc, note) {
-    const text = await promptDialog(`Note by ${note.author}`, note.text, 'Note');
+    const text = await promptDialog(tr('Note by {author}', { author: note.author }), note.text, tr('Note'));
     if (text == null) return;
     note.text = text;
     doc.touch('notes');
@@ -693,11 +694,11 @@ class NoteTool extends Tool {
     const items = [];
     if (hit) {
       items.push({
-        label: 'Edit Note…',
+        label: tr('Edit Note…'),
         run: () => { this.selectedId = hit.id; this.edit(doc, hit); },
       });
       items.push({
-        label: 'Delete Note',
+        label: tr('Delete Note'),
         run: () => {
           const i = list.indexOf(hit);
           if (i >= 0) list.splice(i, 1);
@@ -708,7 +709,7 @@ class NoteTool extends Tool {
       items.push(sep());
     }
     items.push({
-      label: 'Delete All Notes',
+      label: tr('Delete All Notes'),
       run: () => { doc.notes = []; this.selectedId = null; doc.touch('notes'); },
     });
     return items;

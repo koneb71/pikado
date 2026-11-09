@@ -1,6 +1,7 @@
 import { app } from '../core/app.js';
 import { getComposite, flattenLayers } from '../render/compositor.js';
 import { createCanvas, ctx2d, ctx2dRead, download } from '../core/util.js';
+import { tr, trn } from '../core/i18n.js';
 import { savePKD } from './pkd.js';
 import { writePSD } from './psd-write.js';
 import { exportSVG } from './svg.js';
@@ -28,7 +29,7 @@ const MIME = {
 
 /** Strip an extension and anything a file system would object to. */
 function baseName(name) {
-  return String(name || 'Untitled').replace(/\.[a-z0-9]{1,6}$/i, '').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'Untitled';
+  return String(name || tr('Untitled')).replace(/\.[a-z0-9]{1,6}$/i, '').replace(/[\\/:*?"<>|]+/g, '_').trim() || tr('Untitled');
 }
 
 /**
@@ -43,7 +44,7 @@ function withExtension(name, extension) {
 
 function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error(`Could not encode the image as ${type}`))), type, quality);
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error(tr('Could not encode the image as {format}', { format: type })))), type, quality);
   });
 }
 
@@ -82,11 +83,11 @@ async function writeToHandle(handle, blob) {
 export async function saveDocument(doc) {
   if (!doc) return false;
   if (!doc.fileHandle || typeof doc.fileHandle.createWritable !== 'function') return saveDocumentAs(doc);
-  return app.busy('Saving…', async () => {
+  return app.busy(tr('Saving…'), async () => {
     const blob = await savePKD(doc);
     await writeToHandle(doc.fileHandle, blob);
     doc.dirty = false;
-    app.toast(`Saved ${doc.name}`, 'ok');
+    app.toast(tr('Saved {name}', { name: doc.name }), 'ok');
     app.emit('doc-change', doc);
     return true;
   });
@@ -107,32 +108,32 @@ export async function saveDocumentAs(doc) {
     try {
       handle = await window.showSaveFilePicker({
         suggestedName: suggested,
-        types: [{ description: 'Pikado project', accept: { 'application/x-pikado': ['.pkd'] } }],
+        types: [{ description: tr('Pikado project'), accept: { 'application/x-pikado': ['.pkd'] } }],
       });
     } catch (err) {
       if (err && err.name === 'AbortError') return false;
       handle = null;
     }
     if (handle) {
-      return app.busy('Saving…', async () => {
+      return app.busy(tr('Saving…'), async () => {
         const blob = await savePKD(doc);
         await writeToHandle(handle, blob);
         doc.fileHandle = handle;
         doc.filePath = handle.name || suggested;
         doc.name = baseName(handle.name || doc.name);
         doc.dirty = false;
-        app.toast(`Saved ${doc.name}`, 'ok');
+        app.toast(tr('Saved {name}', { name: doc.name }), 'ok');
         app.emit('docs-change');
         return true;
       });
     }
   }
 
-  return app.busy('Saving…', async () => {
+  return app.busy(tr('Saving…'), async () => {
     const blob = await savePKD(doc);
     download(blob, suggested);
     doc.dirty = false;
-    app.toast(`Saved ${suggested}`, 'ok');
+    app.toast(tr('Saved {name}', { name: suggested }), 'ok');
     return true;
   });
 }
@@ -204,7 +205,7 @@ export async function exportDocument(doc, opts = {}) {
   const wantsTransparency = opts.transparent !== false && format !== 'jpeg' && format !== 'jpg';
   const shouldSave = opts.save !== false;
 
-  return app.busy('Exporting…', async () => {
+  return app.busy(tr('Exporting…'), async () => {
     let blob;
     let extension = format;
 
@@ -237,7 +238,7 @@ export async function exportDocument(doc, opts = {}) {
       const canvas = renderComposite(doc, scale, wantsTransparency);
       blob = await encodeRaster(canvas, format, quality, wantsTransparency);
       if (blob.type && blob.type !== mime) {
-        app.toast(`This browser cannot write ${format.toUpperCase()} — exported as ${blob.type.split('/')[1].toUpperCase()} instead.`, 'warn');
+        app.toast(tr('This browser cannot write {format} — exported as {fallback} instead.', { format: format.toUpperCase(), fallback: blob.type.split('/')[1].toUpperCase() }), 'warn');
         extension = blob.type.split('/')[1] || format;
       } else {
         extension = format === 'jpg' ? 'jpg' : format;
@@ -247,7 +248,7 @@ export async function exportDocument(doc, opts = {}) {
     const filename = withExtension(opts.filename || baseName(doc.name), extension);
     if (shouldSave) {
       download(blob, filename);
-      app.toast(`Exported ${filename}`, 'ok');
+      app.toast(tr('Exported {file}', { file: filename }), 'ok');
     }
     return blob;
   });
@@ -299,7 +300,7 @@ export async function exportLayers(doc, opts = {}) {
   const wantsTransparency = opts.transparent !== false && format !== 'jpeg' && format !== 'jpg';
   const trim = opts.trim !== false;
 
-  return app.busy('Exporting layers…', async () => {
+  return app.busy(tr('Exporting layers…'), async () => {
     const zip = new StoreZip();
     const used = new Map();
     let count = 0;
@@ -324,7 +325,7 @@ export async function exportLayers(doc, opts = {}) {
       c.drawImage(flat, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, width, height);
 
       const blob = await encodeRaster(out, format, quality, wantsTransparency);
-      const stem = baseName(layer.name || `Layer ${i + 1}`);
+      const stem = baseName(layer.name || tr('Layer {number}', { number: i + 1 }));
       const seen = (used.get(stem) || 0) + 1;
       used.set(stem, seen);
       const entry = `${String(count + 1).padStart(2, '0')}-${stem}${seen > 1 ? `-${seen}` : ''}.${format === 'jpg' ? 'jpg' : format}`;
@@ -333,14 +334,14 @@ export async function exportLayers(doc, opts = {}) {
     }
 
     if (!count) {
-      app.toast('There is nothing to export — every top-level layer is empty.', 'warn');
+      app.toast(tr('There is nothing to export — every top-level layer is empty.'), 'warn');
       return null;
     }
 
     const zipBlob = zip.finish();
-    const filename = withExtension(opts.filename || `${baseName(doc.name)}-layers`, 'zip');
+    const filename = withExtension(opts.filename || tr('{name}-layers', { name: baseName(doc.name) }), 'zip');
     download(zipBlob, filename);
-    app.toast(`Exported ${count} layer${count === 1 ? '' : 's'} to ${filename}`, 'ok');
+    app.toast(trn('Exported {count} layer to {file}', 'Exported {count} layers to {file}', count, { file: filename }), 'ok');
     return zipBlob;
   });
 }

@@ -114,6 +114,7 @@ const P = {
   visible: '<path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="1.7"/>',
   refresh: '<path d="M13.5 8a5.5 5.5 0 1 1-1.7-4M13.5 2.5V7h-4.5"/>',
   info: '<circle cx="8" cy="8" r="6"/><path d="M8 7.2v4M8 5h.01"/>',
+  language: '<circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c-2.4 2.2-2.4 9.8 0 12M8 2c2.4 2.2 2.4 9.8 0 12"/>',
   swatch: '<rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/>',
   channels: '<circle cx="6" cy="6" r="4"/><circle cx="10" cy="6" r="4"/><circle cx="8" cy="10" r="4"/>',
   path: '<path d="M2 12c0-6 12 0 12-8"/><rect x="1" y="11" width="2" height="2"/><rect x="13" y="3" width="2" height="2"/>',

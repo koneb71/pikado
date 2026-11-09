@@ -1,5 +1,6 @@
 import { el, rafThrottle } from '../core/util.js';
 import { app } from '../core/app.js';
+import { tr } from '../core/i18n.js';
 import { icon } from './icons.js';
 import { confirmDialog } from './dialog.js';
 import {
@@ -49,11 +50,13 @@ function render() {
       },
       onpointerdown: (e) => { if (e.button === 0) beginTabDrag(e, doc); },
     },
-      el('span.pk-tab-name.pk-truncate', { text: doc.name }),
-      doc.dirty ? el('span.pk-tab-dirty', { title: 'Unsaved changes' }) : null,
+      // translate="no": the name is the user's, and a browser's own page
+      // translation should leave it alone as well.
+      el('span.pk-tab-name.pk-truncate', { text: doc.name, translate: 'no' }),
+      doc.dirty ? el('span.pk-tab-dirty', { title: tr('Unsaved changes') }) : null,
       el('button.pk-tab-close', {
         type: 'button',
-        title: 'Close',
+        title: tr('Close'),
         html: icon('close', { size: 10 }),
         onclick: (e) => { e.stopPropagation(); closeDoc(doc); },
       })
@@ -64,7 +67,7 @@ function render() {
   root.appendChild(
     el('button.pk-tab-new', {
       type: 'button',
-      title: 'New document',
+      title: tr('New document'),
       html: icon('plus', { size: 13 }),
       onclick: newDocument,
     })
@@ -119,9 +122,9 @@ function beginTabDrag(e, doc) {
 async function closeDoc(doc) {
   if (doc.dirty) {
     const ok = await confirmDialog(
-      `"${doc.name}" has unsaved changes. Close it anyway?`,
-      'Close Document',
-      'Close Without Saving'
+      tr('"{name}" has unsaved changes. Close it anyway?', { name: doc.name }),
+      tr('Close Document'),
+      tr('Close Without Saving')
     );
     if (!ok) return;
   }
@@ -136,6 +139,6 @@ async function newDocument() {
     await show();
   } catch (err) {
     console.warn('[tabbar] new-document dialog unavailable:', err && err.message);
-    app.toast('The New Document dialog is unavailable.', 'error');
+    app.toast(tr('The New Document dialog is unavailable.'), 'error');
   }
 }

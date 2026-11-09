@@ -7,6 +7,7 @@ import {
 } from '../../core/color.js';
 import { iconEl } from '../icons.js';
 import { showColorPicker } from '../color-picker.js';
+import { tr } from '../../core/i18n.js';
 import './panels.css';
 import './color.css';
 
@@ -182,15 +183,15 @@ registerPanel({
 
     const fgFill = el('span.pkc-chip-fill');
     const bgFill = el('span.pkc-chip-fill');
-    const fgChip = el('button.pkc-chip.pkc-fg.pk-checker', { type: 'button', title: 'Foreground colour' }, fgFill);
-    const bgChip = el('button.pkc-chip.pkc-bg.pk-checker', { type: 'button', title: 'Background colour' }, bgFill);
+    const fgChip = el('button.pkc-chip.pkc-fg.pk-checker', { type: 'button', title: tr('Foreground colour') }, fgFill);
+    const bgChip = el('button.pkc-chip.pkc-bg.pk-checker', { type: 'button', title: tr('Background colour') }, bgFill);
 
     const openPicker = (which) => {
       const before = which === 'foreground' ? { ...app.foreground } : { ...app.background };
       const set = (c) => (which === 'foreground' ? app.setForeground(c) : app.setBackground(c));
       showColorPicker({
         color: before,
-        title: which === 'foreground' ? 'Foreground Color' : 'Background Color',
+        title: which === 'foreground' ? tr('Foreground Color') : tr('Background Color'),
         onChange: (c) => set(c),
       }).then((res) => set(res || before));
     };
@@ -205,8 +206,8 @@ registerPanel({
     fgChip.addEventListener('click', () => chipClick('foreground'));
     bgChip.addEventListener('click', () => chipClick('background'));
 
-    const swapBtn = el('button.pk-icon-btn.pkc-mini', { type: 'button', title: 'Swap colours (X)', onclick: () => app.swapColors() }, iconEl('refresh', { size: 13 }));
-    const resetBtn = el('button.pkc-reset', { type: 'button', title: 'Default colours (D)', onclick: () => app.resetColors() },
+    const swapBtn = el('button.pk-icon-btn.pkc-mini', { type: 'button', title: tr('Swap colours (X)'), onclick: () => app.swapColors() }, iconEl('refresh', { size: 13 }));
+    const resetBtn = el('button.pkc-reset', { type: 'button', title: tr('Default colours (D)'), onclick: () => app.resetColors() },
       el('span.pkc-reset-b'), el('span.pkc-reset-w'));
 
     const chipRow = el('div.pkc-chips', {},
@@ -219,7 +220,7 @@ registerPanel({
     const modeSel = el('select.pk-select.pkc-mode', {
       onchange: () => { mode = modeSel.value; rebuild(); },
     });
-    for (const m of MODES) modeSel.appendChild(el('option', { value: m.value, text: m.label }));
+    for (const m of MODES) modeSel.appendChild(el('option', { value: m.value, text: tr(m.label) }));
     modeSel.value = mode;
 
     const sliderHost = el('div.pkc-sliders');
@@ -245,7 +246,7 @@ registerPanel({
 
     /* ---- spectrum ramp ------------------------------------------ */
 
-    const ramp = el('canvas.pkc-ramp', { title: 'Click to set the foreground, Alt-click for the background' });
+    const ramp = el('canvas.pkc-ramp', { title: tr('Click to set the foreground, Alt-click for the background') });
     let rampData = null;
 
     const drawRamp = () => {

@@ -1,10 +1,11 @@
 import { el } from '../core/util.js';
 import { app } from '../core/app.js';
+import { commandName, tr } from '../core/i18n.js';
 import { icon } from './icons.js';
 import {
   getCommand, isChecked, isEnabled, labelOf, formatAccel, runCommand,
 } from '../commands/registry.js';
-import { FILTER_MENUS, filtersByMenu } from '../filters/registry.js';
+import { FILTER_MENUS, FILTER_MENU_TITLES, filtersByMenu } from '../filters/registry.js';
 import { listAdjustments } from '../adjustments/registry.js';
 import { applyFilterCommand, applyAdjustmentCommand } from '../filters/run.js';
 import { addAdjustmentLayer } from '../layers/ops.js';
@@ -19,6 +20,11 @@ import { brandLock, BRAND, installFavicon } from './brand.js';
  * module only knows how to render it. Entries are command-id strings, `'---'`
  * separators, nested `{label, items}` groups, or `{label, dynamic}` groups whose
  * contents are enumerated from a registry at open time.
+ *
+ * Every label in the tree and in the registries it enumerates is English data;
+ * this module translates each one as it draws it. The Window menu's document
+ * names are the exception — a document's name is the user's, not the
+ * interface's — and are shown as they are.
  */
 
 /** @type {any[]} */
@@ -47,7 +53,7 @@ export function buildMenubar(rootEl) {
   rootEl.replaceChildren();
 
   rootEl.appendChild(
-    el('div.pk-brand', { title: `${BRAND.name} — ${BRAND.tagline}`, html: brandLock({ size: 21, wordSize: 15 }) })
+    el('div.pk-brand', { title: `${BRAND.name} — ${tr(BRAND.tagline)}`, html: brandLock({ size: 21, wordSize: 15 }), translate: 'no' })
   );
 
   bar.menus = el('nav.pk-menus', { role: 'menubar' });
@@ -94,7 +100,7 @@ function renderTopLevel() {
     if (!entry || !entry.label) return;
     const btn = el('button.pk-menu-btn', {
       type: 'button',
-      text: entry.label,
+      text: tr(entry.label),
       'aria-haspopup': 'true',
       onclick: () => (bar.openIndex === i ? closeAll() : openTop(i)),
       onmouseenter: () => {
@@ -114,15 +120,15 @@ function syncTitle() {
   if (!bar.title) return;
   const doc = app.activeDoc;
   if (!doc) {
-    bar.title.replaceChildren(el('span.pk-doc-name.empty', { text: 'No document' }));
+    bar.title.replaceChildren(el('span.pk-doc-name.empty', { text: tr('No document') }));
     return;
   }
   // NB: replaceChildren() is the native DOM API and stringifies null to the
   // text "null" — unlike el(), it does not skip empty children. Filter first.
   bar.title.replaceChildren(...[
-    el('span.pk-doc-name', { text: doc.name }),
+    el('span.pk-doc-name', { text: doc.name, translate: 'no' }),
     el('span.pk-doc-meta', { text: `${doc.width} × ${doc.height}` }),
-    doc.dirty ? el('span.pk-doc-dirty', { text: '●', title: 'Unsaved changes' }) : null,
+    doc.dirty ? el('span.pk-doc-dirty', { text: '●', title: tr('Unsaved changes') }) : null,
   ].filter(Boolean));
 }
 
@@ -178,7 +184,7 @@ function closeAll() {
 function openPopup(items, x, y, depth) {
   while (bar.popups.length > depth) bar.popups.pop().remove();
   const menu = el('div.pk-menu', { role: 'menu' });
-  if (!items.length) menu.appendChild(el('div.pk-menu-item.disabled', {}, el('span.pk-menu-tick'), el('span.pk-menu-label', { text: '(empty)' })));
+  if (!items.length) menu.appendChild(el('div.pk-menu-item.disabled', {}, el('span.pk-menu-tick'), el('span.pk-menu-label', { text: tr('(empty)') })));
   for (const it of items) menu.appendChild(buildItem(it, depth));
   menu.style.left = '-9999px';
   menu.style.top = '0px';
@@ -216,7 +222,7 @@ function buildItem(it, depth) {
     `div.pk-menu-item${enabled ? '' : '.disabled'}${hasChildren ? '.has-sub' : ''}`,
     { role: 'menuitem' },
     el('span.pk-menu-tick', { html: it.checked ? icon('check', { size: 11 }) : '' }),
-    el('span.pk-menu-label', { text: it.label }),
+    el('span.pk-menu-label', { text: it.label, translate: it.verbatim ? 'no' : null }),
     el('span.pk-menu-accel', { text: it.accel || '' }),
     el('span.pk-menu-arrow', { html: hasChildren ? icon('chevron-right', { size: 11 }) : '' })
   );
@@ -274,13 +280,13 @@ function normalizeList(list) {
 
     if (entry.dynamic) {
       const items = dynamicItems(entry.dynamic);
-      if (entry.label) out.push({ label: entry.label, children: items, enabled: items.length > 0 });
+      if (entry.label) out.push({ label: tr(entry.label), children: items, enabled: items.length > 0 });
       else out.push(...items);
       continue;
     }
     if (Array.isArray(entry.items)) {
       const children = normalizeList(entry.items);
-      out.push({ label: entry.label || '', children, enabled: children.length > 0 });
+      out.push({ label: tr(entry.label || ''), children, enabled: children.length > 0 });
       continue;
     }
     if (entry.id) {
@@ -348,9 +354,9 @@ function filterItems() {
     if (!list.length) return;
     seen.add(name);
     out.push({
-      label: name,
+      label: tr(FILTER_MENU_TITLES[name] || name),
       children: list.map((f) => ({
-        label: f.name,
+        label: tr(f.name),
         enabled: hasDoc,
         run: () => applyFilterCommand(f.id),
       })),
@@ -377,7 +383,7 @@ function adjustmentItems() {
   for (const [, list] of groupedAdjustments()) {
     if (out.length) out.push({ type: 'sep' });
     for (const a of list) {
-      out.push({ label: a.name, enabled: hasDoc, run: () => applyAdjustmentCommand(a.id) });
+      out.push({ label: tr(a.name), enabled: hasDoc, run: () => applyAdjustmentCommand(a.id) });
     }
   }
   return collapseSeparators(out);
@@ -392,7 +398,7 @@ function adjustmentLayerItems() {
     if (out.length) out.push({ type: 'sep' });
     for (const a of layerable) {
       out.push({
-        label: a.name.replace(/\.\.\.$/, ''),
+        label: tr(commandName(a.name)),
         enabled: hasDoc,
         run: () => {
           if (app.activeDoc) addAdjustmentLayer(app.activeDoc, a.id);
@@ -406,6 +412,7 @@ function adjustmentLayerItems() {
 function documentItems() {
   return app.docs.map((doc) => ({
     label: doc.name + (doc.dirty ? ' *' : ''),
+    verbatim: true,
     checked: doc === app.activeDoc,
     run: () => app.setActiveDoc(doc),
   }));
@@ -417,7 +424,7 @@ function toolItems() {
     if (out.length) out.push({ type: 'sep' });
     for (const t of group.tools) {
       out.push({
-        label: t.name,
+        label: tr(t.name),
         accel: t.shortcut || '',
         checked: app.tool === t,
         run: () => app.setTool(t.id),

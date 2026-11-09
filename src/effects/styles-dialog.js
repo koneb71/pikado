@@ -7,6 +7,7 @@ import { app } from '../core/app.js';
 import { patternOptions } from '../paint/patterns.js';
 import { DEFAULT_STYLES, defaultStyle } from './styles.js';
 import { gradientLUT } from './effect-renderers.js';
+import { tr } from '../core/i18n.js';
 import './styles.css';
 
 /**
@@ -142,7 +143,7 @@ function stopsParam(key, label, when) {
       let stops = normalizeStops(state[p.key]);
       const bar = el('canvas.pk-fx-ramp', { width: 256, height: 18 });
       const rows = el('div.pk-fx-stops');
-      const addBtn = el('button.pk-btn.subtle.pk-fx-add-stop', { type: 'button', text: 'Add stop' });
+      const addBtn = el('button.pk-btn.subtle.pk-fx-add-stop', { type: 'button', text: tr('Add stop') });
 
       const emit = () => onChange(p.key, stops.map((s) => ({ pos: s.pos, color: s.color })));
 
@@ -176,7 +177,7 @@ function stopsParam(key, label, when) {
               emit();
             });
             const del = el('button.pk-icon-btn.pk-fx-stop-del', {
-              type: 'button', title: 'Delete stop', text: '×',
+              type: 'button', title: tr('Delete stop'), text: '×',
               disabled: stops.length <= 2,
               onclick: () => {
                 if (stops.length <= 2) return;
@@ -446,7 +447,7 @@ function formStateFor(cfg, params) {
 export function showLayerStyleDialog(doc, layer, initialEffect = null) {
   if (!doc || !layer) return Promise.resolve(null);
   if (layer.type === LayerType.ADJUSTMENT) {
-    app.toast('Adjustment layers cannot have layer effects', 'warn');
+    app.toast(tr('Adjustment layers cannot have layer effects'), 'warn');
     return Promise.resolve(null);
   }
 
@@ -482,7 +483,7 @@ export function showLayerStyleDialog(doc, layer, initialEffect = null) {
     doc.touch('layer-style');
   };
 
-  const dlg = new Dialog({ title: 'Layer Style', width: 720, className: 'pk-fx-dialog' });
+  const dlg = new Dialog({ title: tr('Layer Style'), width: 720, className: 'pk-fx-dialog' });
   const listEl = el('div.pk-fx-list.pk-scroll');
   const paneEl = el('div.pk-fx-pane.pk-scroll');
   const rowNodes = new Map();
@@ -494,7 +495,7 @@ export function showLayerStyleDialog(doc, layer, initialEffect = null) {
     const row = el('div.pk-fx-row', { onclick: () => selectPage(id) });
     if (withCheck) {
       const box = el('input', {
-        type: 'checkbox', checked: !!working[id].enabled, title: `Toggle ${name}`,
+        type: 'checkbox', checked: !!working[id].enabled, title: tr('Toggle {effect}', { effect: name }),
       });
       box.addEventListener('click', (e) => e.stopPropagation());
       box.addEventListener('change', () => {
@@ -512,16 +513,16 @@ export function showLayerStyleDialog(doc, layer, initialEffect = null) {
     listEl.append(row);
   };
 
-  addRow('__blending', 'Blending Options', false);
+  addRow('__blending', tr('Blending Options'), false);
   listEl.append(el('hr.pk-sep.pk-fx-listsep'));
-  for (const page of pages) addRow(page.id, page.name, true);
+  for (const page of pages) addRow(page.id, tr(page.name), true);
 
   /* --- right column ------------------------------------------------ */
 
   const pageTitle = (text, onReset) =>
     el('div.pk-fx-title', {},
       el('span', { text }),
-      onReset ? el('button.pk-btn.subtle.pk-fx-reset', { type: 'button', text: 'Reset', onclick: onReset }) : null
+      onReset ? el('button.pk-btn.subtle.pk-fx-reset', { type: 'button', text: tr('Reset'), onclick: onReset }) : null
     );
 
   function blendingPage() {
@@ -548,9 +549,9 @@ export function showLayerStyleDialog(doc, layer, initialEffect = null) {
       preview();
     });
     return [
-      pageTitle('Blending Options'),
+      pageTitle(tr('Blending Options')),
       form.node,
-      el('div.pk-hint', { text: 'Fill Opacity fades the layer pixels only — layer effects keep their own opacity.' }),
+      el('div.pk-hint', { text: tr('Fill Opacity fades the layer pixels only — layer effects keep their own opacity.') }),
     ];
   }
 
@@ -593,9 +594,9 @@ export function showLayerStyleDialog(doc, layer, initialEffect = null) {
       }
       preview();
     });
-    const enableRow = el('label.pk-check.pk-fx-enable', {}, enableBox, el('span', { text: `Enable ${page.name}` }));
+    const enableRow = el('label.pk-check.pk-fx-enable', {}, enableBox, el('span', { text: tr('Enable {effect}', { effect: tr(page.name) }) }));
 
-    return [pageTitle(page.name, reset), enableRow, form.node];
+    return [pageTitle(tr(page.name), reset), enableRow, form.node];
   }
 
   function selectPage(id) {
@@ -608,8 +609,8 @@ export function showLayerStyleDialog(doc, layer, initialEffect = null) {
 
   dlg.setBody(el('div.pk-fx-cols', {}, listEl, paneEl));
   dlg.setButtons([
-    { label: 'Cancel', value: null, subtle: true },
-    { label: 'OK', value: true, primary: true },
+    { label: tr('Cancel'), value: null, subtle: true },
+    { label: tr('OK'), value: true, primary: true },
   ]);
   dlg.onClose((v) => {
     if (v) {
@@ -655,11 +656,11 @@ let styleClipboard = null;
  */
 export function copyLayerStyle(layer) {
   if (!layer || !layer.styles) {
-    app.toast('That layer has no layer style', 'warn');
+    app.toast(tr('That layer has no layer style'), 'warn');
     return false;
   }
   styleClipboard = structuredClone(layer.styles);
-  app.toast('Layer style copied');
+  app.toast(tr('Layer style copied'));
   return true;
 }
 
@@ -669,7 +670,7 @@ export function copyLayerStyle(layer) {
  */
 export function pasteLayerStyle(doc, layer) {
   if (!styleClipboard) {
-    app.toast('No layer style to paste', 'warn');
+    app.toast(tr('No layer style to paste'), 'warn');
     return false;
   }
   if (!doc || !layer) return false;

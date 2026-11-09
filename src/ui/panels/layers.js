@@ -10,13 +10,14 @@ import { hasStyles } from '../../effects/styles.js';
 import { listAdjustments } from '../../adjustments/registry.js';
 import { toHex } from '../../core/color.js';
 import { paramDialog } from '../dialog.js';
+import { commandName, msg, tr, trn } from '../../core/i18n.js';
 import * as ops from '../../layers/ops.js';
 import {
   artworkOf, clearDropTarget, copyIntoDocument, documentTabUnder, setDropTarget,
 } from '../cross-doc-drag.js';
 import {
   isSmartLayer, getSmartFilters, toggleSmartFilter, setSmartFiltersEnabled,
-  removeSmartFilter, reorderSmartFilters, editSmartFilter, editSmartContents,
+  removeSmartFilter, reorderSmartFilters, editSmartFilter, editSmartContents, smartFilterName,
 } from '../../core/smart.js';
 
 /**
@@ -27,7 +28,7 @@ import {
 
 const THUMB = 34;
 
-const BLEND_GROUP_LABELS = ['Normal', 'Darken', 'Lighten', 'Contrast', 'Comparative', 'Component'];
+const BLEND_GROUP_LABELS = [msg('Normal'), msg('Darken'), msg('Lighten'), msg('Contrast'), msg('Comparative'), msg('Component')];
 
 const EFFECT_NAMES = {
   dropShadow: 'Drop Shadow',
@@ -82,14 +83,14 @@ function buildLayersPanel(bodyEl) {
   /* ---------------- header: filter, blend/opacity, locks --------------- */
 
   const filterKind = el('select.pk-select.pk-lay-filter-kind', {
-    title: 'Filter type',
+    title: tr('Filter type'),
     onchange: () => {
       syncFilterInputs();
       scheduleRefresh(true);
     },
   });
-  for (const o of ['Kind', 'Name', 'Effect', 'Mode', 'Attribute', 'Color']) {
-    filterKind.appendChild(el('option', { value: o.toLowerCase(), text: o }));
+  for (const o of [msg('Kind'), msg('Name'), msg('Effect'), msg('Mode'), msg('Attribute'), msg('Color')]) {
+    filterKind.appendChild(el('option', { value: String(o).toLowerCase(), text: tr(o) }));
   }
 
   const filterValue = el('select.pk-select.pk-lay-filter-text', {
@@ -97,12 +98,12 @@ function buildLayersPanel(bodyEl) {
   });
   const filterText = el('input.pk-input.pk-lay-filter-text', {
     type: 'text',
-    placeholder: 'Search…',
+    placeholder: tr('Search…'),
     oninput: () => scheduleRefresh(true),
   });
   const filterToggle = el('button.pk-icon-btn.pk-lay-filter-toggle', {
     type: 'button',
-    title: 'Turn layer filtering on/off',
+    title: tr('Turn layer filtering on/off'),
     html: icon('search', { size: 14 }),
     onclick: () => {
       filterOn = !filterOn;
@@ -115,7 +116,7 @@ function buildLayersPanel(bodyEl) {
   const filterRow = el('div.pk-lay-hrow', {}, filterKind, filterValue, filterText, filterToggle);
 
   const blendSel = el('select.pk-select', {
-    title: 'Blending mode',
+    title: tr('Blending mode'),
     onchange: () => {
       const doc = app.activeDoc;
       if (!doc) return;
@@ -127,25 +128,25 @@ function buildLayersPanel(bodyEl) {
   });
   let blendHasPassThrough = null;
 
-  const opacity = makeAmount('Opacity', (doc, list, v, live) => {
+  const opacity = makeAmount(tr('Opacity'), (doc, list, v, live) => {
     for (const l of list) l.opacity = v / 100;
     live ? doc.touch('opacity') : doc.commit('Layer Opacity');
   });
-  const fill = makeAmount('Fill', (doc, list, v, live) => {
+  const fill = makeAmount(tr('Fill'), (doc, list, v, live) => {
     for (const l of list) l.fillOpacity = v / 100;
     live ? doc.touch('fill') : doc.commit('Fill Opacity');
   });
 
   const lockBtns = [
-    lockButton('transparency', 'grid', 'Lock transparent pixels'),
-    lockButton('pixels', 'brush', 'Lock image pixels'),
-    lockButton('position', 'move', 'Lock position'),
-    lockButton('all', 'lock', 'Lock all'),
+    lockButton('transparency', 'grid', tr('Lock transparent pixels')),
+    lockButton('pixels', 'brush', tr('Lock image pixels')),
+    lockButton('position', 'move', tr('Lock position')),
+    lockButton('all', 'lock', tr('Lock all')),
   ];
 
   const blendRow = el('div.pk-lay-hrow', {}, blendSel, opacity.node);
   const lockRow = el('div.pk-lay-hrow', {},
-    el('span.pk-lay-hlabel', { text: 'Lock' }),
+    el('span.pk-lay-hlabel', { text: tr('Lock') }),
     el('div.pk-lay-locks', {}, ...lockBtns.map((b) => b.node)),
     el('span.pk-spacer'),
     fill.node
@@ -158,31 +159,31 @@ function buildLayersPanel(bodyEl) {
   const rowsEl = el('div.pk-lay-rows');
   const dropLine = el('div.pk-lay-dropline', { hidden: true });
   const listEl = el('div.pk-lay-list', {}, rowsEl, dropLine);
-  const emptyEl = el('div.pk-panel-empty', { text: 'No document open.' });
+  const emptyEl = el('div.pk-panel-empty', { text: tr('No document open.') });
 
   /* --------------------------- bottom strip --------------------------- */
 
   const foot = el('div.pk-lay-foot', {},
-    footBtn('link', 'Link layers', () => withDoc(toggleLink)),
-    footBtn('fx', 'Add a layer style', (e) => withDoc((doc) => {
+    footBtn('link', tr('Link layers'), () => withDoc(toggleLink)),
+    footBtn('fx', tr('Add a layer style'), (e) => withDoc((doc) => {
       const l = doc.activeLayer();
       if (!l) return;
       const r = e.currentTarget.getBoundingClientRect();
       fxMenu(doc, l, r.left, r.top);
     })),
-    footBtn('mask', 'Add layer mask', (e) => withDoc((doc) => {
+    footBtn('mask', tr('Add layer mask'), (e) => withDoc((doc) => {
       const l = doc.activeLayer();
       if (!l) return;
-      if (l.mask) { app.toast('Layer already has a mask.'); return; }
+      if (l.mask) { app.toast(tr('Layer already has a mask.')); return; }
       const kind = e.altKey ? (doc.selection.active ? 'hide-selection' : 'hide-all')
         : (doc.selection.active ? 'reveal-selection' : 'reveal-all');
       ops.addLayerMask(doc, l, kind);
     })),
-    footBtn('adjustment', 'Create new fill or adjustment layer', (e) => withDoc((doc) => {
+    footBtn('adjustment', tr('Create new fill or adjustment layer'), (e) => withDoc((doc) => {
       const r = e.currentTarget.getBoundingClientRect();
       adjustmentMenu(doc, r.left, r.top);
     })),
-    footBtn('folder', 'Create a new group', () => withDoc((doc) => {
+    footBtn('folder', tr('Create a new group'), () => withDoc((doc) => {
       const sel = doc.selectedLayers();
       if (sel.length > 1) ops.groupLayers(doc, sel);
       else {
@@ -191,8 +192,8 @@ function buildLayersPanel(bodyEl) {
         doc.commit('New Group');
       }
     })),
-    footBtn('plus', 'Create a new layer', () => withDoc((doc) => ops.addRasterLayer(doc))),
-    footBtn('trash', 'Delete layer', () => withDoc((doc) => ops.deleteLayers(doc, doc.selectedLayers())))
+    footBtn('plus', tr('Create a new layer'), () => withDoc((doc) => ops.addRasterLayer(doc))),
+    footBtn('trash', tr('Delete layer'), () => withDoc((doc) => ops.deleteLayers(doc, doc.selectedLayers())))
   );
 
   const root = el('div.pk-lay', {}, head, listEl, emptyEl, foot);
@@ -294,7 +295,7 @@ function buildLayersPanel(bodyEl) {
     if (useText) return;
     const opts = filterOptions(kind);
     const prev = filterValue.value;
-    filterValue.replaceChildren(...opts.map((o) => el('option', { value: o.value, text: o.label })));
+    filterValue.replaceChildren(...opts.map((o) => el('option', { value: o.value, text: tr(o.label) })));
     filterValue.value = opts.some((o) => o.value === prev) ? prev : opts[0].value;
   }
 
@@ -302,7 +303,7 @@ function buildLayersPanel(bodyEl) {
     if (kind === 'kind') {
       return [
         { value: 'all', label: 'All' }, { value: 'pixel', label: 'Pixel' },
-        { value: 'adjustment', label: 'Adjustment' }, { value: 'type', label: 'Type' },
+        { value: 'adjustment', label: 'Adjustment' }, { value: 'type', label: 'Type|text layer' },
         { value: 'shape', label: 'Shape' }, { value: 'smart', label: 'Smart Object' },
         { value: 'group', label: 'Group' },
       ];
@@ -332,7 +333,7 @@ function buildLayersPanel(bodyEl) {
     if (kind === 'effect') {
       const q = filterText.value.trim().toLowerCase();
       const s = l.styles || {};
-      return Object.keys(s).some((k) => s[k] && s[k].enabled && (EFFECT_NAMES[k] || k).toLowerCase().includes(q));
+      return Object.keys(s).some((k) => s[k] && s[k].enabled && tr(EFFECT_NAMES[k] || k).toLowerCase().includes(q));
     }
     if (kind === 'mode') return l.blendMode === filterValue.value;
     if (kind === 'color') return (l.colorLabel || 'none') === filterValue.value;
@@ -371,24 +372,25 @@ function buildLayersPanel(bodyEl) {
   /* ------------------------------- rows ------------------------------- */
 
   function makeRow() {
-    const eye = el('button.pk-icon-btn.pk-lay-eye', { type: 'button', title: 'Toggle layer visibility' });
+    const eye = el('button.pk-icon-btn.pk-lay-eye', { type: 'button', title: tr('Toggle layer visibility') });
     const pad = el('span.pk-lay-pad');
-    const tri = el('button.pk-icon-btn.pk-lay-tri', { type: 'button', title: 'Expand / collapse group', html: icon('chevron', { size: 11 }) });
-    const clip = el('span.pk-lay-clip', { html: icon('chevron-right', { size: 11 }), hidden: true, title: 'Clipped to the layer below' });
+    const tri = el('button.pk-icon-btn.pk-lay-tri', { type: 'button', title: tr('Expand / collapse group'), html: icon('chevron', { size: 11 }) });
+    const clip = el('span.pk-lay-clip', { html: icon('chevron-right', { size: 11 }), hidden: true, title: tr('Clipped to the layer below') });
     const thumbCv = el('canvas', { width: THUMB, height: THUMB });
     const smartBadge = el('span.pk-lay-smartbadge', {
-      hidden: true, title: 'Smart Object — double-click the thumbnail to edit its contents',
+      hidden: true, title: tr('Smart Object — double-click the thumbnail to edit its contents'),
       html: icon('image', { size: 9 }),
     });
-    const thumbBox = el('div.pk-lay-thumbbox.pk-checker', { title: 'Edit layer pixels' }, thumbCv, smartBadge);
+    const thumbBox = el('div.pk-lay-thumbbox.pk-checker', { title: tr('Edit layer pixels') }, thumbCv, smartBadge);
     const iconBox = el('div.pk-lay-groupico', { hidden: true });
-    const linkBtn = el('button.pk-lay-masklink', { type: 'button', title: 'Link / unlink mask', html: icon('link', { size: 12 }), hidden: true });
+    const linkBtn = el('button.pk-lay-masklink', { type: 'button', title: tr('Link / unlink mask'), html: icon('link', { size: 12 }), hidden: true });
     const maskCv = el('canvas', { width: THUMB, height: THUMB });
-    const maskBox = el('div.pk-lay-thumbbox.mask', { title: 'Edit layer mask', hidden: true }, maskCv);
-    const name = el('span.pk-lay-name');
-    const fxBtn = el('button.pk-icon-btn.pk-lay-fxbadge', { type: 'button', title: 'Layer effects', html: icon('fx', { size: 13 }), hidden: true });
-    const linkIco = el('span', { html: icon('link', { size: 12 }), title: 'Linked', hidden: true });
-    const lockIco = el('span', { html: icon('lock', { size: 12 }), title: 'Locked', hidden: true });
+    const maskBox = el('div.pk-lay-thumbbox.mask', { title: tr('Edit layer mask'), hidden: true }, maskCv);
+    // The user's name for the layer: never ours to translate, nor the browser's.
+    const name = el('span.pk-lay-name', { translate: 'no' });
+    const fxBtn = el('button.pk-icon-btn.pk-lay-fxbadge', { type: 'button', title: tr('Layer effects'), html: icon('fx', { size: 13 }), hidden: true });
+    const linkIco = el('span', { html: icon('link', { size: 12 }), title: tr('Linked'), hidden: true });
+    const lockIco = el('span', { html: icon('lock', { size: 12 }), title: tr('Locked'), hidden: true });
     const colorBar = el('span.pk-lay-colorbar');
     const badges = el('div.pk-lay-badges', {}, fxBtn, linkIco, lockIco);
     const main = el('div.pk-lay-main', {}, eye, pad, tri, clip, thumbBox, iconBox, linkBtn, maskBox, name, badges, colorBar);
@@ -583,28 +585,30 @@ function buildLayersPanel(bodyEl) {
     rows.push(
       el('div.pk-lay-fxrow.head', {},
         el('button.pk-icon-btn' + (anyOn ? '' : '.off'), {
-          type: 'button', title: 'Show / hide all effects', html: icon(anyOn ? 'eye' : 'eye-off', { size: 12 }),
+          type: 'button', title: tr('Show / hide all effects'), html: icon(anyOn ? 'eye' : 'eye-off', { size: 12 }),
           onclick: (e) => {
             e.stopPropagation();
             for (const k of configured) styles[k].enabled = !anyOn;
             doc.commit(anyOn ? 'Hide All Effects' : 'Show All Effects');
           },
         }),
-        el('span.pk-lay-fxname', { text: 'Effects', onclick: () => openStyleDialog(doc, l) })
+        el('span.pk-lay-fxname', { text: tr('Effects'), onclick: () => openStyleDialog(doc, l) })
       )
     );
     for (const key of configured) {
       const cfg = styles[key];
       rows.push(el('div.pk-lay-fxrow', {},
         el('button.pk-icon-btn' + (cfg.enabled ? '' : '.off'), {
-          type: 'button', title: 'Toggle effect', html: icon(cfg.enabled ? 'eye' : 'eye-off', { size: 12 }),
+          type: 'button', title: tr('Toggle effect'), html: icon(cfg.enabled ? 'eye' : 'eye-off', { size: 12 }),
           onclick: (e) => {
             e.stopPropagation();
             cfg.enabled = !cfg.enabled;
-            doc.commit(`${cfg.enabled ? 'Show' : 'Hide'} ${EFFECT_NAMES[key]}`);
+            doc.commit(cfg.enabled
+              ? msg('Show {effect}', { effect: msg(EFFECT_NAMES[key]) })
+              : msg('Hide {effect}', { effect: msg(EFFECT_NAMES[key]) }));
           },
         }),
-        el('span.pk-lay-fxname', { text: EFFECT_NAMES[key], onclick: () => openStyleDialog(doc, l, key) })
+        el('span.pk-lay-fxname', { text: tr(EFFECT_NAMES[key]), onclick: () => openStyleDialog(doc, l, key) })
       ));
     }
     list.replaceChildren(...rows);
@@ -625,13 +629,13 @@ function buildLayersPanel(bodyEl) {
     const rows = [
       el('div.pk-lay-fxrow.head.smart', {},
         el('button.pk-icon-btn' + (anyOn ? '' : '.off'), {
-          type: 'button', title: 'Show / hide all smart filters',
+          type: 'button', title: tr('Show / hide all smart filters'),
           html: icon(anyOn ? 'eye' : 'eye-off', { size: 12 }),
           onclick: (e) => { e.stopPropagation(); setSmartFiltersEnabled(doc, l, !anyOn); },
         }),
         el('span.pk-lay-fxname', {
-          text: 'Smart Filters',
-          title: 'Applied to the embedded contents on every render',
+          text: tr('Smart Filters'),
+          title: tr('Applied to the embedded contents on every render'),
         })
       ),
     ];
@@ -645,13 +649,13 @@ function buildLayersPanel(bodyEl) {
         },
       },
       el('button.pk-icon-btn' + (f.enabled ? '' : '.off'), {
-        type: 'button', title: 'Toggle smart filter',
+        type: 'button', title: tr('Toggle smart filter'),
         html: icon(f.enabled ? 'eye' : 'eye-off', { size: 12 }),
         onclick: (e) => { e.stopPropagation(); toggleSmartFilter(doc, l, f.id); },
       }),
       el('span.pk-lay-fxname', {
-        text: f.name,
-        title: 'Double-click to edit these settings',
+        text: tr(smartFilterName(f)),
+        title: tr('Double-click to edit these settings'),
         ondblclick: (e) => { e.stopPropagation(); editSmartFilter(doc, l, f.id); },
       })));
     });
@@ -660,13 +664,13 @@ function buildLayersPanel(bodyEl) {
 
   function smartFilterMenu(doc, layer, entry, index, count, x, y) {
     popupMenu([
-      { label: 'Edit Smart Filter…', run: () => editSmartFilter(doc, layer, entry.id) },
-      { label: entry.enabled ? 'Disable' : 'Enable', run: () => toggleSmartFilter(doc, layer, entry.id) },
+      { label: tr('Edit Smart Filter…'), run: () => editSmartFilter(doc, layer, entry.id) },
+      { label: entry.enabled ? tr('Disable') : tr('Enable'), run: () => toggleSmartFilter(doc, layer, entry.id) },
       { separator: true },
-      { label: 'Move Up', disabled: index === 0, run: () => reorderSmartFilters(doc, layer, index, index - 1) },
-      { label: 'Move Down', disabled: index >= count - 1, run: () => reorderSmartFilters(doc, layer, index, index + 1) },
+      { label: tr('Move Up'), disabled: index === 0, run: () => reorderSmartFilters(doc, layer, index, index - 1) },
+      { label: tr('Move Down'), disabled: index >= count - 1, run: () => reorderSmartFilters(doc, layer, index, index + 1) },
       { separator: true },
-      { label: 'Delete Smart Filter', run: () => removeSmartFilter(doc, layer, entry.id) },
+      { label: tr('Delete Smart Filter'), run: () => removeSmartFilter(doc, layer, entry.id) },
     ], x, y);
   }
 
@@ -886,7 +890,7 @@ function buildLayersPanel(bodyEl) {
         // Photoshop when you drag one between two open documents.
         copyIntoDocument(state.crossDoc, artworkOf(doc, state.layers), draggedName(state.layers));
       } else if (state && state.locked) {
-        app.toast('The Background layer is locked in place.');
+        app.toast(tr('The Background layer is locked in place.'));
       } else if (state && state.target) {
         applyDrop(doc, state.layers, state.target);
       }
@@ -899,7 +903,7 @@ function buildLayersPanel(bodyEl) {
 
   /** What to call the layer that arrives in the other document. */
   function draggedName(layers) {
-    return layers.length === 1 ? layers[0].name : `${layers.length} layers`;
+    return layers.length === 1 ? layers[0].name : trn('{count} layer', '{count} layers', layers.length);
   }
 
   function autoScroll(ev) {
@@ -1032,7 +1036,7 @@ function buildLayersPanel(bodyEl) {
         const id = l.linkId;
         for (const x of doc.flatLayers()) if (x.linkId === id) x.linkId = null;
         doc.commit('Unlink Layers');
-      } else app.toast('Select two or more layers to link.');
+      } else app.toast(tr('Select two or more layers to link.'));
       return;
     }
     const first = sel[0].linkId;
@@ -1050,46 +1054,46 @@ function buildLayersPanel(bodyEl) {
     const sel = doc.selectedLayers();
     const many = sel.length > 1;
     popupMenu([
-      { label: many ? 'Duplicate Layers' : 'Duplicate Layer', run: () => ops.duplicateLayers(doc, sel) },
-      { label: many ? 'Delete Layers' : 'Delete Layer', run: () => ops.deleteLayers(doc, sel) },
+      { label: many ? tr('Duplicate Layers') : tr('Duplicate Layer'), run: () => ops.duplicateLayers(doc, sel) },
+      { label: many ? tr('Delete Layers') : tr('Delete Layer'), run: () => ops.deleteLayers(doc, sel) },
       { separator: true },
-      { label: 'Blending Options…', run: () => openStyleDialog(doc, layer) },
-      { label: layer.clipped ? 'Release Clipping Mask' : 'Create Clipping Mask', run: () => ops.toggleClipping(doc, layer) },
+      { label: tr('Blending Options…'), run: () => openStyleDialog(doc, layer) },
+      { label: layer.clipped ? tr('Release Clipping Mask') : tr('Create Clipping Mask'), run: () => ops.toggleClipping(doc, layer) },
       { separator: true },
-      { label: 'Group Layers', run: () => ops.groupLayers(doc, sel.length ? sel : [layer]) },
-      { label: 'Ungroup Layers', disabled: layer.type !== LayerType.GROUP, run: () => ops.ungroupLayers(doc, layer) },
+      { label: tr('Group Layers'), run: () => ops.groupLayers(doc, sel.length ? sel : [layer]) },
+      { label: tr('Ungroup Layers'), disabled: layer.type !== LayerType.GROUP, run: () => ops.ungroupLayers(doc, layer) },
       { separator: true },
-      { label: 'Merge Down', run: () => ops.mergeDown(doc, layer) },
-      { label: 'Merge Visible', run: () => ops.mergeVisible(doc) },
-      { label: 'Flatten Image', run: () => ops.flattenImage(doc) },
+      { label: tr('Merge Down'), run: () => ops.mergeDown(doc, layer) },
+      { label: tr('Merge Visible'), run: () => ops.mergeVisible(doc) },
+      { label: tr('Flatten Image'), run: () => ops.flattenImage(doc) },
       { separator: true },
-      { label: 'Rasterize Layer', disabled: layer.type === LayerType.RASTER, run: () => ops.rasterizeLayer(doc, layer) },
-      { label: 'Rasterize Layer Style', disabled: !hasStyles(layer), run: () => ops.rasterizeLayerStyle(doc, layer) },
-      { label: 'Convert to Smart Object', run: () => ops.convertToSmartObject(doc, sel.length ? sel : [layer]) },
-      { label: 'Edit Contents', disabled: !isSmartLayer(layer), run: () => editSmartContents(doc, layer) },
+      { label: tr('Rasterize Layer'), disabled: layer.type === LayerType.RASTER, run: () => ops.rasterizeLayer(doc, layer) },
+      { label: tr('Rasterize Layer Style'), disabled: !hasStyles(layer), run: () => ops.rasterizeLayerStyle(doc, layer) },
+      { label: tr('Convert to Smart Object'), run: () => ops.convertToSmartObject(doc, sel.length ? sel : [layer]) },
+      { label: tr('Edit Contents'), disabled: !isSmartLayer(layer), run: () => editSmartContents(doc, layer) },
       { separator: true },
       layer.mask
-        ? { label: 'Apply Layer Mask', run: () => ops.applyLayerMask(doc, layer) }
-        : { label: 'Add Layer Mask', run: () => ops.addLayerMask(doc, layer, doc.selection.active ? 'reveal-selection' : 'reveal-all') },
-      layer.mask ? { label: 'Delete Layer Mask', run: () => ops.deleteLayerMask(doc, layer) } : null,
-      layer.mask ? { label: layer.maskEnabled ? 'Disable Layer Mask' : 'Enable Layer Mask', run: () => ops.toggleMaskEnabled(doc, layer) } : null,
+        ? { label: tr('Apply Layer Mask'), run: () => ops.applyLayerMask(doc, layer) }
+        : { label: tr('Add Layer Mask'), run: () => ops.addLayerMask(doc, layer, doc.selection.active ? 'reveal-selection' : 'reveal-all') },
+      layer.mask ? { label: tr('Delete Layer Mask'), run: () => ops.deleteLayerMask(doc, layer) } : null,
+      layer.mask ? { label: layer.maskEnabled ? tr('Disable Layer Mask') : tr('Enable Layer Mask'), run: () => ops.toggleMaskEnabled(doc, layer) } : null,
       { separator: true },
       layer.isBackground
-        ? { label: 'Layer From Background', run: () => ops.convertBackgroundToLayer(doc, layer) }
-        : { label: 'Background From Layer', disabled: layer.type !== LayerType.RASTER, run: () => ops.convertLayerToBackground(doc, layer) },
-      { label: 'Layer Properties…', run: () => showLayerProperties(doc, layer) },
+        ? { label: tr('Layer From Background'), run: () => ops.convertBackgroundToLayer(doc, layer) }
+        : { label: tr('Background From Layer'), disabled: layer.type !== LayerType.RASTER, run: () => ops.convertLayerToBackground(doc, layer) },
+      { label: tr('Layer Properties…'), run: () => showLayerProperties(doc, layer) },
     ], x, y);
   }
 
   function fxMenu(doc, layer, x, y) {
     const styles = layer.styles || {};
     const items = [
-      { label: 'Blending Options…', run: () => openStyleDialog(doc, layer) },
+      { label: tr('Blending Options…'), run: () => openStyleDialog(doc, layer) },
       { separator: true },
     ];
     for (const [key, label] of Object.entries(EFFECT_NAMES)) {
       items.push({
-        label: `${label}…`,
+        label: `${tr(label)}…`,
         checked: !!(styles[key] && styles[key].enabled),
         run: () => openStyleDialog(doc, layer, key),
       });
@@ -1097,7 +1101,7 @@ function buildLayersPanel(bodyEl) {
     items.push(
       { separator: true },
       {
-        label: 'Clear Layer Style',
+        label: tr('Clear Layer Style'),
         disabled: !hasStyles(layer),
         run: () => { layer.styles = null; doc.commit('Clear Layer Style'); },
       }
@@ -1108,14 +1112,14 @@ function buildLayersPanel(bodyEl) {
   function adjustmentMenu(doc, x, y) {
     const items = [
       {
-        label: 'Solid Color…',
+        label: tr('Solid Color…'),
         run: () => {
           const hex = toHex(app.foreground);
           ops.addFillLayer(doc, 'solid', { color: hex, fill: hex });
         },
       },
       {
-        label: 'Gradient…',
+        label: tr('Gradient…'),
         run: () => ops.addFillLayer(doc, 'gradient', {
           angle: 90,
           stops: [{ pos: 0, color: '#000000' }, { pos: 1, color: '#ffffff' }],
@@ -1127,7 +1131,7 @@ function buildLayersPanel(bodyEl) {
     list.sort((a, b) => a.name.localeCompare(b.name));
     for (const a of list) {
       items.push({
-        label: a.name.replace(/(\.\.\.|…)$/, ''),
+        label: tr(commandName(a.name)),
         run: () => ops.addAdjustmentLayer(doc, a.id),
       });
     }
@@ -1139,19 +1143,19 @@ function buildLayersPanel(bodyEl) {
     if (!doc) return [];
     const l = doc.activeLayer();
     return [
-      { label: 'New Layer', run: () => ops.addRasterLayer(doc) },
-      { label: 'New Group', run: () => { const g = createGroupLayer(nextGroupName(doc)); doc.addLayer(g); doc.commit('New Group'); } },
-      { label: 'Duplicate Layer', disabled: !l, run: () => ops.duplicateLayers(doc, doc.selectedLayers()) },
-      { label: 'Delete Layer', disabled: !l, run: () => ops.deleteLayers(doc, doc.selectedLayers()) },
+      { label: tr('New Layer'), run: () => ops.addRasterLayer(doc) },
+      { label: tr('New Group'), run: () => { const g = createGroupLayer(nextGroupName(doc)); doc.addLayer(g); doc.commit('New Group'); } },
+      { label: tr('Duplicate Layer'), disabled: !l, run: () => ops.duplicateLayers(doc, doc.selectedLayers()) },
+      { label: tr('Delete Layer'), disabled: !l, run: () => ops.deleteLayers(doc, doc.selectedLayers()) },
       { separator: true },
-      { label: 'Merge Down', disabled: !l, run: () => ops.mergeDown(doc, l) },
-      { label: 'Merge Visible', run: () => ops.mergeVisible(doc) },
-      { label: 'Flatten Image', run: () => ops.flattenImage(doc) },
+      { label: tr('Merge Down'), disabled: !l, run: () => ops.mergeDown(doc, l) },
+      { label: tr('Merge Visible'), run: () => ops.mergeVisible(doc) },
+      { label: tr('Flatten Image'), run: () => ops.flattenImage(doc) },
       { separator: true },
-      { label: 'Expand All Groups', run: () => setAllExpanded(doc, true) },
-      { label: 'Collapse All Groups', run: () => setAllExpanded(doc, false) },
+      { label: tr('Expand All Groups'), run: () => setAllExpanded(doc, true) },
+      { label: tr('Collapse All Groups'), run: () => setAllExpanded(doc, false) },
       { separator: true },
-      { label: 'Layer Properties…', disabled: !l, run: () => showLayerProperties(doc, l) },
+      { label: tr('Layer Properties…'), disabled: !l, run: () => showLayerProperties(doc, l) },
     ];
   }
 
@@ -1194,16 +1198,16 @@ function buildLayersPanel(bodyEl) {
 
 function fillBlendSelect(sel, includePassThrough) {
   sel.replaceChildren();
-  if (includePassThrough) sel.appendChild(el('option', { value: 'pass-through', text: 'Pass Through' }));
+  if (includePassThrough) sel.appendChild(el('option', { value: 'pass-through', text: tr('Pass Through') }));
   let group = -1;
   let og = null;
   for (const m of BLEND_MODES) {
     if (m.group !== group) {
       group = m.group;
-      og = el('optgroup', { label: BLEND_GROUP_LABELS[group] || String(group) });
+      og = el('optgroup', { label: tr(BLEND_GROUP_LABELS[group]) || String(group) });
       sel.appendChild(og);
     }
-    og.appendChild(el('option', { value: m.id, text: m.name }));
+    og.appendChild(el('option', { value: m.id, text: tr(m.name) }));
   }
 }
 
@@ -1219,8 +1223,8 @@ function isAncestor(ancestor, layer) {
 function nextGroupName(doc) {
   const names = new Set(doc.flatLayers().map((l) => l.name));
   let n = 1;
-  while (names.has(`Group ${n}`)) n++;
-  return `Group ${n}`;
+  while (names.has(tr('Group {number}', { number: n }))) n++;
+  return tr('Group {number}', { number: n });
 }
 
 /** Alt-click on the eye: show only this layer, or restore everything. */
@@ -1239,18 +1243,18 @@ async function openStyleDialog(doc, layer, effectId) {
   try {
     const mod = await import('../../effects/styles-dialog.js');
     const fn = mod.showLayerStyleDialog || mod.default;
-    if (typeof fn !== 'function') throw new Error('Layer style dialog is unavailable.');
+    if (typeof fn !== 'function') throw new Error(tr('Layer style dialog is unavailable.'));
     await fn(doc, layer, effectId);
   } catch (err) {
     console.error(err);
-    app.toast(err && err.message ? err.message : 'Could not open layer styles.', 'error');
+    app.toast(err && err.message ? err.message : tr('Could not open layer styles.'), 'error');
   }
 }
 
 async function showLayerProperties(doc, layer) {
   const state = { name: layer.name, colorLabel: layer.colorLabel || 'none' };
   const result = await paramDialog({
-    title: 'Layer Properties',
+    title: tr('Layer Properties'),
     width: 320,
     preview: false,
     state,

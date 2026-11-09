@@ -5,6 +5,7 @@ import {
 import { Selection } from './selection.js';
 import { History } from './history.js';
 import { uid, createCanvas, cloneCanvas, ctx2d } from './util.js';
+import { tr } from './i18n.js';
 
 /**
  * A Pikado document.
@@ -68,11 +69,11 @@ export class PikaDocument extends Emitter {
   static blank(width, height, name, fill = '#ffffff') {
     const doc = new PikaDocument({ width, height, name });
     if (fill === 'transparent' || fill === null) {
-      const l = createRasterLayer(width, height, 'Layer 1');
+      const l = createRasterLayer(width, height, tr('Layer {number}', { number: 1 }));
       doc.layers.push(l);
       doc.activeLayerId = l.id;
     } else {
-      const bg = createRasterLayer(width, height, 'Background');
+      const bg = createRasterLayer(width, height, tr('Background'));
       const c = bg.canvas.getContext('2d');
       c.fillStyle = fill;
       c.fillRect(0, 0, width, height);
@@ -86,11 +87,11 @@ export class PikaDocument extends Emitter {
     return doc;
   }
 
-  static fromImage(img, name = 'Image') {
+  static fromImage(img, name = tr('Image')) {
     const w = img.naturalWidth || img.width;
     const h = img.naturalHeight || img.height;
     const doc = new PikaDocument({ width: w, height: h, name });
-    const l = createRasterLayer(w, h, 'Background');
+    const l = createRasterLayer(w, h, tr('Background'));
     l.canvas.getContext('2d').drawImage(img, 0, 0);
     l.isBackground = true;
     doc.layers.push(l);
@@ -257,7 +258,7 @@ export class PikaDocument extends Emitter {
    */
   duplicateLayer(layer, opts = {}) {
     const copy = layer.clone(true, opts.link !== false);
-    copy.name = `${layer.name} copy`;
+    copy.name = tr('{name} copy', { name: layer.name });
     copy.isBackground = false;
     const loc = this.locate(layer);
     copy.parent = loc.parent;
@@ -293,7 +294,7 @@ export class PikaDocument extends Emitter {
     this.dirty = true;
     this.invalidate();
     this.history.record(label);
-    this.emit('change', { reason: label });
+    this.emit('change', { reason: String(label) });
   }
 
   /** Notify listeners without touching history (live drag previews). */

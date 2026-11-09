@@ -1,6 +1,7 @@
 import { registerFilter } from './registry.js';
 import { operableRect, operableSurface } from './run.js';
 import { app } from '../core/app.js';
+import { tr } from '../core/i18n.js';
 import { el, createCanvas, clamp, deg2rad } from '../core/util.js';
 import {
   FACE_SLIDERS, applyFaceLiquify, faceParamsAreNeutral, defaultFaceBox,
@@ -478,7 +479,7 @@ registerFilter({
     { key: 'scaleH', label: 'Horizontal Scale', type: 'slider', min: 0, max: 100, step: 1, default: 100, unit: '%' },
     { key: 'scaleV', label: 'Vertical Scale', type: 'slider', min: 0, max: 100, step: 1, default: 100, unit: '%' },
     {
-      key: 'type', label: 'Type', type: 'radio', default: 'sine',
+      key: 'type', label: 'Type|kind', type: 'radio', default: 'sine',
       options: [{ value: 'sine', label: 'Sine' }, { value: 'triangle', label: 'Triangle' }, { value: 'square', label: 'Square' }],
     },
     { key: 'undefinedAreas', label: 'Undefined Areas', type: 'radio', default: 'repeat', options: UNDEFINED_AREAS },
@@ -955,7 +956,7 @@ function renderLiquify(container, state, onChange) {
   const layer = doc && doc.activeLayer();
   const surf = doc && layer ? operableSurface(doc, layer) : null;
   if (!surf) {
-    container.appendChild(el('div.pk-hint', { text: 'No editable layer.' }));
+    container.appendChild(el('div.pk-hint', { text: tr('No editable layer.') }));
     return null;
   }
   const rect = operableRect(doc);
@@ -1136,15 +1137,15 @@ function renderLiquify(container, state, onChange) {
   });
 
   const tools = el('div.pk-liquify-tools', {},
-    act('Reconstruct', () => reconstructAll(mesh, 0.3), 'Ease the whole mesh back toward its original shape'),
-    act('Smooth All', () => smoothAll(mesh), 'Relax the whole mesh'),
-    act('Restore All', () => { mesh.dx.fill(0); mesh.dy.fill(0); }, 'Remove every distortion'),
-    act('Freeze All', () => mesh.frozen.fill(1), 'Protect the whole image'),
-    act('Invert Freeze', () => {
+    act(tr('Reconstruct'), () => reconstructAll(mesh, 0.3), tr('Ease the whole mesh back toward its original shape')),
+    act(tr('Smooth All'), () => smoothAll(mesh), tr('Relax the whole mesh')),
+    act(tr('Restore All'), () => { mesh.dx.fill(0); mesh.dy.fill(0); }, tr('Remove every distortion')),
+    act(tr('Freeze All'), () => mesh.frozen.fill(1), tr('Protect the whole image')),
+    act(tr('Invert Freeze'), () => {
       for (let i = 0; i < mesh.frozen.length; i++) mesh.frozen[i] = 1 - mesh.frozen[i];
-    }, 'Swap frozen and thawed areas'),
-    act('Thaw All', () => mesh.frozen.fill(0), 'Clear the freeze mask'),
-    el('span.pk-hint', { text: 'Drag on the preview to warp' })
+    }, tr('Swap frozen and thawed areas')),
+    act(tr('Thaw All'), () => mesh.frozen.fill(0), tr('Clear the freeze mask')),
+    el('span.pk-hint', { text: tr('Drag on the preview to warp') })
   );
 
   container.classList.add('pk-liquify');

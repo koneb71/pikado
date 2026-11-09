@@ -7,6 +7,7 @@ import { getComposite } from '../../render/compositor.js';
 import { Layer, LayerType, createRasterLayer } from '../../core/layer.js';
 import { TRIMAP, grabcut, autoTrimap } from '../../select/grabcut.js';
 import { refineSelection, decontaminateColors, edgeBand } from '../../select/refine.js';
+import { tr } from '../../core/i18n.js';
 
 /**
  * The Select and Mask workspace.
@@ -42,7 +43,7 @@ const WORK_PIXELS = 260000;
 const VIEW_MODES = [
   { value: 'onion', label: 'Onion Skin', hint: 'Unselected areas fade out' },
   { value: 'ants', label: 'Marching Ants', hint: 'The classic dashed outline' },
-  { value: 'overlay', label: 'Overlay', hint: 'Unselected areas tinted, like Quick Mask' },
+  { value: 'overlay', label: 'Overlay|view', hint: 'Unselected areas tinted, like Quick Mask' },
   { value: 'black', label: 'On Black', hint: 'The selection over black' },
   { value: 'white', label: 'On White', hint: 'The selection over white' },
   { value: 'mask', label: 'Black & White', hint: 'The mask itself' },
@@ -378,7 +379,9 @@ export async function showSelectAndMask(doc, opts = {}) {
     let selected = 0;
     for (let i = 0; i < finalMask.length; i++) selected += finalMask[i];
     const pct = (selected / (finalMask.length * 255)) * 100;
-    status.textContent = `${pct.toFixed(1)}% selected · cut at ${work.w}×${work.h}, refined at ${W}×${H}`;
+    status.textContent = tr('{percent}% selected · cut at {cutWidth}×{cutHeight}, refined at {width}×{height}', {
+      percent: pct.toFixed(1), cutWidth: work.w, cutHeight: work.h, width: W, height: H,
+    });
   }
 
   /** Marching ants, traced from the mask's own contour loops. */
@@ -585,7 +588,7 @@ export async function showSelectAndMask(doc, opts = {}) {
 
   /* --- assembly -------------------------------------------------------- */
 
-  const dialog = new Dialog({ title: 'Select and Mask', width: 980, className: 'pk-sam' });
+  const dialog = new Dialog({ title: tr('Select and Mask'), width: 980, className: 'pk-sam' });
   form = buildForm(params, state, onChange);
 
   /** Saliency guess -> cut -> adopt as the seed. Shared by the button and open. */
@@ -597,18 +600,18 @@ export async function showSelectAndMask(doc, opts = {}) {
     cutMask = res.mask;
     cutPending = false;
     adoptAsSeed(cutMask);
-    if (!guess.confident) app.toast('No obvious subject — paint a few strokes to guide it.', 'info');
+    if (!guess.confident) app.toast(tr('No obvious subject — paint a few strokes to guide it.'), 'info');
     runRefine();
   }
 
   const actions = el('div.pk-sam-actions', {},
     el('button.pk-btn.subtle', {
-      text: 'Select Subject',
-      title: 'Guess the subject with saliency plus a graph cut — no model, so no magic',
+      text: tr('Select Subject'),
+      title: tr('Guess the subject with saliency plus a graph cut — no model, so no magic'),
       onclick: () => { selectSubject(); draw(); },
     }),
     el('button.pk-btn.subtle', {
-      text: 'Reset',
+      text: tr('Reset'),
       onclick: () => {
         strokes.fill(0xff);
         refineBand.fill(0);
@@ -629,9 +632,9 @@ export async function showSelectAndMask(doc, opts = {}) {
 
   let applied = false;
   dialog.setButtons([
-    { label: 'Cancel', value: false, subtle: true },
+    { label: tr('Cancel'), value: false, subtle: true },
     {
-      label: 'OK',
+      label: tr('OK'),
       primary: true,
       onClick: () => { applied = true; return true; },
       value: true,
@@ -716,14 +719,14 @@ function applyOutput(doc, mask, state) {
       break;
     }
     case 'layer': {
-      const l = new Layer({ type: LayerType.RASTER, name: 'Refined', canvas: cutPixels() });
+      const l = new Layer({ type: LayerType.RASTER, name: tr('Refined'), canvas: cutPixels() });
       doc.addLayer(l, { above: doc.layers[0] });
       doc.selection.clear();
       doc.commit('Select and Mask');
       break;
     }
     case 'layer-mask': {
-      const base = createRasterLayer(W, H, 'Refined');
+      const base = createRasterLayer(W, H, tr('Refined'));
       ctx2d(base.canvas).drawImage(getComposite(doc), 0, 0);
       base.mask = maskCanvas();
       base.maskEnabled = true;
@@ -735,7 +738,7 @@ function applyOutput(doc, mask, state) {
     case 'document': {
       // `fill`, not `background`: a white Background layer under the cut-out
       // would make the whole document opaque and throw away the matte.
-      const next = app.newDocument({ width: W, height: H, name: `${doc.name} refined`, fill: 'transparent' });
+      const next = app.newDocument({ width: W, height: H, name: tr('{name} refined', { name: doc.name }), fill: 'transparent' });
       if (next) {
         const l = next.layers[0];
         ctx2d(l.canvas).drawImage(cutPixels(), 0, 0);

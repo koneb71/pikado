@@ -1,4 +1,5 @@
 import { isHEIF, heifColour } from '../io/heif-info.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Colour management: ICC profiles, conversions and soft proofing.
@@ -785,25 +786,25 @@ export function parseICC(buffer) {
   try {
     return parseICCInner(buffer);
   } catch (err) {
-    return { ok: false, reason: `the profile could not be read (${(err && err.message) || err})` };
+    return { ok: false, reason: tr('the profile could not be read ({error})', { error: (err && err.message) || err }) };
   }
 }
 
 function parseICCInner(buffer) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  if (bytes.length < 132) return { ok: false, reason: 'the file is too short to be an ICC profile' };
+  if (bytes.length < 132) return { ok: false, reason: tr('the file is too short to be an ICC profile') };
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
   const size = dv.getUint32(0);
-  if (sig(bytes, 36) !== 'acsp') return { ok: false, reason: 'this is not an ICC profile (no "acsp" signature)' };
-  if (size > bytes.length) return { ok: false, reason: `the profile claims ${size} bytes but only ${bytes.length} are present` };
+  if (sig(bytes, 36) !== 'acsp') return { ok: false, reason: tr('this is not an ICC profile (no "acsp" signature)') };
+  if (size > bytes.length) return { ok: false, reason: tr('the profile claims {size} bytes but only {count} are present', { size, count: bytes.length }) };
 
   const deviceClass = sig(bytes, 12);
   const dataSpace = sig(bytes, 16);
   const pcs = sig(bytes, 20);
 
   const tagCount = dv.getUint32(128);
-  if (132 + tagCount * 12 > bytes.length) return { ok: false, reason: 'the tag table runs past the end of the file' };
+  if (132 + tagCount * 12 > bytes.length) return { ok: false, reason: tr('the tag table runs past the end of the file') };
   /*
    * Every tag's extent is checked against the buffer HERE, once, so nothing
    * downstream has to. The offsets and sizes come from the file, which is
@@ -824,19 +825,19 @@ function parseICCInner(buffer) {
   }
   if (droppedTags) console.info(`[icc] ${droppedTags} tag(s) pointed outside the file and were ignored`);
 
-  const description = readTextTag(bytes, dv, tags.get('desc')) || 'Embedded profile';
+  const description = readTextTag(bytes, dv, tags.get('desc')) || tr('Embedded profile');
 
   if (dataSpace !== 'RGB ' && dataSpace !== 'GRAY' && dataSpace !== 'CMYK') {
-    return { ok: false, reason: `${dataSpace.trim()} profiles are not supported`, description };
+    return { ok: false, reason: tr('{space} profiles are not supported', { space: dataSpace.trim() }), description };
   }
   if (pcs !== 'XYZ ' && pcs !== 'Lab ') {
-    return { ok: false, reason: `an unexpected connection space (${pcs.trim()})`, description };
+    return { ok: false, reason: tr('an unexpected connection space ({space})', { space: pcs.trim() }), description };
   }
 
   /* --- grey --- */
   if (dataSpace === 'GRAY') {
     const trc = readCurveTag(bytes, dv, tags.get('kTRC'));
-    if (!trc) return { ok: false, reason: 'the grey profile has no tone curve (kTRC)', description };
+    if (!trc) return { ok: false, reason: tr('the grey profile has no tone curve (kTRC)'), description };
     return {
       ok: true,
       profile: {
@@ -889,8 +890,8 @@ function parseICCInner(buffer) {
       ok: false,
       description,
       reason: tags.has('A2B0') || tags.has('B2A0')
-        ? 'this is a LUT-based profile and its A2B0 table could not be read'
-        : 'the profile has no primary colorant tags (rXYZ/gXYZ/bXYZ)',
+        ? tr('this is a LUT-based profile and its A2B0 table could not be read')
+        : tr('the profile has no primary colorant tags (rXYZ/gXYZ/bXYZ)'),
     };
   }
 
@@ -900,7 +901,7 @@ function parseICCInner(buffer) {
   const rTRC = readCurveTag(bytes, dv, tags.get('rTRC'));
   const gTRC = readCurveTag(bytes, dv, tags.get('gTRC'));
   const bTRC = readCurveTag(bytes, dv, tags.get('bTRC'));
-  if (!rTRC) return { ok: false, reason: 'the profile has no tone curve (rTRC)', description };
+  if (!rTRC) return { ok: false, reason: tr('the profile has no tone curve (rTRC)'), description };
   const perChannel = !!(gTRC && bTRC
     && (JSON.stringify(rTRC.samples) !== JSON.stringify(gTRC.samples)
       || JSON.stringify(rTRC.samples) !== JSON.stringify(bTRC.samples)));

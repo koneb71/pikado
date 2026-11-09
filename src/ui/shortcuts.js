@@ -2,6 +2,7 @@ import { app } from '../core/app.js';
 import { getTool, toolGroups } from '../tools/base.js';
 import { buildBindingMap, eventBinding, getCommand, isEnabled, runCommand } from '../commands/registry.js';
 import { installRulers } from './rulers.js';
+import { msg, tr } from '../core/i18n.js';
 import './shortcuts.css';
 
 /**
@@ -39,9 +40,9 @@ const TOOL_KEYS = {
 
 const SCREEN_MODES = ['standard', 'full-menu', 'full'];
 const SCREEN_MODE_NAMES = {
-  standard: 'Standard Screen Mode',
-  'full-menu': 'Full Screen With Menu Bar',
-  full: 'Full Screen Mode',
+  standard: msg('Standard Screen Mode'),
+  'full-menu': msg('Full Screen With Menu Bar'),
+  full: msg('Full Screen Mode'),
 };
 
 let screenMode = 'standard';
@@ -266,7 +267,7 @@ export function toggleQuickMask() {
   }
   doc.touch('quick-mask');
   app.emit('doc-selection', doc);
-  app.toast(doc.quickMask ? 'Quick Mask on' : 'Quick Mask off');
+  app.toast(doc.quickMask ? tr('Quick Mask on') : tr('Quick Mask off'));
 }
 
 /** @returns {string} the current screen mode id. */
@@ -276,7 +277,7 @@ export function getScreenMode() {
 
 /** Human name of a screen mode, for tooltips. */
 export function screenModeLabel(mode = screenMode) {
-  return SCREEN_MODE_NAMES[mode] || mode;
+  return SCREEN_MODE_NAMES[mode] ? tr(SCREEN_MODE_NAMES[mode]) : mode;
 }
 
 /**

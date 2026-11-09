@@ -993,3 +993,102 @@ suite('io / opening a 16-bit file says the depth was lost', async (t) => {
    */
   t.ok(seen.some((m) => /16-bit/.test(m)), `the depth loss is reported (${seen.join(' | ') || 'nothing'})`);
 });
+
+suite('io: Export As shows no stray "null" in its readout', async (t) => {
+  // The readout was rebuilt with info.replaceChildren(…, animated ? el(…) : null).
+  // replaceChildren is the native DOM API and turns null into the text "null"
+  // — unlike el(), which skips it — so every export that was not an animated
+  // GIF showed a line reading "null" under its size estimate.
+  // Verified to fail: without the fix the readout's lines end in "null".
+  const { showExportDialog } = await import('/src/ui/dialogs/export.js');
+  const doc = t.doc(64, 48, '#ffffff');
+  const before = new Set(document.querySelectorAll('.pk-dialog-overlay'));
+  const pending = showExportDialog(doc);
+  let readout = null;
+  for (let i = 0; i < 150; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    const overlay = [...document.querySelectorAll('.pk-dialog-overlay')].find((o) => !before.has(o));
+    readout = overlay && overlay.querySelector('.pkd-readout');
+    if (readout && readout.childNodes.length) break;
+  }
+  const lines = readout ? [...readout.childNodes].map((n) => n.textContent.trim()) : [];
+  t.gt(lines.length, 0, 'the readout was filled in');
+  t.notOk(lines.includes('null'), `no line reads "null" (${JSON.stringify(lines)})`);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  await pending;
+});
+
+suite('io: names outside Latin-1 survive a PSD round trip', async (t) => {
+  // PSD's Pascal strings were written Latin-1, with '?' for anything else, so
+  // an alpha channel or a path named in Chinese came back as "?? 1" — and
+  // since new channels and paths are named in the interface language, that is
+  // every default name for a Chinese user. Alpha channels now also carry
+  // Photoshop's Unicode names (resource 1045), which the reader prefers; a
+  // Pascal string that cannot be Latin-1 is written as UTF-8 and read back.
+  // Verified to fail: before, both names came back "?? 1".
+  const doc = t.doc(40, 30, '#ffffff');
+  const chan = createCanvas(40, 30);
+  const cc = ctx2d(chan);
+  cc.fillStyle = '#000000';
+  cc.fillRect(0, 0, 40, 30);
+  cc.fillStyle = '#ffffff';
+  cc.fillRect(10, 5, 12, 9);
+  doc.alphaChannels = [
+    { id: 'chan_cn', name: '通道 1', canvas: chan },
+    { id: 'chan_fr', name: 'Café', canvas: chan },
+  ];
+  const path = createPath('路径 1');
+  path.subpaths = [{ closed: true, points: [[5, 5], [30, 5], [30, 25], [5, 25]].map(([x, y]) => ({ x, y, in: { x, y }, out: { x, y } })) }];
+  doc.paths = [path];
+  const out = await psdRoundTrip(doc);
+  t.eq(out.alphaChannels.map((c) => c.name), ['通道 1', 'Café'], 'alpha channel names, Chinese and Latin-1 alike');
+  t.eq(out.paths.map((p) => p.name), ['路径 1'], 'a path name in Chinese');
+  t.eq(t.px(out.alphaChannels[0].canvas, 15, 8), '255,255,255,255', 'and the channel still carries its pixels');
+});
+
+suite('io: a failing autosave says so once, and a refresh asks first', async (t) => {
+  // Autosave failures went to the console and nowhere else. With the
+  // browser's storage full, every save failed silently while the interface
+  // went on promising that open work would come back after a refresh — and
+  // the browser's leave-page prompt, kept for when autosave is off, stayed
+  // quiet. Verified to fail: on the old code there is no toast and no prompt.
+  const { saveDocNow, isKept } = await import('/src/io/session.js');
+  const doc = t.doc(48, 32, '#ffffff', 'Kept?');
+  doc.dirty = true;
+  const toasts = [];
+  const off = t.app.on('toast', (m) => { if (m.kind === 'warn') toasts.push(m.message); });
+  const unload = () => {
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    return e.defaultPrevented;
+  };
+  const put = IDBObjectStore.prototype.put;
+  try {
+    t.eq(await saveDocNow(doc, { force: true }), true, 'with room to spare, the save goes through');
+    t.ok(isKept(doc) && !unload(), 'and a refresh needs no warning');
+
+    IDBObjectStore.prototype.put = function () {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    };
+    t.eq(await saveDocNow(doc, { force: true }), false, 'with storage full, it fails');
+    t.eq(toasts.length, 1, 'which is said');
+    t.ok(/storage is full/.test(toasts[0] || '') && (toasts[0] || '').includes('Kept?'), 'naming the cause and the document', toasts[0]);
+    t.notOk(isKept(doc), 'the document is no longer being kept');
+    t.ok(unload(), 'so leaving the page now asks first');
+    await saveDocNow(doc, { force: true });
+    t.eq(toasts.length, 1, 'a save that fails again is not said again');
+
+    IDBObjectStore.prototype.put = put;
+    t.eq(await saveDocNow(doc, { force: true }), true, 'once there is room, the next save goes through');
+    t.ok(isKept(doc) && !unload(), 'and leaving is quiet again');
+    IDBObjectStore.prototype.put = function () { throw new DOMException('Gone.', 'UnknownError'); };
+    await saveDocNow(doc, { force: true });
+    t.eq(toasts.length, 2, 'a new failure after a success is said anew');
+    t.ok(/could not be kept/.test(toasts[1] || ''), 'with the general message for any other cause', toasts[1]);
+  } finally {
+    IDBObjectStore.prototype.put = put;
+    off();
+    doc.dirty = false;
+  }
+  await saveDocNow(doc, { force: true });
+});

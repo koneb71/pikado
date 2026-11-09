@@ -266,7 +266,14 @@
   padding: 2px 6px;
 }
 
-.pk-wc-storage { margin-left: auto; font-variant-numeric: tabular-nums; }
+.pk-wc-foot-end {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.pk-wc-storage { font-variant-numeric: tabular-nums; }
 
 @media (prefers-reduced-motion: reduce) {
   .pk-wc-tpl:hover,

@@ -2,6 +2,7 @@ import { PikaDocument } from '../core/document.js';
 import { Layer, LayerType, createGroupLayer } from '../core/layer.js';
 import { createCanvas, ctx2d, clamp, uid } from '../core/util.js';
 import { app } from '../core/app.js';
+import { msg, tr, trn } from '../core/i18n.js';
 import { DEFAULT_STYLES } from '../effects/styles.js';
 import { getPattern } from '../paint/patterns.js';
 import { rasterizeTextLayer } from '../text/text-render.js';
@@ -9,6 +10,50 @@ import { familyFromPostScriptName } from '../text/fonts.js';
 import { installedFamilies } from '../text/font-manager.js';
 import { rasterizeShapeLayer } from '../vector/path.js';
 import { SELECTION_CHANNEL_NAME, PSD_DASH_PRESETS, pikadoGradientAngle } from './psd-write.js';
+
+/**
+ * What Photoshop calls its Background layer, in the languages it ships in.
+ *
+ * A PSD marks the Background layer no other way: it is the bottom raster layer
+ * with that name. So the name is the only evidence — and a file from a
+ * localised Photoshop names it in that language, as does one Pikado wrote
+ * while its own interface was in that language (new documents name the layer
+ * `tr('Background')`). Recognising only "Background" would quietly unlock a
+ * Chinese user's background on every round trip through PSD.
+ */
+const BACKGROUND_NAMES = new Set([
+  'background', '背景', '배경', 'hintergrund', 'arrière-plan', 'fondo', 'sfondo', 'plano de fundo',
+  'фон', 'achtergrond', 'tło', 'pozadí', 'arka plan', 'háttér', 'bakgrund', 'baggrund', 'bakgrunn', 'tausta',
+]);
+
+/**
+ * A Pascal string's bytes as text. Latin-1, as PSD means them — unless they
+ * are valid UTF-8 that says something Latin-1 cannot, which is how psd-write
+ * stores a name with characters outside Latin-1 (see `pascal()` there). A
+ * Latin-1 name such as "Café" is not valid UTF-8, and a legacy name in a
+ * system code page almost never is, so both read as they always have.
+ */
+const UTF8 = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8', { fatal: true }) : null;
+function decodePascal(bytes) {
+  let latin = '';
+  let high = false;
+  for (let i = 0; i < bytes.length; i++) {
+    latin += String.fromCharCode(bytes[i]);
+    if (bytes[i] >= 0x80) high = true;
+  }
+  if (!high || !UTF8) return latin;
+  try {
+    const utf8 = UTF8.decode(bytes);
+    return /[^\u0000-\u00ff]/.test(utf8) ? utf8 : latin;
+  } catch {
+    return latin;
+  }
+}
+
+function isBackgroundName(name) {
+  const n = String(name || '').trim().toLowerCase();
+  return BACKGROUND_NAMES.has(n) || n === tr('Background').toLowerCase();
+}
 
 /**
  * Photoshop (.psd) and Photoshop Big (.psb) reader.
@@ -46,7 +91,7 @@ export class ByteReader {
   eof() { return this.pos >= this.end; }
 
   _need(n) {
-    if (this.pos + n > this.end) throw new Error('Unexpected end of PSD data');
+    if (this.pos + n > this.end) throw new Error(tr('Unexpected end of PSD data'));
   }
 
   readUint8() { this._need(1); return this.u8[this.pos++]; }
@@ -94,7 +139,7 @@ export class ByteReader {
   /** Length-prefixed string padded so (1 + length) is a multiple of `pad`. */
   readPascalString(pad = 2) {
     const len = this.readUint8();
-    const s = this.readString(len);
+    const s = decodePascal(this.readBytes(len));
     const total = len + 1;
     const rem = total % pad;
     if (rem) this.skip(pad - rem);
@@ -130,8 +175,8 @@ function readLength(r, psb) {
 /* ------------------------------------------------------------------ */
 
 const COLOR_MODE_NAMES = {
-  0: 'Bitmap', 1: 'Grayscale', 2: 'Indexed', 3: 'RGB', 4: 'CMYK',
-  7: 'Multichannel', 8: 'Duotone', 9: 'Lab',
+  0: msg('Bitmap'), 1: msg('Grayscale'), 2: msg('Indexed'), 3: 'RGB', 4: 'CMYK',
+  7: msg('Multichannel'), 8: msg('Duotone'), 9: 'Lab',
 };
 
 /** PSD blend-mode key -> Pikado blend id. Covers every documented key. */
@@ -329,13 +374,13 @@ export function projectedLayerBytes(layerCount, width, height, records = null) {
  *   what Photoshop will see.
  */
 export async function readPSD(arrayBuffer, opts = {}) {
-  if (!arrayBuffer || arrayBuffer.byteLength < 26) throw new Error('The file is too small to be a PSD');
+  if (!arrayBuffer || arrayBuffer.byteLength < 26) throw new Error(tr('The file is too small to be a PSD'));
   const r = new ByteReader(arrayBuffer);
 
   const signature = r.readString(4);
-  if (signature !== '8BPS') throw new Error('Not a Photoshop file (the 8BPS signature is missing)');
+  if (signature !== '8BPS') throw new Error(tr('Not a Photoshop file (the 8BPS signature is missing)'));
   const version = r.readUint16();
-  if (version !== 1 && version !== 2) throw new Error(`Unsupported PSD version ${version}`);
+  if (version !== 1 && version !== 2) throw new Error(tr('Unsupported PSD version {version}', { version }));
   const psb = version === 2;
   r.skip(6); // reserved
 
@@ -346,14 +391,14 @@ export async function readPSD(arrayBuffer, opts = {}) {
   const colorMode = r.readUint16();
 
   if (depth !== 8 && depth !== 16) {
-    throw new Error(`Unsupported bit depth: ${depth} bits per channel. Pikado can open 8- and 16-bit files.`);
+    throw new Error(tr('Unsupported bit depth: {depth} bits per channel. Pikado can open 8- and 16-bit files.', { depth }));
   }
   if (colorMode !== 3 && colorMode !== 1) {
-    const nm = COLOR_MODE_NAMES[colorMode] || `mode ${colorMode}`;
-    throw new Error(`Unsupported colour mode: ${nm}. Pikado can open RGB and Grayscale files.`);
+    const nm = COLOR_MODE_NAMES[colorMode] || msg('mode {number}', { number: colorMode });
+    throw new Error(tr('Unsupported colour mode: {mode}. Pikado can open RGB and Grayscale files.', { mode: nm }));
   }
-  if (width < 1 || height < 1) throw new Error('The PSD reports an empty canvas');
-  if (width * height > 120e6) throw new Error(`The image is too large to open (${width}×${height})`);
+  if (width < 1 || height < 1) throw new Error(tr('The PSD reports an empty canvas'));
+  if (width * height > 120e6) throw new Error(tr('The image is too large to open ({width}×{height})', { width, height }));
 
   const ctx = {
     buf: arrayBuffer, psb, depth, colorMode, width, height, channelCount,
@@ -376,7 +421,7 @@ export async function readPSD(arrayBuffer, opts = {}) {
    * will spend it and see banding they cannot explain.
    */
   if (depth === 16) {
-    ctx.warnings.push('This is a 16-bit file. Pikado works in 8 bits per channel, so it was converted down — tonal edits have less headroom than the original.');
+    ctx.warnings.push(tr('This is a 16-bit file. Pikado works in 8 bits per channel, so it was converted down — tonal edits have less headroom than the original.'));
   }
 
   // --- Colour mode data (palette for indexed/duotone; unused for RGB/Gray).
@@ -407,7 +452,7 @@ export async function readPSD(arrayBuffer, opts = {}) {
       parsed = parseLayerAndMask(arrayBuffer, lmStart, lmLength, ctx);
     } catch (err) {
       console.warn('[psd] layer section unreadable, falling back to the composite', err);
-      ctx.warnings.push('The layer section could not be read — the flattened image was used instead.');
+      ctx.warnings.push(tr('The layer section could not be read — the flattened image was used instead.'));
       parsed = null;
     }
   }
@@ -439,12 +484,14 @@ export async function readPSD(arrayBuffer, opts = {}) {
       const choice = await opts.onOversize({
         layers: parsed.records.length, width, height, projectedBytes: projected, budgetBytes: budget,
       });
-      if (choice === 'cancel') throw new Error('Import cancelled');
+      if (choice === 'cancel') throw new Error(tr('Import cancelled'));
       if (choice === 'flatten') {
-        ctx.warnings.push(
-          `This file's ${parsed.records.length} layers would need about `
-          + `${Math.round(projected / 1048576)} MB, so it was opened flattened.`,
-        );
+        ctx.warnings.push(trn(
+          'This file\'s {count} layer would need about {size} MB, so it was opened flattened.',
+          'This file\'s {count} layers would need about {size} MB, so it was opened flattened.',
+          parsed.records.length,
+          { size: Math.round(projected / 1048576) },
+        ));
         parsed = null;
       }
     }
@@ -454,7 +501,7 @@ export async function readPSD(arrayBuffer, opts = {}) {
       built = await buildLayers(parsed.records, doc, ctx);
     } catch (err) {
       console.warn('[psd] layer reconstruction failed', err);
-      ctx.warnings.push('Some layers could not be reconstructed — the flattened image was used instead.');
+      ctx.warnings.push(tr('Some layers could not be reconstructed — the flattened image was used instead.'));
       built = [];
     }
   }
@@ -462,7 +509,7 @@ export async function readPSD(arrayBuffer, opts = {}) {
   if (built.length) {
     doc.layers = built;
     const last = built[built.length - 1];
-    if (last && last.type === LayerType.RASTER && /^background$/i.test(last.name)) {
+    if (last && last.type === LayerType.RASTER && isBackgroundName(last.name)) {
       last.isBackground = true;
       last.locked = { ...last.locked, position: true };
     }
@@ -470,14 +517,14 @@ export async function readPSD(arrayBuffer, opts = {}) {
     // Fall back to the flattened composite stored at the end of the file.
     const canvas = await readCompositeImage(arrayBuffer, mergedStart, ctx);
     if (!canvas) {
-      throw new Error(
+      throw new Error(tr(
         'This PSD has no flattened copy inside it — it was saved with '
         + '"Maximize Compatibility" turned off — and its layers could not be '
         + 'rebuilt, so there is nothing to open. Re-saving it from Photoshop with '
         + 'that option on will fix it.',
-      );
+      ));
     }
-    const bg = new Layer({ type: LayerType.RASTER, name: 'Background', canvas });
+    const bg = new Layer({ type: LayerType.RASTER, name: tr('Background'), canvas });
     bg.isBackground = true;
     bg.locked = { ...bg.locked, position: true };
     doc.layers = [bg];
@@ -493,8 +540,16 @@ export async function readPSD(arrayBuffer, opts = {}) {
 
   if (ctx.skipped.size) {
     const names = [...ctx.skipped].slice(0, 4).join(', ');
-    const more = ctx.skipped.size > 4 ? ` and ${ctx.skipped.size - 4} more` : '';
-    app.toast(`ZIP-compressed channels could not be decoded on: ${names}${more}`, 'warn', 6000);
+    const more = ctx.skipped.size - 4;
+    const message = more > 0
+      ? trn(
+        'ZIP-compressed channels could not be decoded on: {layers} and {count} more',
+        'ZIP-compressed channels could not be decoded on: {layers} and {count} more',
+        more,
+        { layers: names },
+      )
+      : tr('ZIP-compressed channels could not be decoded on: {layers}', { layers: names });
+    app.toast(message, 'warn', 6000);
   }
   for (const w of ctx.warnings) app.toast(w, 'warn', 5000);
 
@@ -521,7 +576,7 @@ function applyDocumentExtras(doc, buf, mergedStart, ctx, resources) {
   doc.paths = (resources.paths || []).map((p, i) => {
     let name = p.name;
     if (!name && i === 0 && resources.clippingPathName) name = resources.clippingPathName;
-    return { id: uid('path'), name: name || `Path ${i + 1}`, subpaths: p.subpaths };
+    return { id: uid('path'), name: name || tr('Path {number}', { number: i + 1 }), subpaths: p.subpaths };
   });
 
   const channels = safe(() => readAlphaChannels(buf, mergedStart, ctx, resources.alphaNames || []), []);
@@ -555,6 +610,8 @@ function parseImageResources(r, ctx) {
       if (hRes > 0 && hRes < 100000) out.resolution = Math.round(hRes * 100) / 100;
     } else if (id === 1006) {
       out.alphaNames = safe(() => readAlphaNames(new ByteReader(r.buf, dataStart, size)), []);
+    } else if (id === 1045) {
+      out.unicodeAlphaNames = safe(() => readUnicodeNames(new ByteReader(r.buf, dataStart, size)), []);
     } else if (id === 1032) {
       out.guides = safe(() => readGuides(new ByteReader(r.buf, dataStart, size)), []);
     } else if (id === 1037) {
@@ -567,7 +624,20 @@ function parseImageResources(r, ctx) {
     }
     r.seek(dataStart + size + (size & 1));
   }
+  // Photoshop's Unicode names, where it wrote them, over the Latin-1 ones —
+  // as long as they name the same channels, since 1006's count is what the
+  // merged section's channel layout is read by.
+  const unicode = out.unicodeAlphaNames || [];
+  if (unicode.length && (unicode.length === out.alphaNames.length || !out.alphaNames.length)) out.alphaNames = unicode;
+  delete out.unicodeAlphaNames;
   return out;
+}
+
+/** 1045 — the alpha channel names as Unicode strings, one after another. */
+function readUnicodeNames(r) {
+  const names = [];
+  while (r.remaining >= 4 && names.length < 256) names.push(r.readUnicodeString());
+  return names;
 }
 
 /** 1006 — packed Pascal strings, one per alpha channel, no padding. */
@@ -956,13 +1026,13 @@ async function decodeChannel(buf, ch, width, height, ctx, label) {
   } else if (compression === 2 || compression === 3) {
     const inflated = await inflate(r.u8.subarray(r.pos, r.end));
     if (!inflated) {
-      ctx.skipped.add(label || 'layer');
+      ctx.skipped.add(label || tr('layer'));
       return null;
     }
     raw = inflated.length >= total ? inflated : padTo(inflated, total);
     if (compression === 3) undoPrediction(raw, width, height, ctx.depth);
   } else {
-    ctx.skipped.add(label || 'layer');
+    ctx.skipped.add(label || tr('layer'));
     return null;
   }
   return toSamples(raw, width, height, ctx.depth);
@@ -1052,7 +1122,7 @@ async function buildLayers(records, doc, ctx) {
     }
 
     if (divider === 1 || divider === 2) {
-      const group = createGroupLayer(info.name || rec.name || 'Group');
+      const group = createGroupLayer(info.name || rec.name || tr('Group'));
       applyCommon(group, rec, info);
       group.blendMode = info.sectionBlend || (rec.blendKey === 'norm' ? 'pass-through' : blendIdOf(rec.blendKey));
       group.expanded = divider === 1;
@@ -1130,7 +1200,7 @@ function revive(layer, stored, render, ctx, label) {
   if (isBlankCanvas(out) && stored && !isBlankCanvas(stored)) {
     layer.canvas = stored;
     layer.thumbDirty = true;
-    ctx.warnings.push(`"${label}" could not be re-rendered from its live data — the stored pixels were kept.`);
+    ctx.warnings.push(tr('"{name}" could not be re-rendered from its live data — the stored pixels were kept.', { name: label }));
     return;
   }
   layer.canvas = out;
@@ -1241,7 +1311,7 @@ function applyCommon(layer, rec, info) {
 async function buildLeafLayer(rec, info, doc, ctx) {
   const width = rec.right - rec.left;
   const height = rec.bottom - rec.top;
-  const label = info.name || rec.name || 'layer';
+  const label = info.name || rec.name || tr('layer');
 
   let canvas = null;
   let tile = null;
@@ -2560,7 +2630,7 @@ function decodeMergedPlanes(buf, offset, ctx, wanted) {
     }
     return out;
   }
-  if (compression !== 1) throw new Error('The flattened image uses an unsupported compression scheme');
+  if (compression !== 1) throw new Error(tr('The flattened image uses an unsupported compression scheme'));
 
   const counts = new Uint32Array(channels * height);
   for (let i = 0; i < counts.length; i++) counts[i] = psb ? r.readUint32() : r.readUint16();
@@ -2600,7 +2670,7 @@ function readAlphaChannels(buf, offset, ctx, names) {
     if (!plane) continue;
     out.push({
       id: uid('chan'),
-      name: names[i] || `Alpha ${i + 1}`,
+      name: names[i] || tr('Alpha {number}', { number: i + 1 }),
       canvas: greyCanvas(plane, ctx.width, ctx.height),
       plane,
     });

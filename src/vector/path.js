@@ -17,6 +17,7 @@
 import { uid, createCanvas, ctx2d } from '../core/util.js';
 import { Selection } from '../core/selection.js';
 import { Layer, LayerType } from '../core/layer.js';
+import { tr } from '../core/i18n.js';
 
 /* ------------------------------------------------------------------ */
 /* Model                                                               */
@@ -26,7 +27,7 @@ import { Layer, LayerType } from '../core/layer.js';
  * Create an empty path record for `doc.paths`.
  * @param {string} [name]
  */
-export function createPath(name = 'Path 1') {
+export function createPath(name = tr('Path {number}', { number: 1 })) {
   return { id: uid('path'), name, subpaths: [] };
 }
 
@@ -858,7 +859,7 @@ export function defaultShapeStyle(over = {}) {
  * Build a SHAPE layer from subpaths and rasterise it. The layer is *not*
  * inserted into the document — callers decide where it goes.
  */
-export function createShapeLayer(doc, subpaths, style = {}, name = 'Shape') {
+export function createShapeLayer(doc, subpaths, style = {}, name = tr('Shape')) {
   const l = new Layer({ type: LayerType.SHAPE, name });
   l.shape = {
     kind: 'shape',
@@ -890,6 +891,7 @@ export function uniqueLayerName(doc, base) {
 
 /**
  * Append subpaths to the active work path (or create one) in `doc.paths`.
+ * @param {string} [name] base for a new path's name; "Path 1", "Path 2"… when omitted
  * @returns {object} the path record
  */
 export function appendSubpathsToDoc(doc, subpaths, name) {
@@ -897,9 +899,9 @@ export function appendSubpathsToDoc(doc, subpaths, name) {
   if (!p) {
     const names = new Set(doc.paths.map((x) => x.name));
     let n = 1;
-    const base = name || 'Path';
-    while (names.has(`${base} ${n}`)) n++;
-    p = createPath(`${base} ${n}`);
+    const numbered = (i) => (name ? `${name} ${i}` : tr('Path {number}', { number: i }));
+    while (names.has(numbered(n))) n++;
+    p = createPath(numbered(n));
     doc.paths.push(p);
     doc.activePathId = p.id;
   }

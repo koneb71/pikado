@@ -4,6 +4,8 @@ import { el, clamp255 } from '../../core/util.js';
 import { parseColor, toHex } from '../../core/color.js';
 import { Dialog, buildForm } from '../dialog.js';
 import { BRAND } from '../brand.js';
+import { tr } from '../../core/i18n.js';
+import { languageOptions, applyLanguagePreference } from '../language.js';
 
 /**
  * Preferences. Values persist in `localStorage["pikado.prefs"]` and are pushed
@@ -15,6 +17,9 @@ const STORAGE_KEY = 'pikado.prefs';
 
 export const PREF_DEFAULTS = {
   /* General */
+  /* 'auto' follows the browser's languages; otherwise a tag from LANGUAGES in
+     src/core/i18n.js. Read once, at boot — see src/ui/language.js. */
+  language: 'auto',
   units: 'px',
   recentLimit: 10,
   confirmBeforeClosing: true,
@@ -73,6 +78,13 @@ const CATEGORIES = [
     id: 'general',
     label: 'General',
     params: [
+      {
+        key: 'language', label: 'Language', type: 'select',
+        // A function, because the names are shown exactly as given: each is
+        // written in its own language, and "Automatic" names the browser's.
+        options: () => languageOptions(),
+        hint: 'Changing it reloads Pikado. Open documents come back; their undo history does not.',
+      },
       {
         key: 'units', label: 'Default Units', type: 'select',
         options: [
@@ -356,7 +368,7 @@ export async function showPreferencesDialog(categoryId = 'general') {
   const working = allPrefs();
   // Kept pristine so the commit can tell what this dialog actually changed.
   const opened = JSON.parse(JSON.stringify(working));
-  const dlg = new Dialog({ title: 'Preferences', width: 620, className: 'pkd-prefs-dialog' });
+  const dlg = new Dialog({ title: tr('Preferences'), width: 620, className: 'pkd-prefs-dialog' });
 
   const nav = el('div.pkd-prefs-nav');
   const body = el('div.pkd-prefs-body');
@@ -367,14 +379,14 @@ export async function showPreferencesDialog(categoryId = 'general') {
       working[key] = value;
       form.refresh();
     });
-    body.replaceChildren(el('div.pkd-section', { text: current.label }), form.node);
+    body.replaceChildren(el('div.pkd-section', { text: tr(current.label) }), form.node);
   };
 
   const renderNav = () => {
     nav.replaceChildren(
       ...CATEGORIES.map((c) =>
         el('button' + (c === current ? '.active' : ''), {
-          type: 'button', text: c.label,
+          type: 'button', text: tr(c.label),
           onclick: () => { current = c; renderNav(); renderBody(); },
         })
       )
@@ -386,21 +398,22 @@ export async function showPreferencesDialog(categoryId = 'general') {
   dlg.setBody(el('div.pkd-prefs', {}, nav, body));
   dlg.setButtons([
     {
-      label: 'Reset Defaults', subtle: true,
+      label: tr('Reset Defaults'), subtle: true,
       onClick: () => {
         Object.assign(working, PREF_DEFAULTS);
         renderBody();
         return false;
       },
     },
-    { label: 'Cancel', value: null, subtle: true },
-    { label: 'OK', primary: true, onClick: (d) => { d.close({ ...working }); return false; } },
+    { label: tr('Cancel'), value: null, subtle: true },
+    { label: tr('OK'), primary: true, onClick: (d) => { d.close({ ...working }); return false; } },
   ]);
 
   const result = await dlg.open();
   if (!result) return null;
-  commitPrefs(result, opened);
-  app.toast('Preferences saved.', 'ok');
+  const patch = commitPrefs(result, opened);
+  if ('language' in patch && await applyLanguagePreference(patch.language)) return result;
+  app.toast(tr('Preferences saved.'), 'ok');
   return result;
 }
 

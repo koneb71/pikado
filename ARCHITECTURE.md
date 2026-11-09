@@ -51,6 +51,12 @@ are relative and **must include the `.js` extension**.
    for the side effect. Do not export a `register()` that main must call.
 8. Long loops over pixels: get a `willReadFrequently` context via
    `ctx2dRead(canvas)` from `src/core/util.js`.
+9. **Interface text is English, and is translated where it is shown.** Declare
+   labels, names and descriptors in plain English; text you compose for a
+   person *now* — a toast, a dialog title, a menu built on open, a `${}`
+   sentence — goes through `tr()` with `{placeholders}`. Never pass a user's
+   data through it, and never call it at module top level. See
+   [Interface language](#interface-language--srccorei18njs).
 
 ---
 
@@ -70,6 +76,116 @@ el('div.pk-row#main', { onclick: fn, style: {gap: '4px'}, text: 'Hi' }, childNod
 ```
 Attrs: `text`, `html`, `style` (object), `dataset` (object), `onclick`/`oninput`/…
 (any `on*` function becomes a listener), anything else becomes an attribute.
+
+## Interface language — `src/core/i18n.js`
+
+```js
+import { tr, trn, msg } from '../core/i18n.js';
+tr('Gaussian Blur...')                          // translate now
+tr('Layer "{name}" is locked.', { name })       // named placeholders; values are data
+tr('Delete|key')                                // a context: English shows "Delete"
+trn('{count} layer', '{count} layers', n)       // both English forms; the language picks its own
+msg('Fade {action}', { action: msg(label) })    // translated when shown; String(m) is English
+commandName('Threshold...')                     // a command's name: translated, then trimmed of its dots
+```
+
+English is the source language and the key: a string with no translation
+falls back to itself, so a half-translated language is safe to ship and the
+code reads like the interface it draws. Catalogues are JSON in
+`src/locales/<tag>.json` — data, because translations come from people a
+reviewer cannot always vet — and only the one in use is fetched.
+`LANGUAGES` lists them, each under its own name (`简体中文`, not "Chinese").
+
+The function is `tr`, not `t`: about seventy modules use `t` as a curve
+parameter or loop variable, and a shadowed translator fails only when that
+line runs.
+
+**Who translates what.** Registries are declared when their module is imported,
+before a catalogue can load, so they hold English and their renderers translate:
+
+| Declared English | Translated by |
+|---|---|
+| command `label` | `labelOf()` (a `dynamicLabel` translates itself) |
+| `MENU_TREE` labels, filter `name`, adjustment `name`, tool `name`; each Filter submenu by `FILTER_MENU_TITLES` | `menubar.js`, `toolbar.js`, `statusbar.js`, the filter runner |
+| panel `title` | `panel-host.js` |
+| ParamDescriptor `label`, `hint`, `unit`, a literal `options` array | `buildForm` and the options bar |
+| history labels (`doc.commit('Brush Stroke')`) | the History panel, through `historyLabel(entry)` |
+
+Everything composed at the moment it is shown is translated by the code that
+composes it: toasts, busy labels, dialog titles and buttons, `popupMenu` and
+`contextMenu()` items, `el()` text and titles, user-facing errors. `Dialog`,
+`popupMenu` and `el` render exactly what they are given.
+
+Three rules, each of which exists because its absence is a bug:
+
+- **Logic reads English.** `stateIcon()` picks a history icon by reading the
+  label, and the suite compares labels as English. A history entry therefore
+  stores `label` as English always; an interpolated one also keeps the `msg()`
+  it was built from (`entry.message`), because once composed the English cannot
+  be looked up as a whole. Show either with `historyLabel(entry)`.
+- **A user's data is never translated.** A layer named "Background" is not the
+  word "Background". Option lists that hold data — layer, pattern, profile,
+  font names — are given as a *function*: `buildForm` and the options bar show a
+  function's labels exactly as returned and mark them `translate="no"`, so a
+  browser's own page translation leaves them alone too. A literal array is
+  interface text and is translated. Elsewhere, put `translate: 'no'` on the
+  element yourself (the Layers panel, the tabs and the Window menu do), and give
+  a `popupMenu` item that lists a user's name `verbatim: true`.
+- **No `tr()` at module top level.** It would run before the language loads.
+  Module-level tables of interface text use a translated field (`label`, `name`)
+  or wrap entries in `msg()`, and are translated where they are drawn.
+
+Default names that become the user's — `tr('Layer {number}')`, `tr('Group
+{number}')`, `tr('Background')`, `tr('Untitled-{number}')` — are translated
+once, when created, as Photoshop names a new layer in your language. A trailing
+ellipsis is folded where the source uses only one form: "Gaussian Blur..."
+finds "Gaussian Blur", and the other way round. Where a command's name stands
+for the command — a history step, a dialog's title, a layer named after an
+adjustment — it is `commandName(label)`: the menu label translated first and
+trimmed after, never the other way round, because the bare word can be a
+different word (in Japanese the Threshold slider is しきい値, the adjustment
+2 階調化; in German the Layers panel's Fill is Fläche, Edit › Fill Fläche füllen). Key names
+in accelerators (`Ctrl`, `Shift`, `Delete`…) go through the catalogue in
+`formatAccel`, so a German menu reads `Strg+Umschalt+S`; the bindings never
+change. When one English word means two things — the Delete key is Entf in
+German, the Delete command Löschen — add a context after a bar:
+`msg('Delete|key')`. The catalogue key keeps it, so translators see which
+meaning it is; English shows only the part before the bar. The context names
+the use that differs from the word's usual one: `'Type|kind'` beside the Type
+menu, `'Stroke…|edit menu'` beside the layer style, `'Normal|blend mode'`, and
+`'Blur|filter menu'` for each Filter submenu, which in German is not the word
+for the filter inside it.
+
+**Choosing and changing.** `chooseLanguage()` takes, in order: a pin
+(`?lang=` in the address, or `<meta name="pikado-language">` in the page), the
+`language` preference (`'auto'` or a tag), the browser's languages. Chinese is
+matched by script, not region — zh-HK reads Traditional, zh-SG Simplified — and
+one script is never served for the other. `main.js` awaits the language before
+building anything, so the first paint is in it; `<html lang>` is set, which is
+what makes the browser draw Han characters in Chinese rather than Japanese
+forms (`src/ui/language.css` names the faces per script).
+
+Changing language **reloads** (`applyLanguagePreference` in
+`src/ui/language.js`): the chrome is built once and panels subscribe as they
+build, so a live repaint would need every panel to tear down cleanly. The
+session is autosaved, so documents come back; undo history does not, and the
+confirmation says so. With nothing open there is nothing to ask.
+
+`?lang=en-XA` is a pseudo-language: every translated string comes back
+accented, bracketed and 30% longer (`⟦Ĝåûššîåñ Ɓļûŕ···⟧`), so plain English on
+screen escaped translation and clipped text will clip in German. In the
+console, `pikado.i18n.missing()` lists what the current language lacks among
+the strings this session has shown.
+
+**Tooling.** `node scripts/i18n.mjs` reports coverage, what is missing and
+where it is used, stale keys, and placeholder or plural mistakes; `sync` tidies
+a catalogue. It finds strings with a small tokenizer shared with the suite
+(`scripts/i18n-extract.mjs`): `tr`/`trn`/`msg` arguments, history labels,
+registry and descriptor text fields, literal `options` arrays, and preset tables
+keyed by name. Text passed through a helper is found by following each
+function's parameters to `.commit()`, `tr()`, `msg()` or a `label`-like
+property, to a fixed point — within the helper's own file, or anywhere if it is
+exported.
 
 ## `src/core/app.js` — the singleton `app`
 
@@ -106,6 +222,10 @@ handed to `Tool.drawOverlay(ctx, view)` is **`app.viewport`, a `Viewport`** —
 `CanvasView.draw()` passes `app.viewport` straight through. So inside an overlay
 `view.toScreen(...)` / `view.scale` are the Viewport's; there is no
 `view.canvas` there.
+
+`app.i18n` is the live translator module, set by `main.js` for the console and
+the suite — import `src/core/i18n.js` in app code, but reach the running
+language through `app.i18n` from a test (see the HMR trap below).
 
 `window.pikado` is the live singleton (set at the bottom of `app.js`). Use it —
 and never a fresh `import` of `app.js` — when driving the app from the console
@@ -1528,6 +1648,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/ai/*` + `src/ui/dialogs/{ai-key,ai-consent,generative-fill,ai-guide}.js`
 - `src/select/{maxflow,grabcut,refine}.js`
 - `src/vector/path.js`, `src/text/text-render.js`
+- `src/core/i18n.js`, `src/ui/language.{js,css}`, `src/locales/*.json`, `scripts/i18n{,-extract}.mjs`
 
 **CSS:** put component styles in a sibling `.css` file and `import './x.css'`
 from your module. Vite bundles it. Never edit `src/styles.css`.
@@ -1555,8 +1676,15 @@ tests/run.js          imports /src/main.js to boot the app, then every suite
 tests/harness.js      suite() + the assertion context
 tests/suites/*.test.js  core, compositor, paint, filters, adjustments, layers,
                         effects, text-vector, io, smart, liquify, channels,
-                        select, camera-raw, animation, color-management, perf
+                        select, camera-raw, animation, color-management, i18n, perf
 ```
+
+The test page pins the interface to English with `<meta name="pikado-language"
+content="en">`, because the assertions compare English labels; without it a
+browser set to Chinese would fail every one of them. A suite that changes the
+language must put English back before it returns. The i18n suite's sweep opens
+every menu, every tool's options and a set of dialogs in the pseudo-language and
+fails on any English that escaped `tr()`.
 
 **Running it:** open `http://localhost:5174/tests/` on the dev server. Automation
 reads `window.__pikadoTests` (the full report) once `window.__pikadoTestsDone` is

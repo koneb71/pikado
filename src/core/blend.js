@@ -10,7 +10,8 @@ import { clamp255 } from './util.js';
  */
 
 export const BLEND_MODES = [
-  { id: 'normal', name: 'Normal', gco: 'source-over', group: 0 },
+  // Two names with a context: Russian says Обычные and Цветность here, Обычный and Цвет elsewhere.
+  { id: 'normal', name: 'Normal|blend mode', gco: 'source-over', group: 0 },
   { id: 'dissolve', name: 'Dissolve', gco: null, group: 0 },
 
   { id: 'darken', name: 'Darken', gco: 'darken', group: 1 },
@@ -40,7 +41,7 @@ export const BLEND_MODES = [
 
   { id: 'hue', name: 'Hue', gco: 'hue', group: 5 },
   { id: 'saturation', name: 'Saturation', gco: 'saturation', group: 5 },
-  { id: 'color', name: 'Color', gco: 'color', group: 5 },
+  { id: 'color', name: 'Color|blend mode', gco: 'color', group: 5 },
   { id: 'luminosity', name: 'Luminosity', gco: 'luminosity', group: 5 },
 ];
 

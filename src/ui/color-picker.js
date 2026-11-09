@@ -4,6 +4,7 @@ import {
   parseColor, toHex, toCss,
   rgb2hsv, hsv2rgb, rgb2cmyk, cmyk2rgb, rgb2lab, lab2rgb,
 } from '../core/color.js';
+import { tr } from '../core/i18n.js';
 import './color-picker.css';
 
 /**
@@ -117,19 +118,19 @@ function onDrag(canvas, handler) {
  * @param {{color?: any, title?: string, onChange?: (c:{r,g,b,a})=>void, showAlpha?: boolean}} opts
  * @returns {Promise<{r:number,g:number,b:number,a:number}|null>} the chosen colour, or null.
  */
-export function showColorPicker({ color = '#000000', title = 'Color Picker', onChange = null, showAlpha = true } = {}) {
+export function showColorPicker({ color = '#000000', title = tr('Color Picker'), onChange = null, showAlpha = true } = {}) {
   const original = parseColor(color);
   let cur = { ...original };
   const startHsv = rgb2hsv(cur.r, cur.g, cur.b);
   let H = startHsv.h, S = startHsv.s, V = startHsv.v;
   let webOnly = false;
 
-  const svField = el('canvas.pkcp-sv', { width: 256, height: 256, title: 'Saturation / Brightness' });
-  const hueStrip = el('canvas.pkcp-strip', { width: 18, height: 256, title: 'Hue' });
-  const alphaStrip = el('canvas.pkcp-strip', { width: 18, height: 256, title: 'Opacity' });
+  const svField = el('canvas.pkcp-sv', { width: 256, height: 256, title: tr('Saturation / Brightness') });
+  const hueStrip = el('canvas.pkcp-strip', { width: 18, height: 256, title: tr('Hue') });
+  const alphaStrip = el('canvas.pkcp-strip', { width: 18, height: 256, title: tr('Opacity') });
 
-  const beforeCell = el('button.pkcp-half', { type: 'button', title: 'Original colour — click to restore' });
-  const afterCell = el('div.pkcp-half.is-new', { title: 'New colour' });
+  const beforeCell = el('button.pkcp-half', { type: 'button', title: tr('Original colour — click to restore') });
+  const afterCell = el('div.pkcp-half.is-new', { title: tr('New colour') });
   const compare = el('div.pkcp-compare.pk-checker', {}, afterCell, beforeCell);
 
   const fields = [];
@@ -294,7 +295,7 @@ export function showColorPicker({ color = '#000000', title = 'Color Picker', onC
 
   const buildRecent = () => {
     recentRow.replaceChildren(
-      el('span.pkcp-recent-label', { text: 'Recent' }),
+      el('span.pkcp-recent-label', { text: tr('Recent') }),
       ...recentColors.map((hex) =>
         el('button.pkcp-chip', {
           type: 'button', title: hex, style: { background: hex },
@@ -302,7 +303,7 @@ export function showColorPicker({ color = '#000000', title = 'Color Picker', onC
         })
       )
     );
-    if (!recentColors.length) recentRow.appendChild(el('span.pkcp-recent-empty', { text: 'none yet' }));
+    if (!recentColors.length) recentRow.appendChild(el('span.pkcp-recent-empty', { text: tr('none yet') }));
   };
   buildRecent();
 
@@ -324,7 +325,7 @@ export function showColorPicker({ color = '#000000', title = 'Color Picker', onC
       labBlock,
       cmykBlock,
       el('div.pkcp-foot', {},
-        el('label.pk-check', {}, webCheck, el('span', { text: 'Only web colors' })),
+        el('label.pk-check', {}, webCheck, el('span', { text: tr('Only web colors') })),
         recentRow
       )
     )
@@ -333,8 +334,8 @@ export function showColorPicker({ color = '#000000', title = 'Color Picker', onC
   const dlg = new Dialog({ title, width: 566, className: 'pk-colorpicker' });
   dlg.setBody(body);
   dlg.setButtons([
-    { label: 'Cancel', value: null, subtle: true },
-    { label: 'OK', primary: true, onClick: (d) => { d.close({ ...cur }); return false; } },
+    { label: tr('Cancel'), value: null, subtle: true },
+    { label: tr('OK'), primary: true, onClick: (d) => { d.close({ ...cur }); return false; } },
   ]);
 
   const promise = dlg.open().then((result) => {
@@ -361,7 +362,7 @@ export function showColorPicker({ color = '#000000', title = 'Color Picker', onC
 export function colorSwatchButton(getColor, setColor, opts = {}) {
   const btn = el(`button.pk-color-btn.pk-checker${opts.className ? `.${opts.className}` : ''}`, {
     type: 'button',
-    title: opts.title || 'Click to choose a colour',
+    title: opts.title || tr('Click to choose a colour'),
     style: opts.size ? { width: `${opts.size}px`, height: `${opts.size}px` } : null,
   });
   const fill = el('span.pk-color-btn-fill');
@@ -377,7 +378,7 @@ export function colorSwatchButton(getColor, setColor, opts = {}) {
     const before = parseColor(getColor());
     const chosen = await showColorPicker({
       color: before,
-      title: opts.title || 'Color Picker',
+      title: opts.title || tr('Color Picker'),
       onChange: (c) => {
         if (opts.live !== false) setColor(c);
         sync();

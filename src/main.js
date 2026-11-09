@@ -3,6 +3,8 @@ import './styles.css';
 import { app } from './core/app.js';
 import { CanvasView } from './ui/canvas-view.js';
 import { el } from './core/util.js';
+import * as i18n from './core/i18n.js';
+import { tr } from './core/i18n.js';
 
 /* --- registration side effects ------------------------------------- */
 /* Each module registers itself with the relevant registry on import.   */
@@ -76,10 +78,12 @@ import { installShortcuts } from './ui/shortcuts.js';
 import { installFileDrop, openFiles } from './io/open.js';
 import { installCanvasMenu } from './ui/canvas-menu.js';
 import { installWelcome } from './ui/welcome.js';
-import { installSession, restoreSession } from './io/session.js';
-import { storageAvailable } from './io/store.js';
+import { installSession, restoreSession, isKept } from './io/session.js';
 import { installOffline } from './io/offline.js';
 import { tools } from './tools/base.js';
+import { getPref } from './ui/dialogs/preferences.js';
+import { startLanguage, reportLanguageFailure } from './ui/language.js';
+import { BRAND } from './ui/brand.js';
 
 /* ------------------------------------------------------------------ */
 
@@ -108,6 +112,12 @@ function initTools() {
 function boot() {
   const canvasEl = document.getElementById('view');
   const areaEl = document.getElementById('canvas-area');
+
+  // The live translator, for the console (`pikado.i18n.missing()`) and for the
+  // suite, which must not import a second copy of the module (see the HMR trap
+  // in ARCHITECTURE.md).
+  app.i18n = { ...i18n, missing: i18n.missingStrings };
+  document.title = `${BRAND.name} — ${tr(BRAND.tagline)}`;
 
   initTools();
 
@@ -143,10 +153,10 @@ function boot() {
   prefetchLazyChunks();
 
   // Work is continuously autosaved locally, so a refresh is not destructive and
-  // does not warrant a browser confirmation prompt. Only warn when persistence
-  // is unavailable and a document really would be lost.
+  // does not warrant a browser confirmation prompt. Only warn when a document
+  // really would be lost: autosave is off, or its saves are failing.
   window.addEventListener('beforeunload', (e) => {
-    if (!storageAvailable() && app.docs.some((d) => d.dirty)) {
+    if (app.docs.some((d) => d.dirty && !isKept(d))) {
       e.preventDefault();
       e.returnValue = '';
     }
@@ -175,7 +185,7 @@ function installBusy() {
   app.on('busy', ({ label: text, active }) => {
     depth += active ? 1 : -1;
     depth = Math.max(0, depth);
-    label.textContent = text || 'Working…';
+    label.textContent = text || tr('Working…');
     box.hidden = depth === 0;
   });
 }
@@ -270,5 +280,16 @@ function prefetchLazyChunks() {
   else setTimeout(warm, 2500);
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-else boot();
+/*
+ * The language loads before anything is built, so the first paint is already
+ * in it: every label is translated as it is drawn, and most of the chrome is
+ * drawn once. In English nothing is fetched and this settles at once.
+ */
+async function start() {
+  const failed = await startLanguage(getPref('language', 'auto'));
+  boot();
+  if (failed) reportLanguageFailure(failed);
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+else start();

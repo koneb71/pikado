@@ -14,6 +14,7 @@
  */
 
 import { app } from '../core/app.js';
+import { tr } from '../core/i18n.js';
 import { Tool, registerTool } from './base.js';
 import { Layer, LayerType } from '../core/layer.js';
 import { createCanvas, ctx2d, el, debounce } from '../core/util.js';
@@ -282,7 +283,7 @@ class TypeSession {
 }
 
 function nameFromContent(content) {
-  const first = String(content).split('\n').find((l) => l.trim()) || 'Type Layer';
+  const first = String(content).split('\n').find((l) => l.trim()) || tr('Type Layer');
   const trimmed = first.trim();
   return trimmed.length > 28 ? `${trimmed.slice(0, 28)}…` : trimmed;
 }
@@ -364,7 +365,7 @@ async function openWarpDialog() {
   const doc = app.activeDoc;
   const layer = currentTextLayer(doc);
   if (!layer) {
-    app.toast('Select or create a type layer first.');
+    app.toast(tr('Select or create a type layer first.'));
     return;
   }
   const before = structuredClone(layer.text.warp || { style: 'none', bend: 0, h: 0, v: 0 });
@@ -381,7 +382,7 @@ async function openWarpDialog() {
 
   const notNone = (s) => s.style !== 'none';
   const result = await paramDialog({
-    title: 'Warp Text',
+    title: tr('Warp Text'),
     width: 360,
     state,
     params: [
@@ -438,7 +439,7 @@ async function pasteIntoEditor(node) {
     }
   }
   if (!text) {
-    app.toast('Clipboard text is unavailable — paste with the keyboard instead.', 'warn');
+    app.toast(tr('Clipboard text is unavailable — paste with the keyboard instead.'), 'warn');
     node.focus({ preventScroll: true });
     return;
   }
@@ -666,7 +667,7 @@ class TypeToolBase extends Tool {
   createLayer(geometry) {
     const doc = this.doc;
     if (!doc) return null;
-    const layer = new Layer({ type: LayerType.TEXT, name: this.mask ? 'Type Mask' : 'Type Layer' });
+    const layer = new Layer({ type: LayerType.TEXT, name: this.mask ? tr('Type Mask') : tr('Type Layer') });
     layer.text = defaultTextProps({ ...this.textDefaults(), ...geometry });
     rasterizeTextLayer(layer, doc);
     if (!this.mask) doc.addLayer(layer);
@@ -690,7 +691,7 @@ class TypeToolBase extends Tool {
     // than showing rows that would silently act on a different layer.
     const hit = this.mask ? null : hitTextLayer(doc, e.x, e.y, this.tol());
     if (hit && hit !== currentTextLayer(doc)) {
-      items.push({ label: 'Edit Type Layer', run: () => editTextLayer(doc, hit) });
+      items.push({ label: tr('Edit Type Layer'), run: () => editTextLayer(doc, hit) });
       items.push(sep());
     }
 
@@ -702,7 +703,7 @@ class TypeToolBase extends Tool {
     // that is what they will act on.
     const active = doc.activeLayer();
     if (active && active.type === LayerType.TEXT && active.text) {
-      items.push({ header: 'Orientation' });
+      items.push({ header: tr('Orientation') });
       items.push(cmd('type.orientation.horizontal'));
       items.push(cmd('type.orientation.vertical'));
     }
@@ -711,12 +712,12 @@ class TypeToolBase extends Tool {
     if (node) {
       items.push(sep());
       items.push({
-        label: 'Select All',
+        label: tr('Select All'),
         accel: formatAccel('Ctrl+A'),
         run: () => { node.focus({ preventScroll: true }); node.select(); },
       });
       items.push({
-        label: 'Paste',
+        label: tr('Paste'),
         accel: formatAccel('Ctrl+V'),
         run: () => { pasteIntoEditor(node); },
       });

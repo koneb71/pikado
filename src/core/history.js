@@ -1,4 +1,22 @@
 import { Emitter } from './emitter.js';
+import { tr } from './i18n.js';
+
+/**
+ * A history entry's label as the interface shows it.
+ *
+ * `label` is always the English string — `stateIcon` reads it, as do the
+ * suite's assertions — and an interpolated label such as "Fade Gaussian
+ * Blur" also keeps the `msg()` it was built from, because once composed the
+ * English can no longer be looked up as a whole.
+ */
+export function historyLabel(entry) {
+  if (!entry) return '';
+  return tr(entry.message || entry.label);
+}
+
+function entryFor(label, state) {
+  return { label: String(label ?? ''), message: typeof label === 'string' ? null : label, state, thumb: null };
+}
 
 /**
  * Snapshot-based undo history.
@@ -14,7 +32,7 @@ export class History extends Emitter {
     super();
     this.doc = doc;
     this.limit = limit;
-    /** @type {{label:string, state:object, thumb:HTMLCanvasElement|null}[]} */
+    /** @type {{label:string, message:import('./i18n.js').Message|null, state:object, thumb:HTMLCanvasElement|null}[]} */
     this.states = [];
     this.index = -1;
     this.suspended = 0;
@@ -36,13 +54,16 @@ export class History extends Emitter {
     this.suspended = Math.max(0, this.suspended - 1);
   }
 
-  /** Push the document's *current* state as a new history entry. */
+  /**
+   * Push the document's *current* state as a new history entry.
+   * @param {string|import('./i18n.js').Message} label English, or a `msg()` when interpolated
+   */
   record(label) {
     if (this.suspended) return;
     const state = this.doc.captureState();
     // Drop the redo tail.
     if (this.index < this.states.length - 1) this.states.length = this.index + 1;
-    this.states.push({ label, state, thumb: null });
+    this.states.push(entryFor(label, state));
     if (this.states.length > this.limit) this.states.shift();
     this.index = this.states.length - 1;
     this.emit('change');
@@ -51,7 +72,7 @@ export class History extends Emitter {
   /** Replace the newest entry — used when a drag produces many micro-updates. */
   replaceTop(label) {
     if (this.suspended || this.index < 0) return this.record(label);
-    this.states[this.index] = { label, state: this.doc.captureState(), thumb: null };
+    this.states[this.index] = entryFor(label, this.doc.captureState());
     this.emit('change');
   }
 

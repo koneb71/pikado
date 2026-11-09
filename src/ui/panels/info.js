@@ -3,6 +3,7 @@ import { app } from '../../core/app.js';
 import { el, rafThrottle } from '../../core/util.js';
 import { rgb2cmyk, toHex } from '../../core/color.js';
 import { getComposite } from '../../render/compositor.js';
+import { msg, tr } from '../../core/i18n.js';
 import './panels.css';
 import './info.css';
 
@@ -13,37 +14,37 @@ import './info.css';
  */
 
 const TOOL_HINTS = {
-  move: 'Alt-drag duplicates · Shift constrains to 45° · arrows nudge',
-  artboard: 'Drag to size · Alt-drag duplicates',
-  marquee: 'Shift adds · Alt subtracts · Shift+Alt intersects · Space repositions while drawing',
-  lasso: 'Shift adds · Alt subtracts · Alt-click for straight segments',
-  wand: 'Shift adds · Alt subtracts · adjust Tolerance in the options bar',
-  'quick-select': 'Shift adds · Alt subtracts · [ and ] resize the brush',
-  crop: 'Shift constrains the ratio · Alt resizes from the centre · Enter commits',
-  eyedropper: 'Alt-click samples into the background colour',
-  'color-sampler': 'Click to place a sampler · Alt-click removes one',
-  ruler: 'Drag to measure · Shift constrains to 45°',
-  brush: 'Alt picks a colour · [ and ] resize · Shift-click draws a straight line',
-  pencil: 'Alt picks a colour · Shift-click draws a straight line',
-  eraser: '[ and ] resize · Shift-click erases a straight line',
-  'clone-stamp': 'Alt-click sets the clone source',
-  'pattern-stamp': 'Choose a pattern in the options bar',
-  healing: 'Alt-click sets the source · [ and ] resize',
-  gradient: 'Shift constrains the angle · Alt swaps the direction',
-  bucket: 'Alt fills with the background colour · Tolerance in the options bar',
-  blur: '[ and ] resize the tip',
-  dodge: 'Alt temporarily switches Dodge and Burn',
-  pen: 'Alt converts an anchor · Ctrl/Cmd temporarily selects points · Enter closes',
-  type: 'Ctrl/Cmd-Enter commits · Escape cancels · drag to make a text box',
-  'path-select': 'Shift adds to the selection · Alt-drag duplicates',
-  shape: 'Shift constrains proportions · Alt draws from the centre',
-  zoom: 'Alt zooms out · double-click for 100%',
-  hand: 'Hold Space with any tool to pan',
+  move: msg('Alt-drag duplicates · Shift constrains to 45° · arrows nudge'),
+  artboard: msg('Drag to size · Alt-drag duplicates'),
+  marquee: msg('Shift adds · Alt subtracts · Shift+Alt intersects · Space repositions while drawing'),
+  lasso: msg('Shift adds · Alt subtracts · Alt-click for straight segments'),
+  wand: msg('Shift adds · Alt subtracts · adjust Tolerance in the options bar'),
+  'quick-select': msg('Shift adds · Alt subtracts · [ and ] resize the brush'),
+  crop: msg('Shift constrains the ratio · Alt resizes from the centre · Enter commits'),
+  eyedropper: msg('Alt-click samples into the background colour'),
+  'color-sampler': msg('Click to place a sampler · Alt-click removes one'),
+  ruler: msg('Drag to measure · Shift constrains to 45°'),
+  brush: msg('Alt picks a colour · [ and ] resize · Shift-click draws a straight line'),
+  pencil: msg('Alt picks a colour · Shift-click draws a straight line'),
+  eraser: msg('[ and ] resize · Shift-click erases a straight line'),
+  'clone-stamp': msg('Alt-click sets the clone source'),
+  'pattern-stamp': msg('Choose a pattern in the options bar'),
+  healing: msg('Alt-click sets the source · [ and ] resize'),
+  gradient: msg('Shift constrains the angle · Alt swaps the direction'),
+  bucket: msg('Alt fills with the background colour · Tolerance in the options bar'),
+  blur: msg('[ and ] resize the tip'),
+  dodge: msg('Alt temporarily switches Dodge and Burn'),
+  pen: msg('Alt converts an anchor · Ctrl/Cmd temporarily selects points · Enter closes'),
+  type: msg('Ctrl/Cmd-Enter commits · Escape cancels · drag to make a text box'),
+  'path-select': msg('Shift adds to the selection · Alt-drag duplicates'),
+  shape: msg('Shift constrains proportions · Alt draws from the centre'),
+  zoom: msg('Alt zooms out · double-click for 100%'),
+  hand: msg('Hold Space with any tool to pan'),
 };
 
 function hintFor(tool) {
-  if (!tool) return 'Space pans · Ctrl/Cmd + wheel zooms';
-  return TOOL_HINTS[tool.id] || TOOL_HINTS[tool.group] || 'Space pans · Ctrl/Cmd + wheel zooms';
+  if (!tool) return tr('Space pans · Ctrl/Cmd + wheel zooms');
+  return tr(TOOL_HINTS[tool.id] || TOOL_HINTS[tool.group] || 'Space pans · Ctrl/Cmd + wheel zooms');
 }
 
 /** Read one composite pixel, or null when it is outside the canvas. */
@@ -92,10 +93,10 @@ registerPanel({
 
     const sizeBlock = el('div.pki-block');
     const dimW = val('W :'); const dimH = val('H :');
-    const dimLabel = el('div.pki-sub', { text: 'Selection' });
+    const dimLabel = el('div.pki-sub', { text: tr('Selection') });
     sizeBlock.append(dimLabel, dimW.row, dimH.row);
 
-    const docLine = el('div.pki-doc', { text: 'No document' });
+    const docLine = el('div.pki-doc', { text: tr('No document') });
     const samplerHost = el('div.pki-samplers');
     const hintLine = el('div.pki-hint');
 
@@ -117,7 +118,7 @@ registerPanel({
         hexRow.v.textContent = '—';
         posX.v.textContent = posY.v.textContent = '—';
         dimW.v.textContent = dimH.v.textContent = '—';
-        docLine.textContent = 'No document';
+        docLine.textContent = tr('No document');
         samplerHost.replaceChildren();
         hintLine.textContent = hintFor(app.tool);
         return;
@@ -148,16 +149,16 @@ registerPanel({
       posY.v.textContent = cursor ? String(py) : '—';
 
       if (dragFrom && cursor) {
-        dimLabel.textContent = 'Drag';
+        dimLabel.textContent = tr('Drag');
         dimW.v.textContent = String(Math.round(Math.abs(cursor.x - dragFrom.x)));
         dimH.v.textContent = String(Math.round(Math.abs(cursor.y - dragFrom.y)));
       } else if (doc.selection.active) {
         const b = doc.selection.bounds();
-        dimLabel.textContent = 'Selection';
+        dimLabel.textContent = tr('Selection');
         dimW.v.textContent = b ? String(b.width) : '0';
         dimH.v.textContent = b ? String(b.height) : '0';
       } else {
-        dimLabel.textContent = 'Selection';
+        dimLabel.textContent = tr('Selection');
         dimW.v.textContent = '—';
         dimH.v.textContent = '—';
       }
@@ -170,7 +171,7 @@ registerPanel({
           const sc = samplePixel(doc, Math.floor(s.x), Math.floor(s.y));
           const text = sc
             ? `#${i + 1}  R ${sc.r}  G ${sc.g}  B ${sc.b}   (${Math.round(s.x)}, ${Math.round(s.y)})`
-            : `#${i + 1}  — outside the canvas`;
+            : tr('#{number}  — outside the canvas', { number: i + 1 });
           const swatch = el('span.pki-sampler-chip', {
             style: { background: sc ? `rgb(${sc.r},${sc.g},${sc.b})` : 'transparent' },
           });

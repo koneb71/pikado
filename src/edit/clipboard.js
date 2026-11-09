@@ -5,6 +5,7 @@ import { compositeDocument, flattenLayers } from '../render/compositor.js';
 import { Layer, LayerType } from '../core/layer.js';
 import { nextLayerName } from '../layers/ops.js';
 import { toCss } from '../core/color.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Edit > Cut / Copy / Copy Merged / Paste / Paste Into / Paste Outside / Clear.
@@ -121,7 +122,7 @@ function fitToDocument(doc, src) {
 function reportFit(art, clip) {
   if (art === clip.canvas) return;
   const percent = Math.round((art.width / clip.canvas.width) * 100);
-  app.toast(`Pasted at ${percent}% so the whole image fits the canvas`, 'ok', 3200);
+  app.toast(tr('Pasted at {percent}% so the whole image fits the canvas', { percent }), 'ok', 3200);
 }
 
 /* ------------------------------------------------------------------ */
@@ -137,18 +138,18 @@ export function copy(doc) {
   const layer = doc.activeLayer();
   const src = sourceCanvas(doc, layer);
   if (!src) {
-    app.toast('This layer has no pixels to copy.');
+    app.toast(tr('This layer has no pixels to copy.'));
     return false;
   }
   const bounds = selectionBounds(doc);
   if (!bounds) {
-    app.toast('The selection is empty.');
+    app.toast(tr('The selection is empty.'));
     return false;
   }
   const canvas = extractRegion(doc, src, bounds);
   storeClipboard(doc, canvas, bounds);
   writeSystemClipboard(canvas);
-  app.toast(`Copied ${bounds.width} × ${bounds.height} px`, 'ok', 1400);
+  app.toast(tr('Copied {width} × {height} px', { width: bounds.width, height: bounds.height }), 'ok', 1400);
   return true;
 }
 
@@ -157,13 +158,13 @@ export function copyMerged(doc) {
   if (!doc) return false;
   const bounds = selectionBounds(doc);
   if (!bounds) {
-    app.toast('The selection is empty.');
+    app.toast(tr('The selection is empty.'));
     return false;
   }
   const canvas = extractRegion(doc, compositeDocument(doc), bounds);
   storeClipboard(doc, canvas, bounds);
   writeSystemClipboard(canvas);
-  app.toast(`Copied merged ${bounds.width} × ${bounds.height} px`, 'ok', 1400);
+  app.toast(tr('Copied merged {width} × {height} px', { width: bounds.width, height: bounds.height }), 'ok', 1400);
   return true;
 }
 
@@ -185,16 +186,16 @@ export function clear(doc, { label = 'Clear' } = {}) {
   if (!doc) return false;
   const layer = doc.activeLayer();
   if (!layer) {
-    app.toast('No layer selected.');
+    app.toast(tr('No layer selected.'));
     return false;
   }
   if (layer.locked.all || layer.locked.pixels) {
-    app.toast(`Layer "${layer.name}" is locked.`);
+    app.toast(tr('Layer "{name}" is locked.', { name: layer.name }));
     return false;
   }
   const onMask = !!(layer.editingMask && layer.mask);
   if (!onMask && !layer.canvas) {
-    app.toast('This layer has no pixels to clear.');
+    app.toast(tr('This layer has no pixels to clear.'));
     return false;
   }
 
@@ -288,7 +289,7 @@ export async function paste(doc) {
   let clip = app.clipboard;
   if (!clip) clip = await readSystemClipboard();
   if (!clip) {
-    app.toast('The clipboard is empty.');
+    app.toast(tr('The clipboard is empty.'));
     return null;
   }
   return addPastedLayer(doc, clip, { label: 'Paste' });
@@ -300,16 +301,16 @@ export async function pasteInto(doc, { outside = false } = {}) {
   let clip = app.clipboard;
   if (!clip) clip = await readSystemClipboard();
   if (!clip) {
-    app.toast('The clipboard is empty.');
+    app.toast(tr('The clipboard is empty.'));
     return null;
   }
   if (!doc.selection.active) {
-    app.toast('Make a selection first.');
+    app.toast(tr('Make a selection first.'));
     return null;
   }
   const b = doc.selection.bounds();
   if (!b) {
-    app.toast('The selection is empty.');
+    app.toast(tr('The selection is empty.'));
     return null;
   }
 
@@ -414,9 +415,9 @@ window.addEventListener('paste', async (e) => {
     const img = await decodeImage(file);
     const clip = adoptImage(img);
     if (app.activeDoc) addPastedLayer(app.activeDoc, clip, { label: 'Paste' });
-    else app.addDocument((await import('../core/document.js')).PikaDocument.fromImage(img, 'Pasted'));
+    else app.addDocument((await import('../core/document.js')).PikaDocument.fromImage(img, tr('Pasted')));
   } catch (err) {
-    app.toast('Could not read the pasted image.', 'error');
+    app.toast(tr('Could not read the pasted image.'), 'error');
   }
 });
 

@@ -1,6 +1,7 @@
 import { PikaDocument } from '../core/document.js';
 import { LayerType, createRasterLayer } from '../core/layer.js';
 import { uid, createCanvas, ctx2d, loadImage } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { getComposite, compositeList } from '../render/compositor.js';
 import { fontStack } from '../text/fonts.js';
 import { hasStyles, applyLayerStyles } from '../effects/styles.js';
@@ -46,11 +47,11 @@ function lengthOf(value) {
  * @param {string} [name] document name
  * @returns {Promise<PikaDocument>}
  */
-export async function importSVG(text, name = 'Drawing') {
+export async function importSVG(text, name = tr('Drawing')) {
   const parsed = new DOMParser().parseFromString(text, 'image/svg+xml');
-  if (parsed.getElementsByTagName('parsererror').length) throw new Error('The SVG file could not be parsed');
+  if (parsed.getElementsByTagName('parsererror').length) throw new Error(tr('The SVG file could not be parsed'));
   const svg = parsed.documentElement;
-  if (!svg || svg.nodeName.toLowerCase() !== 'svg') throw new Error('The file does not contain an <svg> element');
+  if (!svg || svg.nodeName.toLowerCase() !== 'svg') throw new Error(tr('The file does not contain an <svg> element'));
 
   const viewBox = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
   const hasViewBox = viewBox.length === 4 && viewBox.every(Number.isFinite) && viewBox[2] > 0 && viewBox[3] > 0;

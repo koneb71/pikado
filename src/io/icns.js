@@ -1,4 +1,5 @@
 import { createCanvas, ctx2d } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Apple icon files (`.icns`) — the format of every macOS app and folder icon.
@@ -61,7 +62,7 @@ export function isICNS(bytes) {
  */
 export function icnsEntries(bytes) {
   const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  if (!isICNS(b)) throw new Error('this is not an ICNS file');
+  if (!isICNS(b)) throw new Error(tr('this is not an ICNS file'));
   const end = Math.min(readU32(b, 4), b.length);
   const entries = [];
   let at = 8;
@@ -116,8 +117,8 @@ export async function readICNS(bytes) {
     }
   }
   throw new Error(entries.length
-    ? 'this icon has no image Pikado can decode'
-    : 'this ICNS file has no icon entries');
+    ? tr('this icon has no image Pikado can decode')
+    : tr('this ICNS file has no icon entries'));
 }
 
 async function decodeBitmap(data, type) {
@@ -224,7 +225,7 @@ function renderSquare(source, size) {
 
 function pngOf(canvas) {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not encode an icon size as PNG'))), 'image/png');
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error(tr('Could not encode an icon size as PNG')))), 'image/png');
   });
 }
 

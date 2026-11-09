@@ -166,7 +166,7 @@ registerFilter({
   dialogWidth: 380,
   params: [
     {
-      key: 'shape', label: 'Type', type: 'radio', default: 'blocks',
+      key: 'shape', label: 'Type|kind', type: 'radio', default: 'blocks',
       options: [{ value: 'blocks', label: 'Blocks' }, { value: 'pyramids', label: 'Pyramids' }],
     },
     { key: 'size', label: 'Size', type: 'slider', min: 2, max: 255, step: 1, default: 30, unit: 'px' },

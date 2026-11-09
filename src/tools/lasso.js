@@ -2,6 +2,7 @@ import { registerTool } from './base.js';
 import { SelectionTool, strokeDashedPoly, toScreenPoints } from './marquee.js';
 import { getComposite } from '../render/compositor.js';
 import { ctx2dRead } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 
 /**
  * Lasso family: freehand, polygonal and magnetic.
@@ -51,8 +52,8 @@ function drawCloseMarker(ctx, pt) {
  */
 function inProgressMenu(tool, count) {
   return [
-    { label: 'Close Path', accel: 'Enter', disabled: count < 3, run: () => tool.close() },
-    { label: 'Cancel', accel: 'Esc', run: () => tool.cancel() },
+    { label: tr('Close Path'), accel: 'Enter', disabled: count < 3, run: () => tool.close() },
+    { label: tr('Cancel'), accel: 'Esc', run: () => tool.cancel() },
   ];
 }
 

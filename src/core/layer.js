@@ -1,4 +1,5 @@
 import { uid, createCanvas, cloneCanvas, ctx2d } from './util.js';
+import { tr } from './i18n.js';
 
 /**
  * Deep-copying a Smart Object's embedded source needs PikaDocument, which
@@ -63,7 +64,7 @@ export class Layer {
   constructor(opts = {}) {
     this.id = opts.id || uid('layer');
     this.type = opts.type || LayerType.RASTER;
-    this.name = opts.name || 'Layer';
+    this.name = opts.name || tr('Layer');
     this.visible = opts.visible !== false;
     this.opacity = opts.opacity == null ? 1 : opts.opacity;
     this.fillOpacity = opts.fillOpacity == null ? 1 : opts.fillOpacity;
@@ -558,11 +559,11 @@ function num(v, fallback = 0) {
 /* Factory helpers                                                   */
 /* ---------------------------------------------------------------- */
 
-export function createRasterLayer(w, h, name = 'Layer') {
+export function createRasterLayer(w, h, name = tr('Layer')) {
   return new Layer({ type: LayerType.RASTER, name, canvas: createCanvas(w, h) });
 }
 
-export function createGroupLayer(name = 'Group') {
+export function createGroupLayer(name = tr('Group')) {
   return new Layer({ type: LayerType.GROUP, name, children: [], blendMode: 'pass-through' });
 }
 

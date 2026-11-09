@@ -10,6 +10,7 @@
  */
 
 import { app } from '../core/app.js';
+import { tr } from '../core/i18n.js';
 import { registerTool } from './base.js';
 import { LayerType } from '../core/layer.js';
 import { snapPoint, clearSnapLines } from '../core/snapping.js';
@@ -329,11 +330,11 @@ class ShapeToolBase extends VectorTool {
     const row = (id, over) => layerRow(doc, layer, id, over);
     return [
       doc.activeLayer() === layer ? null : { header: layer.name },
-      row('layer.rasterize.shape', { label: 'Rasterize Layer' }),
+      row('layer.rasterize.shape', { label: tr('Rasterize Layer') }),
       row('layer.style.options'),
       sep(),
       row('layer.duplicate'),
-      row('layer.delete', { label: 'Delete Layer' }),
+      row('layer.delete', { label: tr('Delete Layer') }),
       sep(),
       row('layer.arrange.front'),
       row('layer.arrange.back'),

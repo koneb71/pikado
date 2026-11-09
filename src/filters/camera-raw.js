@@ -1,6 +1,7 @@
 import { registerFilter, makeRandom } from './registry.js';
 import { gaussianBlurBuffer } from './blur.js';
 import { curveParam, curveToLUT, isIdentityCurve, defaultCurves } from '../ui/curve-editor.js';
+import { msg } from '../core/i18n.js';
 
 /**
  * Camera Raw.
@@ -1080,9 +1081,9 @@ const slider = (key, label, min, max, def, unit, step) => ({
 
 const hslRows = [];
 for (const b of BANDS) {
-  hslRows.push(slider(`${b.key}Hue`, `${b.label} Hue`, -100, 100, 0));
-  hslRows.push(slider(`${b.key}Sat`, `${b.label} Saturation`, -100, 100, 0));
-  hslRows.push(slider(`${b.key}Lum`, `${b.label} Luminance`, -100, 100, 0));
+  hslRows.push(slider(`${b.key}Hue`, msg('{color} Hue', { color: msg(b.label) }), -100, 100, 0));
+  hslRows.push(slider(`${b.key}Sat`, msg('{color} Saturation', { color: msg(b.label) }), -100, 100, 0));
+  hslRows.push(slider(`${b.key}Lum`, msg('{color} Luminance', { color: msg(b.label) }), -100, 100, 0));
 }
 
 registerFilter({

@@ -12,6 +12,7 @@ import { messageFor, mapThrown, GEN_ERRORS } from '../../ai/errors.js';
 import { showAiKeyDialog } from './ai-key.js';
 import { showAiConsentDialog } from './ai-consent.js';
 import { planFrame } from '../../ai/geometry.js';
+import { tr } from '../../core/i18n.js';
 
 /**
  * The Generative Fill dialog.
@@ -36,24 +37,24 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
   if (!doc) return false;
   const bounds = doc.selection.bounds();
   if (!doc.selection.mask || !bounds || !bounds.width) {
-    app.toast('Select the area to fill first.', 'warn');
+    app.toast(tr('Select the area to fill first.'), 'warn');
     return false;
   }
 
   const providers = listProviders();
   if (!providers.length) {
-    app.toast('No image provider is available.', 'error');
+    app.toast(tr('No image provider is available.'), 'error');
     return false;
   }
   let providerId = lastProviderId || (getProvider('openai') ? 'openai' : providers[0].id);
 
-  const dialog = new Dialog({ title: 'Generative Fill', width: 480, className: 'pk-genfill' });
+  const dialog = new Dialog({ title: tr('Generative Fill'), width: 480, className: 'pk-genfill' });
   let controller = null;
   let busy = false;
 
   const prompt = el('textarea.pk-input', {
     rows: 3,
-    placeholder: 'Describe what should be there — for example, a stone path leading into trees',
+    placeholder: tr('Describe what should be there — for example, a stone path leading into trees'),
     spellcheck: 'true',
   });
   prompt.value = lastPrompt;
@@ -70,7 +71,7 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
    * value, so they cannot disagree.
    */
   const effortSel = el('select.pk-input');
-  const effortRow = el('div.pk-field', {}, el('label', { text: 'Effort' }), effortSel);
+  const effortRow = el('div.pk-field', {}, el('label', { text: tr('Effort') }), effortSel);
   effortSel.addEventListener('change', () => {
     const p = getProvider(providerSel.value);
     setEffort(providerSel.value, getModel(p), effortSel.value);
@@ -88,22 +89,22 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
     const choices = effortChoices(p, modelId);
     effortRow.hidden = !choices.length;
     if (choices.length) {
-      effortRow.querySelector('label').textContent = (p && p.effortLabel) || 'Effort';
-      effortSel.replaceChildren(...choices.map((c) => el('option', { value: c.value, text: c.label })));
+      effortRow.querySelector('label').textContent = (p && p.effortLabel) ? tr(p.effortLabel) : tr('Effort');
+      effortSel.replaceChildren(...choices.map((c) => el('option', { value: c.value, text: tr(c.label) })));
       effortSel.value = getEffort(p, modelId);
     }
     const size = (p && p.sizes && p.sizes[0]) || 1024;
     const frame = planFrame(bounds, doc.width, doc.height, { size });
     const region = Math.max(frame.crop.width, frame.crop.height);
     const bits = [];
-    if (p && p.needsKey && !hasCredential(p.id)) bits.push(`No ${p.name} key set yet — you will be asked for one.`);
+    if (p && p.needsKey && !hasCredential(p.id)) bits.push(tr('No {provider} key set yet — you will be asked for one.', { provider: p.name }));
     if (frame.scale < 1) {
-      bits.push(`Generating at ${size}x${size} for a ${region}px region, so the fill will be softer than the rest of the image.`);
+      bits.push(tr('Generating at {size}x{size} for a {region}px region, so the fill will be softer than the rest of the image.', { size, region }));
     }
-    if (p && !p.needsKey) bits.push('This provider runs without a key and sends nothing anywhere.');
+    if (p && !p.needsKey) bits.push(tr('This provider runs without a key and sends nothing anywhere.'));
     // Which model is about to be billed, said where it is spent rather than
     // only in the settings dialog it was chosen in.
-    if (modelId) bits.push(`Using ${modelId} — change it in Edit > AI Settings.`);
+    if (modelId) bits.push(tr('Using {model} — change it in Edit > AI Settings.', { model: modelId }));
     note.textContent = bits.join(' ');
   };
   providerSel.addEventListener('change', () => { providerId = providerSel.value; syncNote(); });
@@ -121,7 +122,7 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
   };
 
   const fail = (err) => {
-    const mapped = mapThrown(err, (getProvider(providerSel.value) || {}).name || 'the provider');
+    const mapped = mapThrown(err, (getProvider(providerSel.value) || {}).name || tr('the provider'));
     const { text, action } = messageFor(mapped);
     // Scrubbed even though provider errors are supposed to be rewritten: a 401
     // body that echoes the Authorization header back is a real thing, and this
@@ -140,7 +141,7 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
     const provider = getProvider(providerSel.value);
     if (!provider) return;
     const text = prompt.value.trim();
-    if (!text) { app.toast('Describe what should be there first.', 'warn'); return; }
+    if (!text) { app.toast(tr('Describe what should be there first.'), 'warn'); return; }
     lastPrompt = text;
     lastProviderId = provider.id;
     const model = getModel(provider);
@@ -158,11 +159,11 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
 
     controller = new AbortController();
     const started = Date.now();
-    setBusy(true, 'Generating…');
+    setBusy(true, tr('Generating…'));
     const tick = setInterval(() => {
       if (!busy) return;
       const s = Math.round((Date.now() - started) / 1000);
-      status.textContent = `Generating… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      status.textContent = tr('Generating… {time}', { time: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` });
     }, 1000);
 
     try {
@@ -173,7 +174,7 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
       clearInterval(tick);
       if (err && err.code === GEN_ERRORS.ABORTED) {
         // Not an error, but the user should know it may still have cost them.
-        app.toast(`Stopped. ${provider.name} may still charge for a generation already under way.`, 'info', 5000);
+        app.toast(tr('Stopped. {provider} may still charge for a generation already under way.', { provider: provider.name }), 'info', 5000);
         setBusy(false, '');
         return;
       }
@@ -184,21 +185,21 @@ export async function showGenerativeFillDialog(doc = app.activeDoc) {
   };
 
   const idleButtons = [
-    { label: 'Cancel', value: false, subtle: true },
-    { label: 'Generate', primary: true, onClick: () => { generate(); return false; } },
+    { label: tr('Cancel'), value: false, subtle: true },
+    { label: tr('Generate'), primary: true, onClick: () => { generate(); return false; } },
   ];
   const busyButtons = [
-    { label: 'Cancel', primary: true, onClick: () => { if (controller) controller.abort(new DOMException('cancelled', 'AbortError')); return false; } },
+    { label: tr('Cancel'), primary: true, onClick: () => { if (controller) controller.abort(new DOMException('cancelled', 'AbortError')); return false; } },
   ];
   const keyButtons = [
-    { label: 'Cancel', value: false, subtle: true },
-    { label: 'Change key…', onClick: async () => { await showAiKeyDialog(providerSel.value); syncNote(); return false; } },
-    { label: 'Try again', primary: true, onClick: () => { generate(); return false; } },
+    { label: tr('Cancel'), value: false, subtle: true },
+    { label: tr('Change key…'), onClick: async () => { await showAiKeyDialog(providerSel.value); syncNote(); return false; } },
+    { label: tr('Try again'), primary: true, onClick: () => { generate(); return false; } },
   ];
 
   dialog.setBody(
-    el('div.pk-field', {}, el('label', { text: 'Describe the fill' }), prompt),
-    el('div.pk-field', {}, el('label', { text: 'Provider' }), providerSel),
+    el('div.pk-field', {}, el('label', { text: tr('Describe the fill') }), prompt),
+    el('div.pk-field', {}, el('label', { text: tr('Provider') }), providerSel),
     effortRow,
     note,
     bar,

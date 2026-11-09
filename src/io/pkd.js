@@ -2,6 +2,7 @@ import { PikaDocument } from '../core/document.js';
 import { getProfile, TRC, WHITE_POINTS } from '../color/icc.js';
 import { Layer, LayerType } from '../core/layer.js';
 import { createCanvas, ctx2d, loadImage } from '../core/util.js';
+import { tr } from '../core/i18n.js';
 import { fontTableFor } from '../text/font-table.js';
 
 /**
@@ -38,7 +39,7 @@ function isByteArray(v) {
 
 function canvasToPNG(canvas) {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not encode a layer as PNG'))), 'image/png');
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error(tr('Could not encode a layer as PNG')))), 'image/png');
   });
 }
 
@@ -169,7 +170,7 @@ function encodeProfile(profile) {
       : null;
   return {
     id: 'embedded',
-    name: profile.name || 'Embedded profile',
+    name: profile.name || tr('Embedded profile'),
     space: profile.space || 'rgb',
     white: profile.white ? [...profile.white] : null,
     matrix: profile.matrix ? [...profile.matrix] : null,
@@ -187,7 +188,7 @@ function decodeProfile(stored) {
   const gamma = /Gamma ([\d.]+)/.exec(stored.gammaName || '');
   return {
     id: 'embedded',
-    name: stored.name || 'Embedded profile',
+    name: stored.name || tr('Embedded profile'),
     space: stored.space || 'rgb',
     white: stored.white || WHITE_POINTS.D50,
     matrix: stored.matrix || null,
@@ -327,15 +328,15 @@ async function pngToCanvas(bytes) {
  */
 export async function loadPKD(arrayBuffer) {
   const u8 = new Uint8Array(arrayBuffer);
-  if (u8.length < 12) throw new Error('The project file is empty');
+  if (u8.length < 12) throw new Error(tr('The project file is empty'));
   let magic = '';
   for (let i = 0; i < 8; i++) magic += String.fromCharCode(u8[i]);
-  if (magic !== MAGIC) throw new Error('Not a Pikado project file');
+  if (magic !== MAGIC) throw new Error(tr('Not a Pikado project file'));
 
   const manifestLength = new DataView(arrayBuffer).getUint32(8, true);
-  if (12 + manifestLength > u8.length) throw new Error('The project file is truncated');
+  if (12 + manifestLength > u8.length) throw new Error(tr('The project file is truncated'));
   const manifest = JSON.parse(new TextDecoder().decode(u8.subarray(12, 12 + manifestLength)));
-  if (manifest.format !== 'pikado') throw new Error('Unrecognised project manifest');
+  if (manifest.format !== 'pikado') throw new Error(tr('Unrecognised project manifest'));
 
   const base = 12 + manifestLength;
   const decoded = await Promise.all((manifest.blobs || []).map(async (entry) => {
@@ -434,14 +435,14 @@ export async function loadPKD(arrayBuffer) {
     } else if (out.canvas) {
       // Projects written before smart objects were non-destructive stored only
       // a flattened copy — promote it so the layer still has editable contents.
-      layers = [new Layer({ type: LayerType.RASTER, name: 'Layer 1', canvas: out.canvas })];
+      layers = [new Layer({ type: LayerType.RASTER, name: tr('Layer {number}', { number: 1 }), canvas: out.canvas })];
     }
     if (!layers || !layers.length) return out;
     const w = (source && source.width) || out.sourceWidth || out.width || layers[0].canvas.width;
     const h = (source && source.height) || out.sourceHeight || out.height || layers[0].canvas.height;
     const sd = new PikaDocument({
       width: w, height: h,
-      name: (source && source.name) || out.name || 'Contents',
+      name: (source && source.name) || out.name || tr('Contents'),
       resolution: (source && source.resolution) || 72,
     });
     sd.colorMode = (source && source.colorMode) || 'rgb';
@@ -461,7 +462,7 @@ export async function loadPKD(arrayBuffer) {
   };
 
   doc.layers = (manifest.layers || []).map((n) => decodeLayer(n, null));
-  if (!doc.layers.length) doc.layers = [new Layer({ type: LayerType.RASTER, name: 'Layer 1', canvas: createCanvas(doc.width, doc.height) })];
+  if (!doc.layers.length) doc.layers = [new Layer({ type: LayerType.RASTER, name: tr('Layer {number}', { number: 1 }), canvas: createCanvas(doc.width, doc.height) })];
 
   const selectionMask = info.selection ? decode(info.selection) : null;
   if (selectionMask && selectionMask.length === doc.width * doc.height) {

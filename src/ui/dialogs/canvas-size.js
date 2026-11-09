@@ -4,6 +4,7 @@ import { el, createCanvas, formatBytes } from '../../core/util.js';
 import { Dialog } from '../dialog.js';
 import { toCss } from '../../core/color.js';
 import { UNIT_OPTIONS, toPixels, fromPixels, roundForUnit } from './new-document.js';
+import { msg, tr } from '../../core/i18n.js';
 
 /**
  * Image > Canvas Size. Grows or crops the canvas without resampling, anchored
@@ -21,6 +22,13 @@ const ARROWS = {
   'top-left': '↖', top: '↑', 'top-right': '↗',
   left: '←', center: '✛', right: '→',
   'bottom-left': '↙', bottom: '↓', 'bottom-right': '↘',
+};
+
+/** Each anchor's tooltip, translated when drawn. */
+const ANCHOR_NAMES = {
+  'top-left': msg('top left'), top: msg('top'), 'top-right': msg('top right'),
+  left: msg('left'), center: msg('center'), right: msg('right'),
+  'bottom-left': msg('bottom left'), bottom: msg('bottom'), 'bottom-right': msg('bottom right'),
 };
 
 const EXTENSION_COLORS = [
@@ -69,15 +77,15 @@ export async function showCanvasSizeDialog(doc = app.activeDoc) {
     custom: '#ffffff',
   };
 
-  const dlg = new Dialog({ title: 'Canvas Size', width: 460, className: 'pkd-canvassize' });
+  const dlg = new Dialog({ title: tr('Canvas Size'), width: 460, className: 'pkd-canvassize' });
 
   const current = el('div.pkd-readout');
   const widthInput = el('input.pk-input', { type: 'number', step: 1 });
   const heightInput = el('input.pk-input', { type: 'number', step: 1 });
-  const unitSelect = el('select.pk-select', {}, ...UNIT_OPTIONS.map((u) => el('option', { value: u.value, text: u.label })));
+  const unitSelect = el('select.pk-select', {}, ...UNIT_OPTIONS.map((u) => el('option', { value: u.value, text: tr(u.label) })));
   const relativeInput = el('input', { type: 'checkbox' });
   const anchorGrid = el('div.pkd-anchor');
-  const extSelect = el('select.pk-select', {}, ...EXTENSION_COLORS.map((c) => el('option', { value: c.value, text: c.label })));
+  const extSelect = el('select.pk-select', {}, ...EXTENSION_COLORS.map((c) => el('option', { value: c.value, text: tr(c.label) })));
   const extSwatch = el('button.pk-color-swatch', { type: 'button' });
   const extPicker = el('input', { type: 'color', value: '#ffffff', style: { display: 'none' } });
   const newReadout = el('div.pkd-readout');
@@ -124,12 +132,12 @@ export async function showCanvasSizeDialog(doc = app.activeDoc) {
     anchorGrid.replaceChildren(
       ...ANCHORS.flat().map((a) =>
         el('button' + (state.anchor === a ? '.active' : ''), {
-          type: 'button', title: a.replace('-', ' '), text: ARROWS[a],
+          type: 'button', title: tr(ANCHOR_NAMES[a]), text: ARROWS[a],
           onclick: () => { state.anchor = a; sync(); },
         })
       )
     );
-    anchorGrid.title = `New canvas ${target.w} × ${target.h}`;
+    anchorGrid.title = tr('New canvas {width} × {height}', { width: target.w, height: target.h });
   }
 
   function sync(skipInputs) {
@@ -150,14 +158,18 @@ export async function showCanvasSizeDialog(doc = app.activeDoc) {
     buildAnchorGrid();
 
     current.replaceChildren(
-      el('div', {}, 'Current size: ', el('b', { text: formatBytes(origW * origH * 4) })),
-      el('div', { text: `${origW} × ${origH} px  (${(origW / res).toFixed(2)} × ${(origH / res).toFixed(2)} in)` })
+      el('div', {}, tr('Current size: '), el('b', { text: formatBytes(origW * origH * 4) })),
+      el('div', {
+        text: tr('{width} × {height} px  ({widthInches} × {heightInches} in)', {
+          width: origW, height: origH, widthInches: (origW / res).toFixed(2), heightInches: (origH / res).toFixed(2),
+        }),
+      })
     );
     const off = anchorOffset(state.anchor, origW, origH, target.w, target.h);
     newReadout.replaceChildren(
-      el('div', {}, 'New size: ', el('b', { text: formatBytes(target.w * target.h * 4) })),
+      el('div', {}, tr('New size: '), el('b', { text: formatBytes(target.w * target.h * 4) })),
       el('div', { text: `${target.w} × ${target.h} px` }),
-      el('div', { text: `Existing image lands at ${off.dx}, ${off.dy}` })
+      el('div', { text: tr('Existing image lands at {x}, {y}', { x: off.dx, y: off.dy }) })
     );
   }
 
@@ -166,17 +178,17 @@ export async function showCanvasSizeDialog(doc = app.activeDoc) {
   dlg.setBody(
     el('div.pkd-col', {},
       current,
-      el('div.pkd-section', { text: 'New Size' }),
+      el('div.pkd-section', { text: tr('New Size') }),
       el('div.pkd-row', {},
-        field('Width', widthInput),
-        field('Height', heightInput),
-        el('div.pk-field.fixed', {}, el('label', { text: 'Units' }), unitSelect)
+        field(tr('Width'), widthInput),
+        field(tr('Height'), heightInput),
+        el('div.pk-field.fixed', {}, el('label', { text: tr('Units') }), unitSelect)
       ),
-      el('label.pk-check', {}, relativeInput, el('span', { text: 'Relative' })),
+      el('label.pk-check', {}, relativeInput, el('span', { text: tr('Relative') })),
       el('div.pkd-cols', {},
-        el('div.pk-field', {}, el('label', { text: 'Anchor' }), anchorGrid),
+        el('div.pk-field', {}, el('label', { text: tr('Anchor') }), anchorGrid),
         el('div.pkd-col.grow', {},
-          field('Canvas Extension Color', el('div.pkd-row', {}, extSelect, extSwatch, extPicker)),
+          field(tr('Canvas Extension Color'), el('div.pkd-row', {}, extSelect, extSwatch, extPicker)),
           newReadout
         )
       )
@@ -184,8 +196,8 @@ export async function showCanvasSizeDialog(doc = app.activeDoc) {
   );
 
   dlg.setButtons([
-    { label: 'Cancel', value: null, subtle: true },
-    { label: 'OK', primary: true, onClick: (d) => { d.close({ ...state, target: targetSize() }); return false; } },
+    { label: tr('Cancel'), value: null, subtle: true },
+    { label: tr('OK'), primary: true, onClick: (d) => { d.close({ ...state, target: targetSize() }); return false; } },
   ]);
 
   sync();
@@ -195,7 +207,7 @@ export async function showCanvasSizeDialog(doc = app.activeDoc) {
   const { w, h } = result.target;
   if (w === origW && h === origH) return null;
 
-  await app.busy('Canvas Size', async () => {
+  await app.busy(tr('Canvas Size'), async () => {
     doc.resizeCanvasTo(w, h, result.anchor);
 
     const css = extensionCss(result.extension, result.custom);

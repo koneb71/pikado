@@ -142,6 +142,47 @@ the Dock ask for, up to 1024 px — except sizes larger than the document, which
 are left out rather than upscaled into a blurrier icon than macOS would make
 itself.
 
+## In your language
+
+Pikado's interface is in ten languages — English, Deutsch, Español, Français,
+Português (Brasil), Русский, 日本語, 한국어, 简体中文 and 繁體中文 — and it uses
+Photoshop's own name for everything in each of them, because the people looking
+for 高斯模糊 or *Flou gaussien* are people who learned it in Photoshop.
+
+It follows your browser's language the first time it opens. To change it, use the
+globe on the start screen or **Edit › Preferences › General › Language** — each
+language is listed under its own name, so you can find yours whatever the screen
+is in. Chinese is matched by script rather than region: Hong Kong and Macao get
+Traditional, Singapore Simplified, and one is never served for the other.
+
+Changing language reloads Pikado. Your open documents come straight back from
+autosave, but their undo history does not, and it says so before it happens;
+with nothing open it just switches. If this browser cannot keep your documents
+just then, Pikado says so and stays, and the new language waits for the next
+start.
+
+Your names stay yours. A layer, document, font or pattern name is never
+translated — not by Pikado, and not by a browser's own page translation either,
+since they are marked `translate="no"`. What Pikado names for you is named in
+your language when it is made, as Photoshop does: a new layer in Chinese is
+图层 1, and stays 图层 1 if you switch to English later.
+
+Two things to know:
+
+- **The translations were drafted by an AI model** working from Photoshop's own
+  terminology in each language, then checked mechanically — every placeholder,
+  every plural form, every key still in use — but not yet read by native speakers.
+  Corrections are very welcome: see
+  [Translating Pikado](CONTRIBUTING.md#translating-pikado). Open Pikado with
+  `?lang=` and a language tag (`?lang=ja`) to look at one without changing your
+  setting.
+- **What stays as it is**: names — of layers, fonts, products — and notation:
+  units such as `px` and `ppi`, the command ids beside each command in Keyboard
+  Shortcuts, and the pangram the font browser previews faces with. Numbers in
+  fields always use a decimal point. Right-to-left languages (Arabic, Hebrew)
+  would need the whole layout mirrored, which Pikado does not do, so none ships
+  yet.
+
 ## Your work stays in this browser
 
 Pikado autosaves. Open documents survive a refresh, a crash, and a laptop lid.
@@ -172,8 +213,10 @@ key and asks before it sends anything.
   that, the least recently touched projects are evicted, and anything currently
   open is never evicted. Removing a project from the start screen deletes the
   stored copy for good, behind a confirmation. Some private-browsing modes refuse
-  IndexedDB entirely — then autosave stays off, and the refresh confirmation
-  prompt comes back, because in that one case a refresh really would lose work.
+  IndexedDB entirely, and then autosave stays off. A save can also fail — the
+  browser's storage full, say — and then Pikado says so, once rather than at
+  every retry. In either case the browser's own confirmation comes back before a
+  refresh or a close, because then a refresh really would lose work.
 
 ## Offline, and installable
 

@@ -1,3 +1,5 @@
+import { tr } from './i18n.js';
+
 /**
  * Shared low-level helpers. Everything in Pikado that touches pixels goes
  * through these so canvas creation stays consistent (and easy to swap for
@@ -117,7 +119,7 @@ export function loadImage(src) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
-    img.onerror = (e) => reject(new Error('Could not decode image'));
+    img.onerror = (e) => reject(new Error(tr('Could not decode image')));
     if (src instanceof Blob) {
       const url = URL.createObjectURL(src);
       img.onload = () => {

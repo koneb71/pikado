@@ -13,6 +13,7 @@ import {
   getTransformNumeric, setTransformNumeric, transformContextMenu,
 } from './transform.js';
 import { cmd, sep } from '../ui/canvas-menu.js';
+import { msg, tr } from '../core/i18n.js';
 import './move.css';
 import { OVERLAY } from '../ui/brand.js';
 
@@ -43,7 +44,7 @@ function movableTargets(list, { warn = false } = {}) {
     if (!out.includes(l)) out.push(l);
   };
   for (const l of list) walk(l);
-  if (warn && !out.length && blocked) app.toast('The layer is locked and cannot be moved.', 'warn');
+  if (warn && !out.length && blocked) app.toast(tr('The layer is locked and cannot be moved.'), 'warn');
   return out;
 }
 
@@ -174,7 +175,7 @@ export function alignLayers(doc, how) {
   const layers = movableTargets(doc.selectedLayers(), { warn: true });
   const items = layers.map((l) => ({ l, b: contentBoundsOf(l) })).filter((x) => x.b);
   if (!items.length) {
-    app.toast('Nothing to align.');
+    app.toast(tr('Nothing to align.'));
     return;
   }
   const t = alignTarget(doc, items.map((x) => x.l));
@@ -201,7 +202,7 @@ export function distributeLayers(doc, axis) {
   const layers = movableTargets(doc.selectedLayers(), { warn: true });
   const items = layers.map((l) => ({ l, b: contentBoundsOf(l) })).filter((x) => x.b);
   if (items.length < 3) {
-    app.toast('Select three or more layers to distribute.');
+    app.toast(tr('Select three or more layers to distribute.'));
     return;
   }
   const key = axis === 'h' ? 'x' : 'y';
@@ -256,28 +257,28 @@ export function nudgeLayers(doc, dx, dy) {
 /* ------------------------------------------------------------------ */
 
 const ALIGN_BUTTONS = [
-  ['align-left', 'left', 'Align left edges'],
-  ['align-center-h', 'center-h', 'Align horizontal centres'],
-  ['align-right', 'right', 'Align right edges'],
-  ['align-top', 'top', 'Align top edges'],
-  ['align-center-v', 'center-v', 'Align vertical centres'],
-  ['align-bottom', 'bottom', 'Align bottom edges'],
+  ['align-left', 'left', msg('Align left edges')],
+  ['align-center-h', 'center-h', msg('Align horizontal centres')],
+  ['align-right', 'right', msg('Align right edges')],
+  ['align-top', 'top', msg('Align top edges')],
+  ['align-center-v', 'center-v', msg('Align vertical centres')],
+  ['align-bottom', 'bottom', msg('Align bottom edges')],
 ];
 
 function renderAlignBar(container) {
   const bar = el('div.pk-align-bar');
   for (const [ico, how, title] of ALIGN_BUTTONS) {
-    const b = el('button.pk-icon-btn', { type: 'button', title, onclick: () => alignLayers(app.activeDoc, how) });
+    const b = el('button.pk-icon-btn', { type: 'button', title: tr(title), onclick: () => alignLayers(app.activeDoc, how) });
     b.appendChild(iconEl(ico));
     bar.appendChild(b);
   }
   bar.appendChild(el('span.pk-vsep'));
   bar.appendChild(el('button.pk-btn.subtle.pk-align-dist', {
-    type: 'button', text: 'Dist H', title: 'Distribute horizontal centres',
+    type: 'button', text: tr('Dist H'), title: tr('Distribute horizontal centres'),
     onclick: () => distributeLayers(app.activeDoc, 'h'),
   }));
   bar.appendChild(el('button.pk-btn.subtle.pk-align-dist', {
-    type: 'button', text: 'Dist V', title: 'Distribute vertical centres',
+    type: 'button', text: tr('Dist V'), title: tr('Distribute vertical centres'),
     onclick: () => distributeLayers(app.activeDoc, 'v'),
   }));
   container.appendChild(bar);
@@ -567,7 +568,7 @@ class MoveTool extends Tool {
     // document's tab: it really was just a move onto a locked layer, so say so.
     if (this.blocked) {
       this.blocked = null;
-      app.toast('The layer is locked and cannot be moved.', 'warn');
+      app.toast(tr('The layer is locked and cannot be moved.'), 'warn');
       return;
     }
     const d = this.drag;
@@ -595,14 +596,15 @@ class MoveTool extends Tool {
     const doc = this.doc;
     if (!doc) return [];
     const active = doc.activeLayer();
-    const items = [{ header: 'Select Layer' }];
+    const items = [{ header: tr('Select Layer') }];
     const hits = layersUnderPoint(doc, e.x, e.y);
     if (!hits.length) {
-      items.push({ label: 'No layer under cursor', disabled: true });
+      items.push({ label: tr('No layer under cursor'), disabled: true });
     } else {
       for (const l of hits) {
         items.push({
           label: l.name,
+          verbatim: true,
           checked: !!active && active.id === l.id,
           run: () => doc.setActiveLayer(l.id),
         });
@@ -612,15 +614,15 @@ class MoveTool extends Tool {
       ...items,
       sep(),
       cmd('layer.duplicate'),
-      cmd('layer.delete', { label: 'Delete Layer' }),
-      cmd('layer.group-from-layers', { label: 'Group Layers' }),
+      cmd('layer.delete', { label: tr('Delete Layer') }),
+      cmd('layer.group-from-layers', { label: tr('Group Layers') }),
       sep(),
       cmd('layer.merge-down'),
       cmd('layer.merge-visible'),
       cmd('layer.flatten'),
       sep(),
       cmd('layer.style.options'),
-      cmd('layer.rasterize.layer', { label: 'Rasterize Layer', hideWhenDisabled: true }),
+      cmd('layer.rasterize.layer', { label: tr('Rasterize Layer'), hideWhenDisabled: true }),
     ];
   }
 
@@ -734,8 +736,8 @@ function artboardsOf(doc) {
 function nextArtboardName(doc) {
   const names = new Set(artboardsOf(doc).map((a) => a.name));
   let n = 1;
-  while (names.has(`Artboard ${n}`)) n++;
-  return `Artboard ${n}`;
+  while (names.has(tr('Artboard {number}', { number: n }))) n++;
+  return tr('Artboard {number}', { number: n });
 }
 
 /** Create an artboard rectangle on the document. */
@@ -919,7 +921,7 @@ class ArtboardTool extends Tool {
     const a = doc && this.selected(doc);
     if (!a) return;
     const { promptDialog } = await import('../ui/dialog.js');
-    const name = await promptDialog('Artboard name', a.name, 'Rename Artboard');
+    const name = await promptDialog(tr('Artboard name'), a.name, tr('Rename Artboard'));
     if (name != null && name !== '') {
       a.name = name;
       doc.touch('artboard');

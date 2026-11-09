@@ -6,6 +6,8 @@ import { icon } from '../icons.js';
 import { PikaDocument } from '../../core/document.js';
 import { getComposite } from '../../render/compositor.js';
 import { promptDialog } from '../dialog.js';
+import { msg, tr } from '../../core/i18n.js';
+import { historyLabel } from '../../core/history.js';
 
 /**
  * The History panel: snapshots on top, the undo stack below.
@@ -14,6 +16,10 @@ import { promptDialog } from '../dialog.js';
  * guarantees they are never mutated behind our back), so snapshots simply keep
  * the object returned by `doc.captureState()` — cloning it would multiply the
  * document's memory use for nothing.
+ *
+ * A state's `label` is English (the icon is picked by reading it); what the
+ * panel shows is `historyLabel(state)`, in the current language. A snapshot's
+ * name is the user's, so it is shown as it is.
  */
 
 registerPanel({
@@ -32,12 +38,12 @@ function buildHistoryPanel(bodyEl) {
 
   const snapsEl = el('div.pk-hist-snaps');
   const statesEl = el('div.pk-hist-states');
-  const emptyEl = el('div.pk-panel-empty', { text: 'No document open.' });
+  const emptyEl = el('div.pk-panel-empty', { text: tr('No document open.') });
 
   const foot = el('div.pk-hist-foot', {},
-    btn('copy', 'Create new document from current state', () => withDoc(newDocumentFromState)),
-    btn('image', 'Create new snapshot', () => withDoc(takeSnapshot)),
-    btn('trash', 'Delete', () => withDoc(deleteSelected))
+    btn('copy', tr('Create new document from current state'), () => withDoc(newDocumentFromState)),
+    btn('image', tr('Create new snapshot'), () => withDoc(takeSnapshot)),
+    btn('trash', tr('Delete'), () => withDoc(deleteSelected))
   );
 
   const root = el('div.pk-hist', {}, snapsEl, statesEl, emptyEl, foot);
@@ -113,10 +119,10 @@ function buildHistoryPanel(bodyEl) {
         e.preventDefault();
         if (index < 0) return;
         popupMenu([
-          { label: 'Rename Snapshot…', run: () => renameSnapshot(doc, snap) },
-          { label: 'Delete Snapshot', run: () => { (doc.snapshots || []).splice(index, 1); selectedSnap = -1; refresh(); } },
+          { label: tr('Rename Snapshot…'), run: () => renameSnapshot(doc, snap) },
+          { label: tr('Delete Snapshot'), run: () => { (doc.snapshots || []).splice(index, 1); selectedSnap = -1; refresh(); } },
           { separator: true },
-          { label: 'New Document from Snapshot', run: () => newDocumentFrom(doc, snap.state, snap.name) },
+          { label: tr('New Document from Snapshot'), run: () => newDocumentFrom(doc, snap.state, snap.name) },
         ], e.clientX, e.clientY);
       },
     });
@@ -128,8 +134,9 @@ function buildHistoryPanel(bodyEl) {
   function renderStates(doc) {
     const h = doc.history;
     const rows = h.states.map((s, i) => {
+      const shown = historyLabel(s);
       const row = el('div.pk-hist-item' + (i === h.index ? '.current' : i > h.index ? '.future' : ''), {
-        title: s.label,
+        title: shown,
         onclick: () => {
           selectedSnap = -1;
           h.goto(i);
@@ -142,8 +149,8 @@ function buildHistoryPanel(bodyEl) {
       });
       row.append(
         el('span.pk-hist-ico', { html: icon(stateIcon(s.label), { size: 14 }) }),
-        el('span.pk-hist-label', { text: s.label }),
-        el('span.pk-hist-brush', { html: icon('history-brush', { size: 12 }), title: 'History Brush source', hidden: doc.historyBrushSource !== i })
+        el('span.pk-hist-label', { text: shown }),
+        el('span.pk-hist-brush', { html: icon('history-brush', { size: 12 }), title: tr('History Brush source'), hidden: doc.historyBrushSource !== i })
       );
       return row;
     });
@@ -156,7 +163,7 @@ function buildHistoryPanel(bodyEl) {
     const h = doc.history;
     popupMenu([
       {
-        label: 'Set as History Brush source',
+        label: tr('Set as History Brush source'),
         checked: doc.historyBrushSource === i,
         run: () => {
           doc.historyBrushSource = doc.historyBrushSource === i ? null : i;
@@ -164,11 +171,11 @@ function buildHistoryPanel(bodyEl) {
         },
       },
       { separator: true },
-      { label: 'New Snapshot from This State', run: () => snapshotFrom(doc, h.states[i]) },
-      { label: 'New Document from This State', run: () => newDocumentFrom(doc, h.states[i].state, h.states[i].label) },
+      { label: tr('New Snapshot from This State'), run: () => snapshotFrom(doc, h.states[i]) },
+      { label: tr('New Document from This State'), run: () => newDocumentFrom(doc, h.states[i].state, historyLabel(h.states[i])) },
       { separator: true },
       {
-        label: 'Delete This State and Later',
+        label: tr('Delete This State and Later'),
         disabled: i === 0,
         run: () => truncateHistory(doc, i),
       },
@@ -182,31 +189,31 @@ function buildHistoryPanel(bodyEl) {
     // captureState() shares the pixel buffers with the live layers; copy-on-write
     // keeps them valid, so this costs almost nothing.
     doc.snapshots.push({
-      name: `Snapshot ${doc.snapshots.length + 1}`,
+      name: tr('Snapshot {number}', { number: doc.snapshots.length + 1 }),
       state: doc.captureState(),
       thumb: miniThumb(doc),
     });
     selectedSnap = doc.snapshots.length - 1;
-    app.toast('Snapshot created.', 'ok', 1400);
+    app.toast(tr('Snapshot created.'), 'ok', 1400);
     refresh();
   }
 
   function snapshotFrom(doc, entry) {
     if (!entry) return;
     if (!doc.snapshots) doc.snapshots = [];
-    doc.snapshots.push({ name: entry.label, state: entry.state, thumb: entry.thumb || miniThumb(doc) });
+    doc.snapshots.push({ name: historyLabel(entry), state: entry.state, thumb: entry.thumb || miniThumb(doc) });
     refresh();
   }
 
   function restoreSnapshot(doc, snap) {
     doc.restoreState(snap.state);
-    doc.commit(`Snapshot: ${snap.name}`);
+    doc.commit(msg('Snapshot: {name}', { name: snap.name }));
     doc.emit('structure');
     refresh();
   }
 
   async function renameSnapshot(doc, snap) {
-    const name = await promptDialog('Snapshot name', snap.name, 'Rename Snapshot');
+    const name = await promptDialog(tr('Snapshot name'), snap.name, tr('Rename Snapshot'));
     if (name == null) return;
     const v = String(name).trim();
     if (v) snap.name = v;
@@ -216,7 +223,7 @@ function buildHistoryPanel(bodyEl) {
   function newDocumentFromState(doc) {
     const entry = doc.history.states[doc.history.index];
     if (!entry) return;
-    newDocumentFrom(doc, entry.state, entry.label);
+    newDocumentFrom(doc, entry.state, historyLabel(entry));
   }
 
   function newDocumentFrom(doc, state, label) {
@@ -224,13 +231,13 @@ function buildHistoryPanel(bodyEl) {
     const nd = new PikaDocument({
       width: state.width,
       height: state.height,
-      name: `${doc.name} (${label || 'state'})`,
+      name: tr('{document} ({state})', { document: doc.name, state: label || tr('state') }),
     });
     nd.resolution = doc.resolution;
     nd.restoreState(state);
     nd.history.clear('Duplicate State');
     app.addDocument(nd);
-    app.toast('New document created from history state.', 'ok');
+    app.toast(tr('New document created from history state.'), 'ok');
   }
 
   function deleteSelected(doc) {
@@ -266,12 +273,12 @@ function buildHistoryPanel(bodyEl) {
     const doc = app.activeDoc;
     if (!doc) return [];
     return [
-      { label: 'New Snapshot', run: () => takeSnapshot(doc) },
-      { label: 'New Document from Current State', run: () => newDocumentFromState(doc) },
+      { label: tr('New Snapshot'), run: () => takeSnapshot(doc) },
+      { label: tr('New Document from Current State'), run: () => newDocumentFromState(doc) },
       { separator: true },
-      { label: 'Clear History', run: () => { doc.history.clear('Clear History'); refresh(); } },
+      { label: tr('Clear History'), run: () => { doc.history.clear('Clear History'); refresh(); } },
       {
-        label: 'Clear History Brush Source',
+        label: tr('Clear History Brush Source'),
         disabled: doc.historyBrushSource == null,
         run: () => { doc.historyBrushSource = null; refresh(); },
       },

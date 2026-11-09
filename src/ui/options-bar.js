@@ -1,5 +1,6 @@
 import { el, clamp } from '../core/util.js';
 import { app } from '../core/app.js';
+import { tr } from '../core/i18n.js';
 import { icon } from './icons.js';
 import { toCss, toHex, parseColor } from '../core/color.js';
 import './options-bar.css';
@@ -64,14 +65,14 @@ function rebuild() {
   shownSession = app.transformSession || null;
 
   if (!tool) {
-    root.appendChild(el('span.pk-ob-static', { text: 'No tool selected' }));
+    root.appendChild(el('span.pk-ob-static', { text: tr('No tool selected') }));
     return;
   }
 
   root.appendChild(
-    el('div.pk-ob-tool', { title: tool.name },
+    el('div.pk-ob-tool', { title: tr(tool.name) },
       el('span.pk-ob-tool-ico', { html: icon(tool.icon || tool.id, { size: 18 }) }),
-      el('span.pk-ob-tool-name', { text: tool.name })
+      el('span.pk-ob-tool-name', { text: tr(tool.name) })
     )
   );
   root.appendChild(el('div.pk-vsep'));
@@ -129,7 +130,9 @@ function syncControls() {
  *
  * A thunk is for lists that change while the bar is on screen — the font list
  * grows when a family is downloaded, so an array captured at registration would
- * go stale at exactly the moment it matters.
+ * go stale at exactly the moment it matters. It is also how a descriptor says
+ * its options are data: a literal array is interface text and is translated
+ * here, a thunk's labels are shown as it returns them (see `buildForm`).
  */
 function optionsOf(p) {
   const o = typeof p.options === 'function' ? p.options() : p.options;
@@ -137,16 +140,20 @@ function optionsOf(p) {
 }
 
 const valueOf = (o) => (typeof o === 'object' && o ? o.value : o);
-const labelOf = (o) => (typeof o === 'object' && o ? o.label : String(o));
+const rawLabelOf = (o) => (typeof o === 'object' && o ? o.label : String(o));
+/** An option's label as shown: translated, unless the descriptor supplies its options as data. */
+const optionLabel = (p, o) => (typeof p.options === 'function' ? rawLabelOf(o) : tr(rawLabelOf(o)));
 
 function renderOption(p, tool) {
   if (!p) return null;
+  const labelText = p.label ? tr(p.label) : '';
+  const unitText = p.unit ? tr(p.unit) : '';
   if (p.type === 'separator') return el('div.pk-vsep');
-  if (p.type === 'label') return el('span.pk-ob-static', { text: p.label || '' });
+  if (p.type === 'label') return el('span.pk-ob-static', { text: labelText });
   if (p.type === 'button') {
     return el('button.pk-btn.subtle.pk-ob-btn', {
       type: 'button',
-      text: p.label,
+      text: labelText,
       onclick: () => p.onClick && p.onClick(tool.state, (k, v) => setValue(tool, k, v)),
     });
   }
@@ -181,7 +188,7 @@ function renderOption(p, tool) {
       num.addEventListener('blur', () => { num.value = tool.state[p.key]; });
 
       const canPopover = p.type !== 'number' && min != null && max != null;
-      const label = makeScrubLabel(p.label || p.key, {
+      const label = makeScrubLabel(labelText || p.key, {
         min, max, step,
         get: () => Number(tool.state[p.key]) || 0,
         set: (v) => { num.value = v; setValue(tool, p.key, v); },
@@ -191,7 +198,7 @@ function renderOption(p, tool) {
       });
 
       row.append(label, num);
-      if (p.unit || isAngle) row.append(el('span.pk-unit', { text: p.unit || '°' }));
+      if (p.unit || isAngle) row.append(el('span.pk-unit', { text: unitText || '°' }));
       register((v) => {
         if (document.activeElement !== num) num.value = v;
         if (popover && popover.key === p.key) popover.sync(v);
@@ -200,7 +207,8 @@ function renderOption(p, tool) {
     }
 
     case 'select': {
-      const sel = el('select.pk-select.pk-ob-select');
+      // A thunk's options are data (font names); keep page translation off them too.
+      const sel = el('select.pk-select.pk-ob-select', { translate: typeof p.options === 'function' ? 'no' : null });
       /*
        * Rebuilt on every sync rather than once, because a descriptor may
        * declare its options as a thunk when the list can change while the bar
@@ -212,7 +220,7 @@ function renderOption(p, tool) {
         const same = sel.options.length === opts.length
           && opts.every((o, i) => sel.options[i] && sel.options[i].value === String(valueOf(o)));
         if (!same) {
-          sel.replaceChildren(...opts.map((o) => el('option', { value: valueOf(o), text: labelOf(o) })));
+          sel.replaceChildren(...opts.map((o) => el('option', { value: valueOf(o), text: optionLabel(p, o) })));
         }
         sel.value = v;
       };
@@ -221,7 +229,7 @@ function renderOption(p, tool) {
         const opt = optionsOf(p).find((o) => String(valueOf(o)) === sel.value);
         setValue(tool, p.key, opt == null ? sel.value : valueOf(opt));
       });
-      row.append(el('span.pk-ob-label', { text: p.label || '' }), sel);
+      row.append(el('span.pk-ob-label', { text: labelText }), sel);
       register(fill);
       break;
     }
@@ -231,7 +239,7 @@ function renderOption(p, tool) {
       const buttons = [];
       for (const o of optionsOf(p)) {
         const val = typeof o === 'object' ? o.value : o;
-        const lab = typeof o === 'object' ? o.label : String(o);
+        const lab = optionLabel(p, o);
         const b = el('button.pk-seg-btn', {
           type: 'button',
           text: lab,
@@ -246,7 +254,7 @@ function renderOption(p, tool) {
         for (const b of buttons) b.classList.toggle('active', b.dataset.value === String(v));
       };
       paint(state[p.key]);
-      row.append(...[p.label ? el('span.pk-ob-label', { text: p.label }) : null, seg].filter(Boolean));
+      row.append(...[labelText ? el('span.pk-ob-label', { text: labelText }) : null, seg].filter(Boolean));
       register(paint);
       break;
     }
@@ -254,7 +262,7 @@ function renderOption(p, tool) {
     case 'checkbox': {
       const input = el('input', { type: 'checkbox', checked: !!state[p.key] });
       input.addEventListener('change', () => setValue(tool, p.key, input.checked));
-      row.append(el('label.pk-check', {}, input, el('span', { text: p.label || '' })));
+      row.append(el('label.pk-check', {}, input, el('span', { text: labelText })));
       register((v) => { input.checked = !!v; });
       break;
     }
@@ -274,7 +282,7 @@ function renderOption(p, tool) {
         setValue(tool, p.key, hidden.value);
       });
       swatch.addEventListener('click', () => hidden.click());
-      row.append(...[p.label ? el('span.pk-ob-label', { text: p.label }) : null, swatch, hidden].filter(Boolean));
+      row.append(...[labelText ? el('span.pk-ob-label', { text: labelText }) : null, swatch, hidden].filter(Boolean));
       register((v) => {
         fill.style.background = toCss(parseColor(v || '#000000'));
         hidden.value = safeHex(v);
@@ -285,13 +293,13 @@ function renderOption(p, tool) {
     case 'text': {
       const input = el('input.pk-input.pk-ob-text', { type: 'text', value: state[p.key] ?? '' });
       input.addEventListener('input', () => setValue(tool, p.key, input.value));
-      row.append(...[p.label ? el('span.pk-ob-label', { text: p.label }) : null, input].filter(Boolean));
+      row.append(...[labelText ? el('span.pk-ob-label', { text: labelText }) : null, input].filter(Boolean));
       register((v) => { if (document.activeElement !== input) input.value = v ?? ''; });
       break;
     }
 
     case 'custom': {
-      if (p.label) row.append(el('span.pk-ob-label', { text: p.label }));
+      if (labelText) row.append(el('span.pk-ob-label', { text: labelText }));
       const holder = el('div.pk-ob-custom');
       row.append(holder);
       if (typeof p.render === 'function') {
@@ -312,7 +320,7 @@ function renderOption(p, tool) {
       return null;
   }
 
-  if (p.hint) row.title = p.hint;
+  if (p.hint) row.title = tr(p.hint);
   return row;
 }
 
@@ -403,9 +411,9 @@ function openSliderPopover(anchor, p, { min, max, step, tool }) {
   });
 
   const node = el('div.pk-ob-popover', {},
-    el('span.pk-ob-popover-title', { text: p.label || p.key }),
+    el('span.pk-ob-popover-title', { text: p.label ? tr(p.label) : p.key }),
     el('div.pk-slider-row', {}, range, num),
-    p.unit ? el('span.pk-unit', { text: p.unit }) : null
+    p.unit ? el('span.pk-unit', { text: tr(p.unit) }) : null
   );
   document.body.appendChild(node);
 
@@ -507,26 +515,26 @@ function renderTransform() {
       if (Number.isNaN(v)) return;
       writeTransform(f.key, v);
     });
-    const label = makeScrubLabel(f.label, {
+    const label = makeScrubLabel(tr(f.label), {
       step: f.step,
       get: () => Number(num.value) || 0,
       set: (v) => { num.value = v; writeTransform(f.key, v); },
     });
     transformInputs.set(f.key, { input: num, fallback: f.fallback });
-    root.appendChild(el('div.pk-ob-field', {}, label, num, el('span.pk-unit', { text: f.unit })));
+    root.appendChild(el('div.pk-ob-field', {}, label, num, el('span.pk-unit', { text: tr(f.unit) })));
   }
 
   root.appendChild(el('div.pk-vsep'));
   root.appendChild(
     el('button.pk-icon-btn.pk-ob-cancel', {
-      type: 'button', title: 'Cancel transform (Esc)',
+      type: 'button', title: tr('Cancel transform (Esc)'),
       html: icon('close', { size: 15 }),
       onclick: () => endTransform('cancel'),
     })
   );
   root.appendChild(
     el('button.pk-icon-btn.pk-ob-commit', {
-      type: 'button', title: 'Commit transform (Enter)',
+      type: 'button', title: tr('Commit transform (Enter)'),
       html: icon('check', { size: 15 }),
       onclick: () => endTransform('commit'),
     })

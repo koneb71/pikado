@@ -1,4 +1,5 @@
 import { createCanvas, ctx2d, ctx2dRead } from '../core/util.js';
+import { msg, tr } from '../core/i18n.js';
 
 /**
  * Writing HEIC.
@@ -36,7 +37,7 @@ const CODEC = 'hvc1.1.6.L93.B0';     // Main profile, Main tier, level 3.1: 512x
 const NCLX = { primaries: 1, transfer: 13, matrix: 6, fullRange: true };
 const FRAME_COLOUR = { primaries: 'bt709', transfer: 'iec61966-2-1', matrix: 'smpte170m', fullRange: true };
 
-const UNSUPPORTED = 'HEIC export needs an HEVC encoder, and this browser has none. Safari, or Chrome and Edge on macOS or Windows, can write HEIC.';
+const UNSUPPORTED = msg('HEIC export needs an HEVC encoder, and this browser has none. Safari, or Chrome and Edge on macOS or Windows, can write HEIC.');
 
 /* ------------------------------------------------------------------ */
 /* Support                                                             */
@@ -98,8 +99,8 @@ let supportPromise = null;
 export function heicEncodeSupport() {
   if (!supportPromise) {
     supportPromise = pickConfig(TILE, TILE, 0.8)
-      .then((picked) => (picked ? { ok: true, reason: '' } : { ok: false, reason: UNSUPPORTED }))
-      .catch(() => ({ ok: false, reason: UNSUPPORTED }));
+      .then((picked) => (picked ? { ok: true, reason: '' } : { ok: false, reason: tr(UNSUPPORTED) }))
+      .catch(() => ({ ok: false, reason: tr(UNSUPPORTED) }));
   }
   return supportPromise;
 }
@@ -208,10 +209,10 @@ export async function encodeHEIC(source, opts = {}) {
   const { tileW, tileH } = tileSizeFor(width, height);
   const cols = Math.ceil(width / tileW);
   const rows = Math.ceil(height / tileH);
-  if (cols > 256 || rows > 256) throw new Error('the image is too large for a HEIC grid');
+  if (cols > 256 || rows > 256) throw new Error(tr('the image is too large for a HEIC grid'));
 
   const picked = await pickConfig(tileW, tileH, quality);
-  if (!picked) throw new Error(UNSUPPORTED);
+  if (!picked) throw new Error(tr(UNSUPPORTED));
   const withAlpha = opts.transparent !== false && hasTransparency(source);
 
   const chunks = [];
@@ -262,8 +263,8 @@ export async function encodeHEIC(source, opts = {}) {
   }
   if (failure) throw failure;
   const count = rows * cols;
-  if (chunks.length !== count * (withAlpha ? 2 : 1)) throw new Error('the HEVC encoder dropped tiles');
-  if (!description) throw new Error('the HEVC encoder did not describe its output');
+  if (chunks.length !== count * (withAlpha ? 2 : 1)) throw new Error(tr('the HEVC encoder dropped tiles'));
+  if (!description) throw new Error(tr('the HEVC encoder did not describe its output'));
 
   const bytes = muxHEIF({
     hvcC: description,
