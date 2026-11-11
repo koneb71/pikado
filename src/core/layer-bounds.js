@@ -11,10 +11,9 @@
  */
 
 /**
- * Keyed on the layer's underlying pixel buffer, which the copy-on-write rule
- * makes a sound invalidation key: `beginEdit` hands out a fresh buffer for each
- * recorded edit, so a changed layer can never hit a stale entry.
- * @type {WeakMap<HTMLCanvasElement, {x:number,y:number,width:number,height:number}|null>}
+ * Copy-on-write identifies changed pixels; the tile origin identifies moves
+ * that share those pixels. Both must match before reusing document-space bounds.
+ * @type {WeakMap<HTMLCanvasElement, {x:number,y:number,bounds:object|null}>}
  */
 const cache = new WeakMap();
 
@@ -32,9 +31,10 @@ export function layerBounds(layer) {
   if (!layer) return null;
   const key = layer.pixelKey();
   if (!key) return null;
-  if (cache.has(key)) return cache.get(key);
+  const cached = peekBounds(layer);
+  if (cached !== undefined) return cached;
   const b = layer.contentBounds();
-  cache.set(key, b);
+  cacheShiftedBounds(layer, b, 0, 0);
   return b;
 }
 
@@ -46,14 +46,17 @@ export function layerBounds(layer) {
 export function peekBounds(layer) {
   const key = layer && layer.pixelKey();
   if (!key) return undefined;
-  return cache.has(key) ? cache.get(key) : undefined;
+  const entry = cache.get(key);
+  return entry && entry.x === (layer.tile?.x ?? 0) && entry.y === (layer.tile?.y ?? 0)
+    ? entry.bounds : undefined;
 }
 
 /** Record where a known bounding box landed after a translation. */
 export function cacheShiftedBounds(layer, b, dx, dy) {
   const key = layer.pixelKey();
   if (!key) return;
-  cache.set(key, b ? { ...b, x: b.x + dx, y: b.y + dy } : null);
+  cache.set(key, { x: layer.tile?.x ?? 0, y: layer.tile?.y ?? 0,
+    bounds: b ? { ...b, x: b.x + dx, y: b.y + dy } : null });
 }
 
 /** The union of several layers' content bounds. */
