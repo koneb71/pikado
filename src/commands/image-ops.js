@@ -945,7 +945,7 @@ export function duplicateDocument(doc, name) {
   if (doc.selection.mask) {
     copy.selection.set(new Uint8ClampedArray(doc.selection.mask));
   }
-  copy.guides = [...doc.guides];
+  copy.guides = doc.guides.map((g) => ({ ...g }));
   copy.alphaChannels = doc.alphaChannels.map((c) => ({ ...c }));
   copy.paths = structuredClone(doc.paths);
   copy.history.clear('Duplicate');

@@ -1,6 +1,6 @@
 import { el, rafThrottle } from '../core/util.js';
 import { app } from '../core/app.js';
-import { snapGuidePos, clearSnapLines } from '../core/snapping.js';
+import { RULER_SIZE, startGuideDrag } from './guides.js';
 import './rulers.css';
 
 /**
@@ -10,7 +10,7 @@ import './rulers.css';
  * drag a new guide out onto the document. Visibility follows `app.showRulers`.
  */
 
-export const RULER_SIZE = 20;
+export { RULER_SIZE } from './guides.js';
 
 const PX_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
 const CM_STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100, 200];
@@ -61,7 +61,6 @@ export function installRulers(areaEl) {
     hctx: hEl.getContext('2d'),
     vctx: vEl.getContext('2d'),
     cursor: null,
-    drag: null,
     dpr: window.devicePixelRatio || 1,
   };
 
@@ -80,14 +79,8 @@ export function installRulers(areaEl) {
     draw();
   });
 
-  hEl.addEventListener('pointerdown', (e) => startGuide(state, 'h', e));
-  vEl.addEventListener('pointerdown', (e) => startGuide(state, 'v', e));
-  window.addEventListener('keydown', (e) => {
-    if (state.drag && e.key === 'Escape') {
-      e.stopPropagation();
-      cancelGuide(state);
-    }
-  }, true);
+  hEl.addEventListener('pointerdown', (e) => startGuideDrag(areaEl, { axis: 'h', pos: 0 }, e, { isNew: true }));
+  vEl.addEventListener('pointerdown', (e) => startGuideDrag(areaEl, { axis: 'v', pos: 0 }, e, { isNew: true }));
 
   return state;
 }
@@ -275,83 +268,4 @@ function drawRuler(s, axis) {
   if (horizontal) { ctx.moveTo(0, cssH - 0.5); ctx.lineTo(cssW, cssH - 0.5); }
   else { ctx.moveTo(cssW - 0.5, 0); ctx.lineTo(cssW - 0.5, cssH); }
   ctx.stroke();
-}
-
-/* ------------------------------------------------------------------ */
-/* Guide dragging                                                      */
-/* ------------------------------------------------------------------ */
-
-function startGuide(s, from, e) {
-  const doc = app.activeDoc;
-  if (!doc || e.button !== 0) return;
-  e.preventDefault();
-
-  const axis = from === 'h' ? 'h' : 'v';
-  const guide = { axis, pos: 0 };
-  doc.guides.push(guide);
-  app.showGuides = true;
-
-  s.drag = { doc, guide };
-  moveGuide(s, e);
-
-  const onMove = (ev) => moveGuide(s, ev);
-  const onUp = (ev) => {
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    finishGuide(s, ev);
-  };
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
-}
-
-function areaPoint(s, e) {
-  const r = s.areaEl.getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top };
-}
-
-function moveGuide(s, e) {
-  if (!s.drag) return;
-  const guide = s.drag.guide;
-  const p = areaPoint(s, e);
-  const d = app.viewport.toDoc(p.x, p.y);
-  const pos = guide.axis === 'h' ? d.y : d.x;
-  /*
-   * This used to snap to the grid and nothing else, with its own copy of the
-   * tolerance arithmetic. On the shared solver a dragged guide also lands on
-   * the document's edges and centre, on other guides, and on the edges of the
-   * layers it passes — which is the whole reason you drag a guide out.
-   *
-   * The guide being dragged is excluded from its own candidates: it sits at
-   * the cursor, so it would always be the nearest target and the drag would
-   * never move.
-   */
-  guide.pos = Math.round(snapGuidePos(pos, guide.axis, s.drag.doc, { excludeGuide: guide, event: e }));
-  app.requestRender();
-}
-
-function finishGuide(s, e) {
-  if (!s.drag) return;
-  const { doc, guide } = s.drag;
-  const p = areaPoint(s, e);
-  const dropped = p.x > RULER_SIZE && p.y > RULER_SIZE;
-  s.drag = null;
-  clearSnapLines();
-
-  const i = doc.guides.indexOf(guide);
-  if (!dropped) {
-    if (i >= 0) doc.guides.splice(i, 1);
-    app.requestRender();
-    return;
-  }
-  doc.commit('New Guide');
-}
-
-function cancelGuide(s) {
-  if (!s.drag) return;
-  const { doc, guide } = s.drag;
-  s.drag = null;
-  clearSnapLines();
-  const i = doc.guides.indexOf(guide);
-  if (i >= 0) doc.guides.splice(i, 1);
-  app.requestRender();
 }
