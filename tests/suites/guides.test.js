@@ -1,6 +1,7 @@
 import { suite } from '../harness.js';
 import { createCanvas } from '/src/core/util.js';
 import { duplicateDocument } from '/src/commands/image-ops.js';
+import { IS_MAC } from '/src/commands/registry.js';
 
 function fixture(t, axis = 'v', pos = 30) {
   const app = t.app, view = app.view;
@@ -107,7 +108,7 @@ suite('guides / drag shortcuts preserve undo, redo and fractional positions', as
     f.key('ArrowRight');
     t.eq(f.doc.guides[0].pos, 55, 'arrow key leaves the drag preview intact');
     t.eq(f.doc.history.states.length, 3, 'arrow key does not nudge a layer');
-    f.key('z', { metaKey: true });
+    f.key('z', IS_MAC ? { metaKey: true } : { ctrlKey: true });
     f.pointer('pointerup', 330, 400);
     t.eq(f.doc.guides[0].pos, 30, 'undo first cancels the preview, then restores history');
     t.ok(f.doc.history.canRedo, 'pointer release does not destroy redo');
