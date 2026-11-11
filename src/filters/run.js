@@ -21,7 +21,7 @@ export function operableSurface(doc, layer) {
   if (layer.type === 'adjustment' || layer.type === 'group') {
     return layer.mask ? { canvas: layer.mask, isMask: true } : null;
   }
-  return layer.canvas ? { canvas: layer.canvas, isMask: false } : null;
+  return layer.pixelKey() ? { canvas: layer.renderCanvas(), isMask: false } : null;
 }
 
 /**

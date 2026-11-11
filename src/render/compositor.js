@@ -276,7 +276,7 @@ function layerPixels(layer, doc, opts) {
   if (layer.type === LayerType.GROUP) return groupPixels(layer, doc, opts);
   if (layer.type === LayerType.ADJUSTMENT) return null;
 
-  let src = previewOverrides.get(layer.id) || layer.canvas;
+  let src = previewOverrides.get(layer.id) || layer.renderCanvas();
   if (!src) return null;
 
   const needsStyles = !opts.ignoreEffects && hasStyles(layer);
@@ -338,7 +338,7 @@ function effectiveOpacity(layer) {
 function drawBelowEffects(layer, ctx, doc, opts) {
   if (opts.ignoreEffects || !hasStyles(layer)) return;
   if (layer.type === LayerType.GROUP || layer.type === LayerType.ADJUSTMENT) return;
-  const src = previewOverrides.get(layer.id) || layer.canvas;
+  const src = previewOverrides.get(layer.id) || layer.renderCanvas();
   if (!src) return;
   const list = belowEffectResults(src, layer, doc, doc.width, doc.height);
   if (!list.length) return;

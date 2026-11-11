@@ -59,7 +59,7 @@ const isSmart = () => smart.isSmartLayer(activeLayer());
 
 function hasPixels() {
   const l = activeLayer();
-  return !!(l && (l.canvas || (l.editingMask && l.mask)));
+  return !!(l && (l.pixelKey() || (l.editingMask && l.mask)));
 }
 
 function layerOfType(type) {
@@ -550,7 +550,7 @@ function maskFromCanvas(canvas, w, h) {
 async function loadSelection(doc) {
   const sources = [
     ...doc.alphaChannels.map((c) => ({ value: `chan:${c.id}`, label: tr('Channel — {name}', { name: c.name }) })),
-    ...doc.flatLayers().filter((l) => l.canvas).map((l) => ({ value: `layer:${l.id}`, label: tr('{name} Transparency', { name: l.name }) })),
+    ...doc.flatLayers().filter((l) => l.pixelKey()).map((l) => ({ value: `layer:${l.id}`, label: tr('{name} Transparency', { name: l.name }) })),
     ...doc.flatLayers().filter((l) => l.mask).map((l) => ({ value: `mask:${l.id}`, label: tr('{name} Mask', { name: l.name }) })),
   ];
   if (!sources.length) { app.toast(tr('There is nothing to load a selection from.')); return; }
@@ -587,7 +587,7 @@ async function loadSelection(doc) {
     if (!layer) return;
     if (kind === 'mask') mask = maskFromCanvas(layer.mask, doc.width, doc.height);
     else {
-      const d = layer.canvas.getContext('2d', { willReadFrequently: true })
+      const d = layer.renderCanvas().getContext('2d', { willReadFrequently: true })
         .getImageData(0, 0, doc.width, doc.height).data;
       mask = new Uint8ClampedArray(doc.width * doc.height);
       for (let p = 0, i = 3; p < mask.length; p++, i += 4) mask[p] = d[i];
@@ -655,7 +655,7 @@ function deselectLayers(doc) {
 /** The layer Layer Via Copy/Cut reads from — real pixels, not a group or mask. */
 function viaSourceLayer() {
   const l = activeLayer();
-  if (!l || !l.canvas || l.type === LayerType.GROUP) return null;
+  if (!l || !l.pixelKey() || l.type === LayerType.GROUP) return null;
   if (l.editingMask) return null; // "via copy" means the pixels, not the mask
   return l;
 }
@@ -687,7 +687,7 @@ function layerViaSelection(doc, cut) {
 
   const cv = createCanvas(doc.width, doc.height);
   const c = cv.getContext('2d');
-  c.drawImage(layer.canvas, 0, 0);
+  c.drawImage(layer.renderCanvas(), 0, 0);
   c.globalCompositeOperation = 'destination-in';
   c.drawImage(alpha, 0, 0);
 
@@ -1632,7 +1632,7 @@ registerCommands([
   },
   {
     id: 'layer.mask.apply', label: 'Apply',
-    enabled: () => { const l = activeLayer(); return !!(l && l.mask && l.canvas); },
+    enabled: () => { const l = activeLayer(); return !!(l && l.mask && l.pixelKey()); },
     run: () => ops.applyLayerMask(D()),
   },
   {

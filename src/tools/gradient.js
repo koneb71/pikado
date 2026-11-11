@@ -62,6 +62,7 @@ function paintInk(doc, layer, target, base, ink, mode, opacity, extraClip) {
   c.clearRect(0, 0, target.width, target.height);
   c.drawImage(base, 0, 0);
   blendOnto(c, ink, mode, opacity, doc);
+  if (layer.editingMask) layer.touchMask();
 }
 
 /* ------------------------------------------------------------------ */
@@ -185,6 +186,7 @@ class GradientTool extends Tool {
     this.drag = {
       doc, layer, target,
       base: cloneCanvas(target),
+      maskTile: layer.editingMask ? layer.maskTile : null,
       x1: e.x, y1: e.y, x2: e.x, y2: e.y,
       drawn: false,
     };
@@ -235,10 +237,16 @@ class GradientTool extends Tool {
     const d = this.drag;
     if (!d) return;
     this.drag = null;
-    const c = d.target.getContext('2d');
-    c.setTransform(1, 0, 0, 1, 0, 0);
-    c.clearRect(0, 0, d.target.width, d.target.height);
-    c.drawImage(d.base, 0, 0);
+    if (d.maskTile) {
+      const t = d.maskTile;
+      d.layer.setMaskTile(t.canvas, t.x, t.y, t.docWidth, t.docHeight, t.defaultColor);
+    } else {
+      const c = d.target.getContext('2d');
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, d.target.width, d.target.height);
+      c.drawImage(d.base, 0, 0);
+      if (d.layer.editingMask) d.layer.touchMask();
+    }
     d.doc.touch('gradient-cancel');
   }
 

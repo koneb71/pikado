@@ -2,6 +2,7 @@ import { registerTool } from './base.js';
 import { app } from '../core/app.js';
 import { PaintStroke, brushOptionDescriptors, brushFromOptions } from '../paint/brush-engine.js';
 import { ctx2dRead, clamp } from '../core/util.js';
+import { Layer } from '../core/layer.js';
 import { BrushToolBase, tweakDefaults } from './brush.js';
 import { tr } from '../core/i18n.js';
 
@@ -61,7 +62,8 @@ export function historySourceCanvasFor(doc, layer, { warn = true } = {}) {
     if (warn) app.toast(tr('"{name}" does not exist in the history source state.', { name: layer.name }), 'warn');
     return null;
   }
-  const cv = layer.editingMask ? snap.mask : snap.canvas;
+  const source = Layer.fromSnapshot(snap);
+  const cv = layer.editingMask ? source.mask : source.renderCanvas();
   if (!cv) {
     if (warn) app.toast(tr('The history source has no pixels for this layer.'), 'warn');
     return null;

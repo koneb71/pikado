@@ -21,7 +21,7 @@ function sourceImageData(doc, sampleAllLayers) {
     cv = getComposite(doc);
   } else {
     const layer = doc.activeLayer();
-    cv = layer && (layer.editingMask && layer.mask ? layer.mask : layer.canvas);
+    cv = layer && (layer.editingMask && layer.mask ? layer.mask : layer.renderCanvas());
     if (!cv) cv = getComposite(doc);
   }
   if (!cv) return null;

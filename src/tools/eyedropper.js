@@ -24,7 +24,7 @@ import { tr, trn } from '../core/i18n.js';
 function sampleSource(doc, source) {
   if (source === 'layer') {
     const l = doc.activeLayer();
-    return l && l.canvas ? l.canvas : null;
+    return l ? l.renderCanvas() : null;
   }
   return getComposite(doc);
 }
@@ -35,17 +35,20 @@ function sampleSource(doc, source) {
  * @returns {{r,g,b,a}|null}
  */
 export function sampleColor(doc, x, y, size = 1, source = 'all') {
-  const src = sampleSource(doc, source);
+  const tile = source === 'layer' ? doc.activeLayer()?.tile : null;
+  const src = tile ? tile.canvas : sampleSource(doc, source);
   if (!src) return null;
   const r = Math.floor(Math.max(1, size) / 2);
   const cx = Math.floor(x), cy = Math.floor(y);
-  const x0 = clamp(cx - r, 0, src.width - 1);
-  const y0 = clamp(cy - r, 0, src.height - 1);
-  const x1 = clamp(cx + r, 0, src.width - 1);
-  const y1 = clamp(cy + r, 0, src.height - 1);
-  if (cx < 0 || cy < 0 || cx >= src.width || cy >= src.height) return null;
+  const width = tile ? tile.docWidth : src.width, height = tile ? tile.docHeight : src.height;
+  const x0 = clamp(cx - r, 0, width - 1);
+  const y0 = clamp(cy - r, 0, height - 1);
+  const x1 = clamp(cx + r, 0, width - 1);
+  const y1 = clamp(cy + r, 0, height - 1);
+  if (cx < 0 || cy < 0 || cx >= width || cy >= height) return null;
   const w = x1 - x0 + 1, h = y1 - y0 + 1;
-  const d = src.getContext('2d', { willReadFrequently: true }).getImageData(x0, y0, w, h).data;
+  const d = src.getContext('2d', { willReadFrequently: true })
+    .getImageData(x0 - (tile?.x ?? 0), y0 - (tile?.y ?? 0), w, h).data;
   let sr = 0, sg = 0, sb = 0, sa = 0;
   for (let i = 0; i < d.length; i += 4) {
     const a = d[i + 3] / 255;

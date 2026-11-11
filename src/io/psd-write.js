@@ -468,7 +468,7 @@ function collectRecords(list, out) {
       && !shapeCarriesLiveCanvas(layer.shape, layer)) {
       // Live shape layer: the rasterised pixels *and* a vector mask + fill.
       out.push({ layer, kind: 'shape' });
-    } else if (layer.canvas) {
+    } else if (layer.pixelKey()) {
       out.push({ layer, kind: 'layer' });
     }
   }
@@ -503,14 +503,14 @@ function maskPlane(canvas, width, height) {
   return out;
 }
 
-/** Content bounds clamped to the document, or null when the layer is empty. */
+/** PSD layer rectangles may extend beyond the document on any side. */
 function rectOf(layer, doc) {
   const bounds = layer.contentBounds();
   if (!bounds) return null;
-  const left = Math.max(0, bounds.x);
-  const top = Math.max(0, bounds.y);
-  const right = Math.min(doc.width, bounds.x + bounds.width);
-  const bottom = Math.min(doc.height, bounds.y + bounds.height);
+  const left = bounds.x;
+  const top = bounds.y;
+  const right = bounds.x + bounds.width;
+  const bottom = bounds.y + bounds.height;
   if (right <= left || bottom <= top) return null;
   return { left, top, right, bottom };
 }
@@ -881,14 +881,15 @@ function writeLayerRecord(w, record, doc) {
   w.uint32(0);
   const extraStart = w.length;
 
-  // Layer mask data — our masks always cover the whole document.
+  // Linked masks may move outside the document along with their layer.
   if (hasMask) {
+    const mt = layer.maskTile;
     w.uint32(20);
-    w.int32(0);
-    w.int32(0);
-    w.int32(doc.height);
-    w.int32(doc.width);
-    w.byte(0); // default colour: black outside the rectangle (unused here)
+    w.int32(mt?.y ?? 0);
+    w.int32(mt?.x ?? 0);
+    w.int32(mt ? mt.y + mt.canvas.height : doc.height);
+    w.int32(mt ? mt.x + mt.canvas.width : doc.width);
+    w.byte(mt?.defaultColor ?? 0);
     let maskFlags = 0;
     // Bit 0 is "position relative to layer", which is the inverse of Photoshop's
     // link toggle: a linked mask moves with the layer, so it is NOT relative.
@@ -2505,7 +2506,9 @@ function writeChannelData(w, record, plan, doc) {
 
   let planes = null;
   if (rect) {
-    planes = planesOf(layer.canvas, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    const tile = layer.tile;
+    planes = planesOf(layer.pixelKey(), rect.left - (tile?.x ?? 0), rect.top - (tile?.y ?? 0),
+      rect.right - rect.left, rect.bottom - rect.top);
   }
   const rw = rect ? rect.right - rect.left : 0;
   const rh = rect ? rect.bottom - rect.top : 0;
@@ -2514,8 +2517,9 @@ function writeChannelData(w, record, plan, doc) {
     const id = channelIds[i];
     let written;
     if (id === -2) {
+      const mask = layer.maskTile?.canvas || layer.mask;
       written = hasMask && layer.mask
-        ? writeChannel(w, maskPlane(layer.mask, doc.width, doc.height), doc.width, doc.height)
+        ? writeChannel(w, maskPlane(mask, mask.width, mask.height), mask.width, mask.height)
         : writeEmptyChannel(w);
     } else if (!planes) {
       written = writeEmptyChannel(w);

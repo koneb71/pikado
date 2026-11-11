@@ -1376,7 +1376,7 @@ async function buildLeafLayer(rec, info, doc, ctx) {
   return layer;
 }
 
-/** Rebuild a user layer mask as a document-sized greyscale canvas. */
+/** Keep mask samples outside the document, just like layer pixel tiles. */
 async function attachMask(layer, rec, doc, ctx) {
   const m = rec.mask;
   if (!m) return;
@@ -1385,11 +1385,7 @@ async function attachMask(layer, rec, doc, ctx) {
   const mw = m.right - m.left;
   const mh = m.bottom - m.top;
 
-  const canvas = createCanvas(doc.width, doc.height);
-  const c = canvas.getContext('2d');
-  c.fillStyle = m.defaultColor >= 128 ? '#ffffff' : '#000000';
-  c.fillRect(0, 0, doc.width, doc.height);
-
+  let tile = null;
   if (mw > 0 && mh > 0 && mw * mh <= 200e6) {
     const plane = await decodeChannel(ctx.buf, channel, mw, mh, ctx, layer.name);
     if (plane) {
@@ -1399,13 +1395,19 @@ async function attachMask(layer, rec, doc, ctx) {
         const v = plane[p];
         d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
       }
-      const tile = createCanvas(mw, mh);
+      tile = createCanvas(mw, mh);
       tile.getContext('2d').putImageData(img, 0, 0);
-      c.drawImage(tile, m.left, m.top);
     }
   }
-
-  layer.mask = canvas;
+  if (tile) {
+    layer.setMaskTile(tile, m.left, m.top, doc.width, doc.height, m.defaultColor);
+  } else {
+    const canvas = createCanvas(doc.width, doc.height);
+    const c = canvas.getContext('2d');
+    c.fillStyle = m.defaultColor >= 128 ? '#ffffff' : '#000000';
+    c.fillRect(0, 0, doc.width, doc.height);
+    layer.mask = canvas;
+  }
   layer.maskEnabled = !m.disabled;
   layer.maskInverted = !!m.inverted;
   // "Position relative to layer" is the inverse of the link toggle.

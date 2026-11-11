@@ -325,7 +325,7 @@ function historyBytes(doc) {
   let bytes = 0;
   const walk = (list) => {
     for (const s of list || []) {
-      for (const cv of [s.canvas, s.mask]) {
+      for (const cv of [s.canvas, s.mask, s.tile?.canvas, s.maskTile?.canvas]) {
         if (cv && !seen.has(cv)) {
           seen.add(cv);
           bytes += cv.width * cv.height * 4;

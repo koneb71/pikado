@@ -16,6 +16,7 @@ import './suites/paint.test.js';
 import './suites/filters.test.js';
 import './suites/adjustments.test.js';
 import './suites/layers.test.js';
+import './suites/move-bounds.test.js';
 import './suites/effects.test.js';
 import './suites/text-vector.test.js';
 import './suites/fonts.test.js';

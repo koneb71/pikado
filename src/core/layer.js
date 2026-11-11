@@ -96,7 +96,8 @@ export class Layer {
     /** @type {{canvas: HTMLCanvasElement, x: number, y: number}|null} */
     this._tile = opts.tile || null;
     /** @type {HTMLCanvasElement|null} document-sized greyscale mask (white = visible) */
-    this.mask = opts.mask || null;
+    this._mask = opts.mask || null;
+    this._maskTile = opts.maskTile || null;
     this.maskEnabled = opts.maskEnabled !== false;
     this.maskLinked = opts.maskLinked !== false;
     this.maskInverted = !!opts.maskInverted;
@@ -153,6 +154,46 @@ export class Layer {
   set canvas(cv) {
     this._full = cv || null;
     this._tile = null;
+  }
+
+  /** A document-sized mask view; reads retain the off-canvas source. Writers
+   * call touchMask() after painting, which makes the edited view authoritative. */
+  get mask() {
+    if (!this._mask && this._maskTile) {
+      const t = this._maskTile;
+      this._mask = createCanvas(t.docWidth, t.docHeight);
+      const c = ctx2d(this._mask);
+      if (t.defaultColor) {
+        c.fillStyle = `rgb(${t.defaultColor},${t.defaultColor},${t.defaultColor})`;
+        c.fillRect(0, 0, t.docWidth, t.docHeight);
+      }
+      c.drawImage(t.canvas, t.x, t.y);
+    }
+    return this._mask;
+  }
+
+  set mask(value) {
+    this._mask = value || null;
+    this._maskTile = null;
+  }
+
+  get maskTile() { return this._maskTile; }
+
+  setMaskTile(canvas, x, y, docWidth, docHeight, defaultColor = 0) {
+    this._maskTile = { canvas, x, y, docWidth, docHeight, defaultColor };
+    this._mask = null;
+    this.maskVersion++;
+    this._maskAlphaVersion = -1;
+    this.thumbDirty = true;
+  }
+
+  /** Read-only document view for compositing; never replaces the stored tile. */
+  renderCanvas() {
+    if (!this._tile) return this._full;
+    const t = this._tile;
+    const out = createCanvas(t.docWidth, t.docHeight);
+    ctx2d(out).drawImage(t.canvas, t.x, t.y);
+    return out;
   }
 
   /**
@@ -244,8 +285,11 @@ export class Layer {
       if (this._full) this._full = cloneCanvas(this._full);
       else if (this._tile) this._tile = { ...this._tile, canvas: cloneCanvas(this._tile.canvas) };
     }
-    if (this.mask && surface !== 'canvas') {
-      this.mask = cloneCanvas(this.mask);
+    if ((this._mask || this._maskTile) && surface !== 'canvas') {
+      if (this._maskTile) {
+        this._maskTile = { ...this._maskTile, canvas: cloneCanvas(this._maskTile.canvas) };
+        this._mask = null;
+      } else this._mask = cloneCanvas(this._mask);
       this.maskVersion++;
       this._maskAlphaVersion = -1;
     }
@@ -277,6 +321,8 @@ export class Layer {
   }
 
   touchMask() {
+    // Painting tools edit the materialised document view.
+    if (this._mask) this._maskTile = null;
     this.maskVersion++;
     this._maskAlphaVersion = -1;
     this.thumbDirty = true;
@@ -327,7 +373,8 @@ export class Layer {
       locked: { ...this.locked },
       canvas: this._full ? cloneCanvas(this._full) : null,
       tile: this._tile ? { ...this._tile, canvas: cloneCanvas(this._tile.canvas) } : null,
-      mask: cloneCanvas(this.mask),
+      mask: this._maskTile ? null : cloneCanvas(this._mask),
+      maskTile: this._maskTile ? { ...this._maskTile, canvas: cloneCanvas(this._maskTile.canvas) } : null,
       maskEnabled: this.maskEnabled,
       maskLinked: this.maskLinked,
       maskInverted: this.maskInverted,
@@ -368,7 +415,8 @@ export class Layer {
       // materialise every layer in the document on every single commit.
       canvas: this._full,
       tile: this._tile,
-      mask: this.mask,
+      mask: this._maskTile ? null : this._mask,
+      maskTile: this._maskTile,
       maskEnabled: this.maskEnabled,
       maskLinked: this.maskLinked,
       maskInverted: this.maskInverted,

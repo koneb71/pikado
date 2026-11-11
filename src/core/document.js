@@ -567,7 +567,8 @@ export class PikaDocument extends Emitter {
       // size, which is the number that matters.
       if (l._full) add(l._full);
       else if (l._tile) add(l._tile.canvas);
-      add(l.mask);
+      add(l._mask);
+      if (l.maskTile) add(l.maskTile.canvas);
       /*
        * The derived caches count too. `_maskAlpha` is a whole extra
        * document-sized canvas per masked layer, and a smart layer's render cache

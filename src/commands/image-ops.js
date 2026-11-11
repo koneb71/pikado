@@ -423,31 +423,37 @@ function findSnapshot(list, id) {
   return null;
 }
 
-/** The layer's pixels one history step back, or null when they did not change. */
-function previousPixels(doc, layer) {
+/** The previous pixel state, inspected without materialising either tile. */
+function previousPixelState(doc, layer) {
   const hist = doc.history;
   if (!hist.canUndo || !layer) return null;
   const prev = hist.states[hist.index - 1];
   if (!prev) return null;
   const snap = findSnapshot(prev.state.layers, layer.id);
-  if (!snap || !snap.canvas || !layer.canvas) return null;
-  if (snap.canvas === layer.canvas) return null;
-  if (snap.canvas.width !== layer.canvas.width || snap.canvas.height !== layer.canvas.height) return null;
-  return snap.canvas;
+  const before = snap && (snap.canvas || snap.tile?.canvas);
+  const after = layer.pixelKey();
+  if (!before || !after) return null;
+  const tile = layer.tile;
+  if (before === after && (snap.tile?.x ?? 0) === (tile?.x ?? 0)
+    && (snap.tile?.y ?? 0) === (tile?.y ?? 0)) return null;
+  if ((snap.tile?.docWidth ?? before.width) !== (tile?.docWidth ?? after.width)
+    || (snap.tile?.docHeight ?? before.height) !== (tile?.docHeight ?? after.height)) return null;
+  return snap;
 }
 
 /** True when Edit > Fade can do something meaningful right now. */
 export function canFade(doc) {
   if (!doc) return false;
-  return !!previousPixels(doc, doc.activeLayer());
+  return !!previousPixelState(doc, doc.activeLayer());
 }
 
 /** Edit > Fade — re-blends the last pixel operation against what it replaced. */
 export async function showFadeDialog(doc) {
   const layer = doc.activeLayer();
-  const before = previousPixels(doc, layer);
-  if (!before) { app.toast(tr('There is nothing to fade.')); return; }
-  const after = layer.canvas;
+  const previous = previousPixelState(doc, layer);
+  if (!previous) { app.toast(tr('There is nothing to fade.')); return; }
+  const before = Layer.fromSnapshot(previous).renderCanvas();
+  const after = layer.renderCanvas();
   // What is being faded, kept as a message so the new step can be shown in
   // whichever language the History panel is in.
   const entry = doc.history.states[doc.history.index];
@@ -495,7 +501,7 @@ function layerOptions(doc, extra = []) {
   return [
     { value: '__merged__', label: tr('Merged') },
     ...extra,
-    ...doc.flatLayers().filter((l) => l.canvas || l.type === LayerType.GROUP).map((l) => ({ value: l.id, label: l.name })),
+    ...doc.flatLayers().filter((l) => l.pixelKey() || l.type === LayerType.GROUP).map((l) => ({ value: l.id, label: l.name })),
   ];
 }
 
@@ -504,7 +510,7 @@ function sourceCanvasFor(doc, id) {
   const l = doc.findLayer(id);
   if (!l) return compositeDocument(doc);
   if (l.type === LayerType.GROUP) return flattenLayers(doc, [l]);
-  return l.canvas ? cloneCanvas(l.canvas) : createCanvas(doc.width, doc.height);
+  return l.pixelKey() ? cloneCanvas(l.renderCanvas()) : createCanvas(doc.width, doc.height);
 }
 
 /** Extract one channel as a canvas, optionally inverted. */
@@ -527,11 +533,12 @@ function channelCanvas(src, channel, invert) {
 /** Image > Apply Image — blends another layer/channel onto the active layer. */
 export async function showApplyImageDialog(doc) {
   const target = doc.activeLayer();
-  if (!target || !target.canvas) { app.toast(tr('Apply Image needs a pixel layer.')); return; }
+  if (!target || !target.pixelKey()) { app.toast(tr('Apply Image needs a pixel layer.')); return; }
+  const base = target.renderCanvas();
 
   const build = (s) => {
     const src = channelCanvas(sourceCanvasFor(doc, s.source), s.channel, s.invert);
-    let out = blendCanvases(target.canvas, src, s.blendMode, s.opacity / 100);
+    let out = blendCanvases(base, src, s.blendMode, s.opacity / 100);
     if (s.useSelection && doc.selection.active) {
       const masked = createCanvas(doc.width, doc.height);
       const mc = masked.getContext('2d');
@@ -539,7 +546,7 @@ export async function showApplyImageDialog(doc) {
       mc.globalCompositeOperation = 'destination-in';
       mc.drawImage(doc.selection.toAlphaCanvas(), 0, 0);
       mc.globalCompositeOperation = 'destination-over';
-      mc.drawImage(target.canvas, 0, 0);
+      mc.drawImage(base, 0, 0);
       out = masked;
     }
     if (s.preserveTransparency) {
@@ -547,7 +554,7 @@ export async function showApplyImageDialog(doc) {
       const kc = kept.getContext('2d');
       kc.drawImage(out, 0, 0);
       kc.globalCompositeOperation = 'destination-in';
-      kc.drawImage(target.canvas, 0, 0);
+      kc.drawImage(base, 0, 0);
       out = kept;
     }
     return out;

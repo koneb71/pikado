@@ -58,7 +58,7 @@ export function getPatterns() {
 export async function definePattern(doc) {
   if (!doc) return null;
   const layer = doc.activeLayer();
-  const src = layer && layer.canvas ? layer.canvas : compositeDocument(doc);
+  const src = layer && layer.pixelKey() ? layer.renderCanvas() : compositeDocument(doc);
   const b = doc.selection.active ? doc.selection.bounds() : { x: 0, y: 0, width: doc.width, height: doc.height };
   if (!b || b.width < 1 || b.height < 1) {
     app.toast(tr('Select a rectangle to define a pattern from.'));
@@ -85,8 +85,8 @@ export async function definePattern(doc) {
 function targetSurface(doc, layer) {
   if (!layer) return null;
   if (layer.editingMask && layer.mask) return { canvas: layer.mask, isMask: true };
-  if (!layer.canvas) return null;
-  return { canvas: layer.canvas, isMask: false };
+  if (!layer.pixelKey()) return null;
+  return { canvas: layer.renderCanvas(), isMask: false };
 }
 
 function canEdit(doc, layer) {
@@ -206,9 +206,11 @@ function historyCanvas(doc, layer) {
     return null;
   };
   const snap = find(first.state.layers);
-  if (!snap || !snap.canvas) return null;
+  if (!snap) return null;
+  const source = Layer.fromSnapshot(snap).renderCanvas();
+  if (!source) return null;
   const cv = createCanvas(doc.width, doc.height);
-  cv.getContext('2d').drawImage(snap.canvas, 0, 0);
+  cv.getContext('2d').drawImage(source, 0, 0);
   return cv;
 }
 
@@ -685,7 +687,7 @@ export function contentAwareFill(doc, opts = {}) {
     return false;
   }
 
-  const source = opts.sampleAllLayers ? compositeDocument(doc) : layer.canvas;
+  const source = opts.sampleAllLayers ? compositeDocument(doc) : layer.renderCanvas();
   if (!source) {
     app.toast(tr('This layer has no pixels to sample.'));
     return false;
