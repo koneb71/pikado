@@ -4,6 +4,7 @@ import { createCanvas } from '../core/util.js';
 import { trn } from '../core/i18n.js';
 import { snapLines } from '../core/snapping.js';
 import { OVERLAY } from './brand.js';
+import { guideAt, guideSegment, isGuideDragging, startGuideDrag } from './guides.js';
 import {
   artworkOf, clearDropTarget, copyIntoDocument, documentTabUnder, setDropTarget,
 } from './cross-doc-drag.js';
@@ -234,13 +235,15 @@ export class CanvasView {
     if (!doc.guides.length) return;
     const view = app.viewport;
     ctx.save();
-    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
-    ctx.lineWidth = 1 / view.scale;
+    // Guides belong to document coordinates, but span the entire workspace.
+    ctx.lineWidth = 1;
     ctx.strokeStyle = OVERLAY.guide;
     ctx.beginPath();
     for (const g of doc.guides) {
-      if (g.axis === 'v') { ctx.moveTo(g.pos, 0); ctx.lineTo(g.pos, doc.height); }
-      else { ctx.moveTo(0, g.pos); ctx.lineTo(doc.width, g.pos); }
+      const segment = guideSegment(g, view);
+      if (!segment) continue;
+      ctx.moveTo(segment[0].x, segment[0].y);
+      ctx.lineTo(segment[1].x, segment[1].y);
     }
     ctx.stroke();
     ctx.restore();
@@ -312,6 +315,7 @@ export class CanvasView {
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => this._onDown(e));
     c.addEventListener('pointermove', (e) => this._onMove(e));
+    c.addEventListener('pointerleave', () => { if (!isGuideDragging()) this.updateCursor(); });
     window.addEventListener('pointerup', (e) => this._onUp(e));
     window.addEventListener('pointercancel', (e) => this._onUp(e));
     c.addEventListener('dblclick', (e) => {
@@ -342,6 +346,7 @@ export class CanvasView {
 
   _onDown(e) {
     if (!app.activeDoc) return;
+    if (isGuideDragging()) return;
 
     // The right button opens the context menu and must never reach the tool —
     // otherwise right-clicking with the brush lays down a stroke behind the menu.
@@ -358,6 +363,11 @@ export class CanvasView {
       e.preventDefault();
       return;
     }
+    const guide = e.button === 0 && this._guideAt(ev);
+    if (guide && startGuideDrag(this.area, guide, e, { onEnd: () => this.updateCursor() })) {
+      this.canvas.style.cursor = guide.axis === 'v' ? 'col-resize' : 'row-resize';
+      return;
+    }
     this._pointerDown = true;
     if (app.tool) app.tool.onPointerDown(ev);
     e.preventDefault();
@@ -365,6 +375,7 @@ export class CanvasView {
 
   _onMove(e) {
     if (!app.activeDoc) return;
+    if (isGuideDragging()) return;
     const ev = this._normalize(e);
     this.cursorDoc = { x: ev.x, y: ev.y };
     app.emit('cursor-move', ev);
@@ -377,6 +388,9 @@ export class CanvasView {
       this._lastDoc = { x: ev.x, y: ev.y };
       return;
     }
+    const guide = !this._pointerDown && this._guideAt(ev);
+    if (guide) this.canvas.style.cursor = guide.axis === 'v' ? 'col-resize' : 'row-resize';
+    else this.updateCursor();
     if (app.tool) app.tool.onPointerMove(ev);
     this._crossDocHover(e);
     this._lastDoc = { x: ev.x, y: ev.y };
@@ -494,6 +508,13 @@ export class CanvasView {
   setSpaceDown(down) {
     this._spaceDown = down;
     this.updateCursor();
+  }
+
+  _guideAt(ev) {
+    // Match the Move tool convention; Ctrl/Cmd also lets other tools pick guides.
+    if (this._spaceDown || app.transformSession) return null;
+    if (app.tool?.id !== 'move' && !ev.ctrlKey && !ev.metaKey) return null;
+    return guideAt(ev.sx, ev.sy);
   }
 
   updateCursor() {

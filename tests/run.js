@@ -11,6 +11,7 @@ import { runAll } from './harness.js';
 
 // Suites — import for the side effect of registering themselves.
 import './suites/core.test.js';
+import './suites/guides.test.js';
 import './suites/compositor.test.js';
 import './suites/paint.test.js';
 import './suites/filters.test.js';

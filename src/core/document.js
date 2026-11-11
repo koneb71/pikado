@@ -335,7 +335,7 @@ export class PikaDocument extends Emitter {
       selectionMask: this.selection.mask,
       alphaChannels: this.alphaChannels.map((c) => ({ ...c })),
       paths: structuredClone(this.paths),
-      guides: [...this.guides],
+      guides: this.guides.map((g) => ({ ...g })),
       quickMask: this.quickMask,
       /*
        * The colour profile belongs in history because Assign and Convert are both
@@ -382,7 +382,7 @@ export class PikaDocument extends Emitter {
     this.selection.set(s.selectionMask || null);
     this.alphaChannels = s.alphaChannels.map((c) => ({ ...c }));
     this.paths = structuredClone(s.paths);
-    this.guides = [...s.guides];
+    this.guides = s.guides.map((g) => ({ ...g }));
     this.quickMask = s.quickMask;
     if (s.profile !== undefined) this.profile = s.profile;
     if (s.frames !== undefined) this.frames = s.frames ? structuredClone(s.frames) : null;
