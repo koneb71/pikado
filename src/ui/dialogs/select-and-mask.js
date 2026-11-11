@@ -674,10 +674,10 @@ function underlyingComposite(doc) {
   const c = ctx2d(out);
   for (let i = doc.layers.length - 1; i > idx; i--) {
     const l = doc.layers[i];
-    if (!l.visible || !l.canvas) continue;
+    if (!l.visible || !l.pixelKey()) continue;
     c.save();
     c.globalAlpha = l.opacity;
-    c.drawImage(l.canvas, 0, 0);
+    c.drawImage(l.renderCanvas(), 0, 0);
     c.restore();
   }
   return out;

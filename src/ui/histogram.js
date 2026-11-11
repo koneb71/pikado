@@ -172,12 +172,13 @@ export function currentHistogram() {
   const doc = app.activeDoc;
   if (!doc) return emptyHistogram();
   const layer = doc.activeLayer();
-  if (layer && layer.canvas && !layer.editingMask) {
-    const cached = docCache.get(layer.canvas);
+  if (layer && layer.pixelKey() && !layer.editingMask) {
+    const key = layer.pixelKey();
+    // A tile can change position without changing its pixel-buffer identity.
+    const cached = !layer.tile && docCache.get(key);
     if (cached) return cached;
-    const hist = histogramForCanvas(layer.canvas);
-    // Layer canvases are copy-on-write, so identity keying stays correct.
-    docCache.set(layer.canvas, hist);
+    const hist = histogramForCanvas(layer.renderCanvas());
+    if (!layer.tile) docCache.set(key, hist);
     if (hist.count > 0) return hist;
   }
   return histogramForDocument(doc);

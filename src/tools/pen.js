@@ -188,7 +188,7 @@ function paintablePathLayer(doc) {
   if (!l) return null;
   if (l.locked.all || l.locked.pixels) return null;
   if (l.editingMask && l.mask) return l;
-  return l.type === LayerType.RASTER && l.canvas ? l : null;
+  return l.type === LayerType.RASTER && l.pixelKey() ? l : null;
 }
 
 /** Flatten a subpath into a polyline the brush engine can walk. */

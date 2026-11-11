@@ -26,7 +26,7 @@ function sourceCanvas(doc, layer) {
   if (!layer) return null;
   if (layer.editingMask && layer.mask) return layer.mask;
   if (layer.type === LayerType.GROUP) return flattenLayers(doc, [layer]);
-  return layer.canvas;
+  return layer.renderCanvas();
 }
 
 function selectionBounds(doc) {

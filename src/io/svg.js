@@ -496,19 +496,20 @@ function escapeXml(s) {
  * everything except layer opacity and blend mode, which become SVG attributes.
  */
 function bakedCanvas(layer, doc) {
-  if (!layer.canvas) return null;
+  const source = layer.renderCanvas();
+  if (!source) return null;
   const styled = hasStyles(layer);
   const masked = !!(layer.mask && layer.maskEnabled);
   const fill = layer.fillOpacity == null ? 1 : layer.fillOpacity;
-  if (!styled && !masked && fill >= 1) return layer.canvas;
+  if (!styled && !masked && fill >= 1) return source;
 
   const out = createCanvas(doc.width, doc.height);
   const c = out.getContext('2d');
   if (styled) {
-    applyLayerStyles(c, layer.canvas, layer, doc, fill);
+    applyLayerStyles(c, source, layer, doc, fill);
   } else {
     c.globalAlpha = fill;
-    c.drawImage(layer.canvas, 0, 0);
+    c.drawImage(source, 0, 0);
     c.globalAlpha = 1;
   }
   if (masked) {
