@@ -115,16 +115,20 @@ const KEY_NAMES = {
 };
 const KEY_NAME_RE = new RegExp(`\\b(${Object.keys(KEY_NAMES).join('|')})\\b`, 'g');
 
-/** Human-readable accelerator for menus. */
+/**
+ * Human-readable accelerator for menus. macOS shows its modifiers as ⌘⌥⇧,
+ * but a named key such as PageDown or Delete is still a word there.
+ */
 export function formatAccel(accel) {
   if (!accel) return '';
-  if (!IS_MAC) return accel.replace(KEY_NAME_RE, (k) => tr(KEY_NAMES[k]));
-  return accel
+  const named = (s) => s.replace(KEY_NAME_RE, (k) => tr(KEY_NAMES[k]));
+  if (!IS_MAC) return named(accel);
+  return named(accel
     .replace(/Ctrl\+/g, '⌘')
     .replace(/Cmd\+/g, '⌘')
     .replace(/Alt\+/g, '⌥')
     .replace(/Shift\+/g, '⇧')
-    .replace(/\+/g, '');
+    .replace(/\+/g, ''));
 }
 
 /** Normalised binding key for a KeyboardEvent, e.g. "ctrl+shift+s". */

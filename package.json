@@ -33,7 +33,7 @@
     "test": "vite --open /tests/"
   },
   "devDependencies": {
-    "vite": "^8.1.5"
+    "vite": "^8.3.8"
   },
   "dependencies": {
     "libheif-js": "1.23.5"

@@ -148,9 +148,12 @@ export function buildStatusBar(rootEl) {
   });
 
   const queue = rafThrottle(sync);
-  for (const ev of ['view-change', 'active-doc', 'docs-change', 'doc-resize', 'doc-change', 'doc-structure', 'tool-change', 'history-change', 'ready']) {
+  for (const ev of ['view-change', 'active-doc', 'docs-change', 'doc-resize', 'doc-change', 'doc-structure', 'history-change', 'ready']) {
     app.on(ev, queue);
   }
+  // A tool switch is one discrete change, and the tool name and hint are what
+  // it changes: show them at once, not on a next frame a hidden tab never draws.
+  app.on('tool-change', sync);
   sync();
 }
 

@@ -209,7 +209,13 @@ suite('i18n: forms translate what they declare, never what they are given', asyn
 
 suite('i18n: keyboard names follow the language', async (t) => {
   const { formatAccel, IS_MAC } = await import('/src/commands/registry.js');
-  if (IS_MAC) { t.ok(true, 'macOS shows ⌘⌥⇧ symbols, which need no translation'); return; }
+  // Verified to fail: with formatAccel's macOS branch returning before the key
+  // names, a German Mac menu shows ⌘PageDown, not ⌘Bild ab.
+  await withLanguage(t, 'xx', { 'Delete|key': 'Entf', PageDown: 'Bild ab' }, () => {
+    t.eq(formatAccel('Delete'), 'Entf', 'a named key follows the language on every platform');
+    t.eq(formatAccel('Ctrl+PageDown'), IS_MAC ? '⌘Bild ab' : 'Ctrl+Bild ab', 'macOS included, after its ⌘');
+  });
+  if (IS_MAC) { t.ok(true, 'macOS shows its modifiers as ⌘⌥⇧ symbols, which need no translation'); return; }
   t.eq(formatAccel('Ctrl+Shift+S'), 'Ctrl+Shift+S', 'English unchanged');
   await withLanguage(t, 'xx', { Ctrl: 'Strg', Shift: 'Umschalt', Alt: 'Alt' }, () => {
     t.eq(formatAccel('Ctrl+Shift+S'), 'Strg+Umschalt+S', 'German keyboards say Strg and Umschalt');
@@ -382,6 +388,7 @@ suite('i18n: every menu, tool and dialog goes through tr()', async (t) => {
   const dataNames = (s) => app.docs.some((d) => s.startsWith(d.name)) || layerNames.has(s);
   const startTool = app.tool && app.tool.id;
   const found = { menus: [], options: [], status: [], context: [], chrome: [], dialogs: [] };
+  const lagging = [];
 
   await loadLanguage(PSEUDO_LANGUAGE);
   try {
@@ -422,6 +429,8 @@ suite('i18n: every menu, tool and dialog goes through tr()', async (t) => {
         const node = document.querySelector(`#statusbar ${sel}`);
         if (node) found.status.push(`${tool.id}: ${node.textContent}`);
       }
+      const shown = document.querySelector('#statusbar .pk-sb-tool');
+      if (shown && shown.textContent !== tr(tool.name)) lagging.push(tool.id);
       let items = [];
       try {
         items = resolveItems(await tool.contextMenu({ x: 20, y: 20, sx: 20, sy: 20, button: 2, buttons: 2, pressure: 0.5, native: null }) || []);
@@ -478,6 +487,10 @@ suite('i18n: every menu, tool and dialog goes through tr()', async (t) => {
   t.gt(found.options.length, 150, `the options bar was read for every tool (${found.options.length} strings)`);
   t.eq(leaks(found.menus, dataNames), [], 'menus: nothing escaped translation');
   t.eq(leaks(found.options.map(strip)), [], 'options bar: nothing escaped translation');
+  // Verified to fail: with tool-change queued for the next frame, as the rest
+  // of the status bar is, a hidden tab never draws it and the bar still shows
+  // the English tool from before the sweep, which the leak check below reports.
+  t.eq(lagging, [], 'the status bar names each tool as soon as it is chosen');
   t.eq(leaks(found.status.map(strip)), [], 'status bar: nothing escaped translation');
   t.eq(leaks(found.context.map(strip)), [], 'right-click menus: nothing escaped translation');
   t.eq(leaks(found.chrome, dataNames), [], 'toolbar, tabs, panel tabs and start screen: nothing escaped translation');
@@ -543,7 +556,7 @@ suite('i18n: a context separates one English word with two meanings', async (t) 
   await withLanguage(t, 'xx', { Delete: 'Löschen', 'Delete|key': 'Entf' }, () => {
     t.eq(tr('Delete'), 'Löschen', 'the command');
     t.eq(tr('Delete|key'), 'Entf', 'the key');
-    if (!IS_MAC) t.eq(formatAccel('Delete'), 'Entf', 'and an accelerator names the key, not the command');
+    t.eq(formatAccel('Delete'), 'Entf', 'and an accelerator names the key, not the command');
   });
   await withLanguage(t, 'xx', { Delete: 'Löschen' }, () => {
     t.eq(tr('Delete|key'), 'Delete', 'an untranslated context falls back to English, not to the other meaning');
