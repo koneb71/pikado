@@ -12,7 +12,9 @@
  */
 
 import { registerFilter, separableConvolve, gaussianKernel } from './registry.js';
-import { blurImageData } from '../render/fast-blur.js';
+import { blurImageData, supportsCanvasFilter } from '../render/fast-blur.js';
+import { IDENTITY_STAGE } from '../render/gpu-filters.js';
+import { imageFilterStage, filterOnGPU } from '../render/gpu-image-filters.js';
 
 /* ------------------------------------------------------------------ */
 /* Premultiplied float buffers                                         */
@@ -250,6 +252,17 @@ export function gaussianBlurBuffer(buf, w, h, sigma, ch = 4) {
   for (const r of boxRadiiForGauss(sigma, 3)) {
     if (r >= 1) { boxPassH(buf, w, h, Math.round(r), ch); boxPassV(buf, w, h, Math.round(r), ch); }
   }
+}
+
+/**
+ * gaussianBlurBuffer's passes as a blur plan for a GPU stage
+ * (src/render/gpu-image-filters.js), or null when it blurs nothing.
+ * @param {number} sigma
+ */
+export function gaussianBlurPlan(sigma) {
+  if (!(sigma > 0.05)) return null;
+  if (sigma <= 2.5) return { kernel: gaussianKernel(sigma) };
+  return { boxes: boxRadiiForGauss(sigma, 3).filter((r) => r >= 1).map((r) => Math.round(r)) };
 }
 
 /* ------------------------------------------------------------------ */
@@ -625,14 +638,26 @@ function rangePass(src, dst, w, h, taps, spatial, thr, tent, vertical) {
   }
 }
 
-function rangeBlurImageData(imageData, radius, threshold, tent, step) {
-  const w = imageData.width, h = imageData.height, d = imageData.data;
+function rangeTaps(radius, step) {
   const taps = [];
   for (let k = step; k <= radius; k += step) taps.push(k);
-  if (!taps.length) return;
   const spatial = new Float32Array(taps.length);
   const sig2 = 2 * (radius * 0.6) * (radius * 0.6) || 1;
   for (let i = 0; i < taps.length; i++) spatial[i] = Math.exp(-(taps[i] * taps[i]) / sig2);
+  return { taps, spatial };
+}
+
+/** rangeBlurImageData as a GPU stage. */
+function rangeBlurStage(radius, threshold, tent, step) {
+  const { taps, spatial } = rangeTaps(radius, step);
+  if (!taps.length) return IDENTITY_STAGE;
+  return imageFilterStage('range', { taps, spatial, thr: threshold, tent });
+}
+
+function rangeBlurImageData(imageData, radius, threshold, tent, step) {
+  const w = imageData.width, h = imageData.height, d = imageData.data;
+  const { taps, spatial } = rangeTaps(radius, step);
+  if (!taps.length) return;
   const a = new Float32Array(d.length);
   for (let i = 0; i < d.length; i++) a[i] = d[i];
   const b = new Float32Array(d.length);
@@ -685,16 +710,24 @@ export function sobelMagnitude(lum, w, h) {
 
 const SOFT3 = new Float32Array([0.25, 0.5, 0.25]);
 
+// separableConvolve on the GPU: unpremultiplied with its 0.5 cut-off.
+const soft3Stage = () => imageFilterStage('blur', { blur: { kernel: SOFT3 }, cut: 0.5 });
+
 registerFilter({
   id: 'blur',
   name: 'Blur',
   menu: 'Blur',
   params: [],
   needsDialog: false,
+  gpuStage: soft3Stage,
   apply(imageData) {
+    if (filterOnGPU(imageData, soft3Stage())) return;
     separableConvolve(imageData, SOFT3);
   },
 });
+
+// Three passes, each rounded to bytes as the CPU's are.
+const blurMoreStages = () => [soft3Stage(), soft3Stage(), soft3Stage()];
 
 registerFilter({
   id: 'blur-more',
@@ -702,7 +735,9 @@ registerFilter({
   menu: 'Blur',
   params: [],
   needsDialog: false,
+  gpuStage: blurMoreStages,
   apply(imageData) {
+    if (filterOnGPU(imageData, blurMoreStages())) return;
     separableConvolve(imageData, SOFT3);
     separableConvolve(imageData, SOFT3);
     separableConvolve(imageData, SOFT3);
@@ -735,6 +770,10 @@ registerFilter({
   },
 });
 
+function boxBlurStage(p) {
+  return imageFilterStage('blur', { blur: p.radius >= 1 ? { boxes: [Math.round(p.radius)] } : null, cut: 0.4 });
+}
+
 registerFilter({
   id: 'box-blur',
   name: 'Box Blur...',
@@ -742,13 +781,30 @@ registerFilter({
   params: [
     { key: 'radius', label: 'Radius', type: 'slider', min: 1, max: 500, step: 1, default: 8, unit: 'px' },
   ],
+  gpuStage: boxBlurStage,
   apply(imageData, p) {
+    if (filterOnGPU(imageData, boxBlurStage(p))) return;
     const w = imageData.width, h = imageData.height;
     const buf = premultiplyImageData(imageData);
     boxBlurBuffer(buf, w, h, p.radius, p.radius, 4);
     unpremultiplyInto(buf, imageData);
   },
 });
+
+/** The JS passes (premultiply, gaussianBlurBuffer, unpremultiplyInto) as a GPU stage. */
+export function gaussianBlurGPUStage(sigma) {
+  return imageFilterStage('blur', { blur: gaussianBlurPlan(sigma), cut: 0.4 });
+}
+
+// A working Canvas2D blur (Chrome, Firefox) is the fastest path: about half
+// the GPU stage's time at 12 MP, most of which is the readback. Without one
+// (Safari) WebGPU runs the JS passes' maths, so Gaussian Blur also joins GPU
+// filter chains there.
+function gaussianBlurStage(p) {
+  if (!(p.radius > 0.05)) return IDENTITY_STAGE;
+  if (supportsCanvasFilter()) return null;
+  return gaussianBlurGPUStage(p.radius);
+}
 
 registerFilter({
   id: 'gaussian-blur',
@@ -757,10 +813,12 @@ registerFilter({
   params: [
     { key: 'radius', label: 'Radius', type: 'slider', min: 0.1, max: 1000, step: 0.1, default: 4, unit: 'px' },
   ],
+  gpuStage: gaussianBlurStage,
   apply(imageData, p) {
     if (!(p.radius > 0.05)) return;
-    // The GPU path is ~30x faster on large images; the JS box passes stay as
-    // the fallback for small images and browsers without Canvas2D filters.
+    // Canvas2D's own blur where the browser has one, else WebGPU, else the JS
+    // passes (also for images under GPU_MIN_PIXELS).
+    if (filterOnGPU(imageData, gaussianBlurStage(p))) return;
     blurImageData(imageData, p.radius, (img, sigma) => {
       const buf = premultiplyImageData(img);
       gaussianBlurBuffer(buf, img.width, img.height, sigma, 4);
@@ -943,6 +1001,14 @@ registerFilter({
 // Maximum number of kernel taps per separable pass at each quality setting.
 const SMART_QUALITY = { low: 4, medium: 8, high: 16 };
 
+// Normal mode only: the edge modes stay on the CPU.
+function smartBlurStage(p) {
+  if (p.mode !== 'normal') return null;
+  const r = Math.max(1, Math.round(p.radius));
+  const step = Math.max(1, Math.ceil(r / (SMART_QUALITY[p.quality] || 8)));
+  return rangeBlurStage(r, Math.max(1, p.threshold * 2.55), false, step);
+}
+
 registerFilter({
   id: 'smart-blur',
   name: 'Smart Blur...',
@@ -960,7 +1026,9 @@ registerFilter({
       { value: 'overlay-edge', label: 'Overlay Edge' },
     ] },
   ],
+  gpuStage: smartBlurStage,
   apply(imageData, p) {
+    if (filterOnGPU(imageData, smartBlurStage(p))) return;
     const w = imageData.width, h = imageData.height, d = imageData.data;
     const n = w * h;
     const r = Math.max(1, Math.round(p.radius));
@@ -990,6 +1058,11 @@ registerFilter({
   },
 });
 
+function surfaceBlurStage(p) {
+  const r = Math.max(1, Math.round(p.radius));
+  return rangeBlurStage(r, Math.max(2, p.threshold), true, Math.max(1, Math.ceil(r / 14)));
+}
+
 registerFilter({
   id: 'surface-blur',
   name: 'Surface Blur...',
@@ -998,7 +1071,9 @@ registerFilter({
     { key: 'radius', label: 'Radius', type: 'slider', min: 1, max: 100, step: 1, default: 5, unit: 'px' },
     { key: 'threshold', label: 'Threshold', type: 'slider', min: 2, max: 255, step: 1, default: 15, unit: 'levels' },
   ],
+  gpuStage: surfaceBlurStage,
   apply(imageData, p) {
+    if (filterOnGPU(imageData, surfaceBlurStage(p))) return;
     const r = Math.max(1, Math.round(p.radius));
     const step = Math.max(1, Math.ceil(r / 14));
     rangeBlurImageData(imageData, r, Math.max(2, p.threshold), true, step);

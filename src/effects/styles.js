@@ -128,8 +128,12 @@ export function blurAlpha(alpha, w, h, radius, clampEdges = false) {
   return blurAlphaField(alpha, w, h, radius / 2, blurAlphaJS, clampEdges);
 }
 
-/** Separable Gaussian on an alpha field — the fallback for `blurAlpha`. */
-function blurAlphaJS(alpha, w, h, sigma) {
+/**
+ * Separable Gaussian on an alpha field, in float and clamped at the border —
+ * the fallback for `blurAlpha`, and what a renderer uses directly when the
+ * field is not coverage and must not be rounded to bytes (Bevel's height).
+ */
+export function blurAlphaJS(alpha, w, h, sigma) {
   const k = gaussianKernel(sigma);
   const r = (k.length - 1) / 2;
   const tmp = new Float32Array(w * h);

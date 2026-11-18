@@ -628,7 +628,8 @@ function applySmartFilters(canvas, s, layer, prefix = null, keys = null) {
         const { f, def } = list[j];
         const st = def.gpuStage ? def.gpuStage({ ...def.defaults, ...(f.params || {}) }, { width: w, height: h }) : null;
         if (!st) break;
-        if (st.kind !== 'identity') stages.push(st);
+        // A filter may run as several stages (Blur More's three passes).
+        for (const one of Array.isArray(st) ? st : [st]) if (one.kind !== 'identity') stages.push(one);
       }
       if (j > i) {
         if (!stages.length) { i = j; if (prefix && keys) prefix.set(keys[i], cur); continue; }

@@ -19,15 +19,18 @@ import { pipelineCache } from './gpu-device.js';
  * picks C with `distanceCap(r)` and declines above `MAX_DISTANCE_CAP`, where
  * the row pass gets too long to be worth it.
  *
- * Two outputs, chosen by the row pass's MODE:
+ * Three outputs, chosen by the row pass's MODE:
  *   DT_GROW       spreadField's coverage: clamp((rad - d + 0.5) * 255)
  *   DT_GLOW_EDGE  Inner Glow's falloff from signedDistance — inside pixels
  *                 only; an outside pixel's signed distance is negative, which
  *                 always gives a full edge, so it needs no transform at all.
+ *   DT_DIST       the distance d itself (cap + 1 past the cap)
  */
 
 export const DT_GROW = 0;
 export const DT_GLOW_EDGE = 1;
+/** The distance itself, capped at cap + 1 (Bevel's signed distance, Stroke's centre). */
+export const DT_DIST = 2;
 
 /** Rows longer than this many taps either way decline to the CPU. */
 export const MAX_DISTANCE_CAP = 256;
@@ -116,6 +119,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     outF[i] = clamp((P.rad - d + 0.5) * 255.0, 0.0, 255.0);
     return;
   }
+  if (MODE == 2u) {
+    outF[i] = d;
+    return;
+  }
   var e = 255.0;
   let a = alphaBuf[i];
   if (a > 127.0) {
@@ -140,6 +147,7 @@ function pipelines(d) {
     col: compute(DT_COL_WGSL),
     grow: compute(DT_ROW_WGSL, { MODE: DT_GROW }),
     glow: compute(DT_ROW_WGSL, { MODE: DT_GLOW_EDGE }),
+    dist: compute(DT_ROW_WGSL, { MODE: DT_DIST }),
   };
   cache.set('distance', p);
   return p;
@@ -173,7 +181,7 @@ export function encodeDistance(d, pass, bufs, o) {
   pass.setBindGroup(0, bg(p.col, [bufs.src, bufs.g, params]));
   pass.dispatchWorkgroups(Math.ceil(o.w / 64));
 
-  const row = o.mode === DT_GROW ? p.grow : p.glow;
+  const row = o.mode === DT_GROW ? p.grow : o.mode === DT_DIST ? p.dist : p.glow;
   pass.setPipeline(row);
   pass.setBindGroup(0, bg(row, [bufs.g, bufs.out, bufs.alpha, params]));
   pass.dispatchWorkgroups(Math.ceil(o.w / 16), Math.ceil(o.h / 16));

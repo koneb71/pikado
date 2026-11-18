@@ -18,8 +18,29 @@ import {
   luminancePlane,
   sobelMagnitude,
 } from './blur.js';
+import { imageFilterStage, filterOnGPU } from '../render/gpu-image-filters.js';
 
 const SOFT3 = new Float32Array([0.25, 0.5, 0.25]);
+
+// The GPU median selects exactly but its cost grows with the window, so it
+// takes radius 1..5; larger radii stay on the CPU.
+const GPU_MEDIAN_MAX_R = 5;
+const medianStage = (p, extra) => {
+  const r = Math.max(1, Math.round(p.radius));
+  return r <= GPU_MEDIAN_MAX_R ? imageFilterStage('median', { radius: r, ...extra }) : null;
+};
+const addNoiseStage = (p) => {
+  const gaussian = p.distribution === 'gaussian';
+  return imageFilterStage('noise', {
+    scale: gaussian ? (p.amount / 100) * 255 * 0.25 : (p.amount / 100) * 255 * 0.5,
+    gaussian,
+    mono: !!p.monochromatic,
+    // makeRandom((seed | 0) + 1)'s starting state
+    seedState: (((p.seed | 0) + 1) >>> 0) || 1,
+  });
+};
+const despeckleStage = () => imageFilterStage('despeckle', { blur: { kernel: SOFT3 } });
+const dustStage = (p) => medianStage(p, { dust: true, threshold: p.threshold });
 
 /* ------------------------------------------------------------------ */
 /* Median                                                              */
@@ -212,7 +233,9 @@ registerFilter({
     { key: 'monochromatic', label: 'Monochromatic', type: 'checkbox', default: false },
     { key: 'seed', label: 'Seed', type: 'number', min: 0, max: 99999, step: 1, default: 1 },
   ],
+  gpuStage: addNoiseStage,
   apply(imageData, p) {
+    if (filterOnGPU(imageData, addNoiseStage(p))) return;
     const d = imageData.data;
     const rand = makeRandom((p.seed | 0) + 1);
     const gaussian = p.distribution === 'gaussian';
@@ -249,7 +272,9 @@ registerFilter({
   menu: 'Noise',
   params: [],
   needsDialog: false,
+  gpuStage: despeckleStage,
   apply(imageData) {
+    if (filterOnGPU(imageData, despeckleStage())) return;
     const w = imageData.width, h = imageData.height, d = imageData.data;
     const n = w * h;
     const mag = sobelMagnitude(luminancePlane(d, n), w, h);
@@ -279,7 +304,9 @@ registerFilter({
     { key: 'radius', label: 'Radius', type: 'slider', min: 1, max: 100, step: 1, default: 2, unit: 'px' },
     { key: 'threshold', label: 'Threshold', type: 'slider', min: 0, max: 255, step: 1, default: 12, unit: 'levels' },
   ],
+  gpuStage: dustStage,
   apply(imageData, p) {
+    if (filterOnGPU(imageData, dustStage(p))) return;
     const orig = new Uint8ClampedArray(imageData.data);
     medianFilterImage(imageData, p.radius);
     const d = imageData.data;
@@ -306,7 +333,9 @@ registerFilter({
   params: [
     { key: 'radius', label: 'Radius', type: 'slider', min: 1, max: 100, step: 1, default: 3, unit: 'px' },
   ],
+  gpuStage: (p) => medianStage(p),
   apply(imageData, p) {
+    if (filterOnGPU(imageData, medianStage(p))) return;
     medianFilterImage(imageData, p.radius);
   },
 });

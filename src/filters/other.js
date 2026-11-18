@@ -1,4 +1,6 @@
 import { registerFilter } from './registry.js';
+import { boxRadiiForGauss } from './blur.js';
+import { imageFilterStage, filterOnGPU } from '../render/gpu-image-filters.js';
 import { el, clamp } from '../core/util.js';
 import { rgb2hsv, hsv2rgb, rgb2hsl, hsl2rgb } from '../core/color.js';
 import './other.css';
@@ -236,6 +238,13 @@ registerFilter({
 /* High Pass                                                           */
 /* ------------------------------------------------------------------ */
 
+// Always three box passes (blurPlane's radii are boxRadiiForGauss's), never
+// the small-sigma kernel.
+function highPassStage(p) {
+  const boxes = boxRadiiForGauss(Math.max(0.1, p.radius / 2), 3).filter((r) => r >= 1);
+  return imageFilterStage('highpass', { blur: boxes.length ? { boxes } : null });
+}
+
 registerFilter({
   id: 'high-pass',
   name: 'High Pass...',
@@ -243,7 +252,9 @@ registerFilter({
   params: [
     { key: 'radius', label: 'Radius', type: 'slider', min: 0.1, max: 1000, step: 0.1, default: 10, unit: 'px' },
   ],
+  gpuStage: highPassStage,
   apply(imageData, p) {
+    if (filterOnGPU(imageData, highPassStage(p))) return imageData;
     const { width: w, height: h, data } = imageData;
     const n = w * h;
     const sigma = Math.max(0.1, p.radius / 2);

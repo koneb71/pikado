@@ -249,6 +249,77 @@ suite('gpu effects / Spread and Choke match the CPU renderer', async (t) => {
   t.lt(differ, env.w * env.h * 0.0005, `and differs at fewer than 0.05% of pixels (${differ})`);
 });
 
+/** Count GPU effect runs by wrapping the device's queue submits around a render. */
+function gpuRan(fn) {
+  const proto = GPUQueue.prototype;
+  const original = proto.submit;
+  let n = 0;
+  proto.submit = function (...args) { n++; return original.apply(this, args); };
+  try {
+    fn();
+  } finally {
+    proto.submit = original;
+  }
+  return n > 0;
+}
+
+function parity(t, id, cases, { rgbTol = 2, alphaTol = 3 } = {}) {
+  for (const [label, over] of cases) {
+    const env = makeEnv();
+    let ran = false;
+    let out;
+    try {
+      setGPUEnabled(true);
+      ran = gpuRan(() => { out = renderers.get(id)({ ...DEFAULT_STYLES[id], enabled: true, opacity: 1, ...over }, env); });
+    } finally {
+      setGPUEnabled(true);
+    }
+    t.ok(ran, `${label}: the GPU path ran`);
+    const { gpu, cpu } = renderBoth(id, { opacity: 1, ...over }, env);
+    const d = compare(gpu, cpu);
+    t.gt(d.inked, 500, `${label}: the effect is not empty (${d.inked} px inked)`);
+    t.lt(d.maxAlpha, alphaTol + 1, `${label}: alpha within ${alphaTol} counts of the CPU (worst ${d.maxAlpha})`);
+    t.lt(d.meanAlpha, 0.1, `${label}: mean alpha difference under 0.1 (got ${d.meanAlpha.toFixed(4)})`);
+    t.lt(d.maxRGB, rgbTol + 1, `${label}: colour within ${rgbTol} counts where visible (worst ${d.maxRGB})`);
+    if (!out) t.ok(false, `${label}: the GPU render returned nothing`);
+  }
+}
+
+suite('gpu effects / satin matches the CPU renderer', async (t) => {
+  if (!(await needDevice(t))) return;
+  parity(t, 'satin', [
+    ['default satin (inverted)', { invert: true }],
+    ['not inverted, size 30 (box blur)', { invert: false, size: 30, distance: 20 }],
+    ['angle 120, distance 40, blue', { angle: 120, distance: 40, size: 8, color: '#2244aa' }],
+  ]);
+});
+
+suite('gpu effects / stroke matches the CPU renderer', async (t) => {
+  if (!(await needDevice(t))) return;
+  parity(t, 'stroke', [
+    ['outside, size 6', { position: 'outside', size: 6, fillType: 'color', color: '#112233' }],
+    ['inside, size 12', { position: 'inside', size: 12, fillType: 'color', color: '#aa0000' }],
+    ['centre, size 9 (odd: half-pixel radii)', { position: 'center', size: 9, fillType: 'color', color: '#00aa00' }],
+    ['outside, size 60', { position: 'outside', size: 60, fillType: 'color' }],
+    ['gradient fill, not aligned with the layer', { position: 'outside', size: 10, fillType: 'gradient', alignWithLayer: false,
+      stops: [{ pos: 0, color: '#ff0000' }, { pos: 1, color: '#0000ff' }] }],
+    ['pattern fill', { position: 'center', size: 14, fillType: 'pattern', patternId: 'checkerboard', patternScale: 1 }],
+  ]);
+});
+
+suite('gpu effects / bevel and emboss matches the CPU renderer', async (t) => {
+  if (!(await needDevice(t))) return;
+  parity(t, 'bevelEmboss', [
+    ['inner bevel, smooth, size 10', { style: 'inner', technique: 'smooth', size: 10 }],
+    ['outer bevel, chisel hard, size 16', { style: 'outer', technique: 'chisel-hard', size: 16 }],
+    ['emboss, chisel soft, size 24, down', { style: 'emboss', technique: 'chisel-soft', size: 24, direction: 'down' }],
+    ['pillow emboss, size 12, soften 4', { style: 'pillow-emboss', size: 12, soften: 4 }],
+    ['inner bevel, size 40 (box blur), altitude 60, angle 300', { style: 'inner', size: 40, altitude: 60, angle: 300, useGlobalLight: false }],
+    ['coloured tones at half opacity', { style: 'inner', size: 8, highlightColor: '#ffee00', shadowColor: '#0000aa',
+      highlightOpacity: 0.5, shadowOpacity: 0.6 }],
+  ]);
+});
+
 suite('gpu effects / back-to-back effects in one task each get their own result', async (t) => {
   if (!(await needDevice(t))) return;
 

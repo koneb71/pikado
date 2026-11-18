@@ -1,7 +1,7 @@
 import {
-  registerEffectRenderer, alphaToCanvas, blurAlpha, spreadAlpha, offsetAlpha, offsetVector,
+  registerEffectRenderer, alphaToCanvas, blurAlpha, blurAlphaJS, spreadAlpha, offsetAlpha, offsetVector,
 } from './styles.js';
-import { createCanvas, clamp, clamp255, deg2rad } from '../core/util.js';
+import { createCanvas, clamp, clamp255, deg2rad, ctx2dRead } from '../core/util.js';
 import { parseColor } from '../core/color.js';
 import { effectFieldOnGPU } from '../render/gpu-effects.js';
 import { signedDistance } from '../core/distance.js';
@@ -122,9 +122,11 @@ function boxBlurPass(src, w, h, radius) {
  * 250px Gaussian is ~750 taps per pixel per axis and effects re-render on every
  * composite.
  */
-function blurField(f, w, h, radius, clampEdges = false) {
+function blurField(f, w, h, radius, clampEdges = false, precise = false) {
   if (!(radius > 0.05)) return f;
-  if (radius <= 16) return blurAlpha(f, w, h, radius, clampEdges);
+  // `precise`: the float kernel even on a large region, never Canvas2D's blur,
+  // which works in bytes (the kernel always clamps).
+  if (radius <= 16) return precise ? blurAlphaJS(f, w, h, radius / 2) : blurAlpha(f, w, h, radius, clampEdges);
   const sigma = radius / 2;
   const boxR = Math.max(1, Math.round(Math.sqrt((12 * sigma * sigma) / 3 + 1) / 2));
   let out = f;
@@ -169,12 +171,50 @@ function fieldBounds(f, w, h) {
 
 /** Limit an already-drawn canvas to a coverage field. */
 function clipCanvasToField(canvas, field, w, h) {
+  return clipCanvasByCanvas(canvas, alphaToCanvas(field, w, h, '#000000'));
+}
+
+/** Keep `canvas` only where `matte` (a canvas of the same size) has alpha. */
+function clipCanvasByCanvas(canvas, matte) {
   const c = canvas.getContext('2d');
   c.save();
   c.globalCompositeOperation = 'destination-in';
-  c.drawImage(alphaToCanvas(field, w, h, '#000000'), 0, 0);
+  c.drawImage(matte, 0, 0);
   c.restore();
   return canvas;
+}
+
+/** A `w x h` canvas of one opaque colour. */
+function solidCanvas(w, h, color) {
+  const cv = createCanvas(w, h);
+  const c = cv.getContext('2d');
+  const k = parseColor(color);
+  c.fillStyle = `rgb(${k.r},${k.g},${k.b})`;
+  c.fillRect(0, 0, w, h);
+  return cv;
+}
+
+/**
+ * `fieldBounds` of a canvas's alpha (any pixel not fully transparent), or the
+ * whole canvas when it is empty — for renderers that need the content box but
+ * not the alpha field itself.
+ */
+function canvasAlphaBounds(cv) {
+  const w = cv.width, h = cv.height;
+  const d = ctx2dRead(cv).getImageData(0, 0, w, h).data;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0, i = 3; y < h; y++) {
+    for (let x = 0; x < w; x++, i += 4) {
+      if (d[i]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return { x: 0, y: 0, width: w, height: h };
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
 }
 
 /* ------------------------------------------------------------------ */
@@ -447,11 +487,35 @@ registerEffectRenderer('innerGlow', (cfg, env) => {
 const BEVEL_STYLE_ALIAS = { pillow: 'pillow-emboss', stroke: 'emboss' };
 
 registerEffectRenderer('bevelEmboss', (cfg, env) => {
-  const { w, h, alpha } = env;
-  const n = w * h;
   const size = Math.max(1, num(cfg.size, 5));
   const raw = cfg.style || 'inner';
   const style = BEVEL_STYLE_ALIAS[raw] || raw;
+  const technique = cfg.technique || 'smooth';
+  const roundOff = technique === 'smooth' ? size * 0.5
+    : technique === 'chisel-soft' ? Math.max(0.6, size * 0.18)
+      : 0.5;
+  const softRadius = roundOff + Math.max(0, num(cfg.soften, 0));
+  const depth = Math.max(0, num(cfg.depth, 1)) * size * (cfg.direction === 'down' ? -1 : 1);
+  const angle = cfg.useGlobalLight ? num(env.globalLight, 120) : num(cfg.angle, 120);
+  const rad = deg2rad(angle);
+  const alt = deg2rad(clamp(num(cfg.altitude, 30), 0, 90));
+  const lz = Math.sin(alt);
+  const lx = Math.cos(rad) * Math.cos(alt);
+  const ly = -Math.sin(rad) * Math.cos(alt);
+
+  const gpu = effectFieldOnGPU(env, {
+    kind: 'bevel',
+    blurRadius: softRadius,
+    bevel: {
+      style, size, depth, lx, ly, lz,
+      hiColor: parseColor(cfg.highlightColor || '#ffffff'), hiOp: clamp(num(cfg.highlightOpacity, 0.75), 0, 1),
+      shColor: parseColor(cfg.shadowColor || '#000000'), shOp: clamp(num(cfg.shadowOpacity, 0.75), 0, 1),
+    },
+  });
+  if (gpu) return gpu;
+
+  const { w, h, alpha } = env;
+  const n = w * h;
   const sd = signedDistance(alpha, w, h);
 
   // Height field in 0..1. Each style places the ramp differently relative to
@@ -467,21 +531,15 @@ registerEffectRenderer('bevelEmboss', (cfg, env) => {
 
   // Technique shapes the profile: Smooth rounds the whole ramp, Chisel Soft
   // only takes the hard corners off, Chisel Hard stays linear (antialiased).
-  const technique = cfg.technique || 'smooth';
-  const roundOff = technique === 'smooth' ? size * 0.5
-    : technique === 'chisel-soft' ? Math.max(0.6, size * 0.18)
-      : 0.5;
-  height = blurField(height, w, h, roundOff + Math.max(0, num(cfg.soften, 0)));
+  // Blurred in float: the shading reads the height's slope, so it must not be
+  // rounded to bytes, which Canvas2D's blur does on a large region — it
+  // rounded this 0..1 field to 0 or 1 and the bevel collapsed to a hairline.
+  // Clamped at the region's border: the height carries on past it (a pillow
+  // emboss is 1 far from the shape), and fading it would shade the crop edge.
+  height = blurField(height, w, h, softRadius, true, true);
 
   // Surface normals from the height gradient. Scaling by `size` makes Depth
   // independent of Size: depth 1 (100%) is a 45° slope on a linear ramp.
-  const depth = Math.max(0, num(cfg.depth, 1)) * size * (cfg.direction === 'down' ? -1 : 1);
-  const angle = cfg.useGlobalLight ? num(env.globalLight, 120) : num(cfg.angle, 120);
-  const rad = deg2rad(angle);
-  const alt = deg2rad(clamp(num(cfg.altitude, 30), 0, 90));
-  const lz = Math.sin(alt);
-  const lx = Math.cos(rad) * Math.cos(alt);
-  const ly = -Math.sin(rad) * Math.cos(alt);
 
   // Coverage the shading is allowed to appear on.
   const grown = style === 'inner' ? null : spreadAlpha(alpha, w, h, size);
@@ -539,9 +597,23 @@ function drawWithMode(ctx, canvas, mode, opacity) {
 /* ================================================================== */
 
 registerEffectRenderer('satin', (cfg, env) => {
-  const { w, h, alpha } = env;
   const angle = num(cfg.angle, 19);
   const distance = Math.max(0, num(cfg.distance, 11));
+  // The two offsets are rounded separately, as offsetAlpha rounds them.
+  const back = offsetVector(angle + 180, distance);
+  const gpu = effectFieldOnGPU(env, {
+    kind: 'satin',
+    ...offsetVector(angle, distance),
+    dx2: back.dx,
+    dy2: back.dy,
+    blurRadius: Math.max(0, num(cfg.size, 14)),
+    invert: !!cfg.invert,
+    noise: 0,
+    color: parseColor(cfg.color || '#000000'),
+  });
+  if (gpu) return gpu;
+
+  const { w, h, alpha } = env;
 
   const a1 = offsetAlpha(alpha, w, h, angle, distance);
   const a2 = offsetAlpha(alpha, w, h, angle + 180, distance);
@@ -558,16 +630,19 @@ registerEffectRenderer('satin', (cfg, env) => {
 /* Color overlay                                                       */
 /* ================================================================== */
 
-registerEffectRenderer('colorOverlay', (cfg, env) => alphaToCanvas(env.alpha, env.w, env.h, cfg.color || '#ff0000'));
+// The overlays are the layer's own shape filled: clipping a fill to the layer
+// with destination-in is what alphaToCanvas plus a clip produced, without
+// reading the layer's alpha back.
+registerEffectRenderer('colorOverlay', (cfg, env) => clipCanvasByCanvas(solidCanvas(env.w, env.h, cfg.color || '#ff0000'), env.src));
 
 /* ================================================================== */
 /* Gradient overlay                                                    */
 /* ================================================================== */
 
 registerEffectRenderer('gradientOverlay', (cfg, env) => {
-  const { w, h, alpha } = env;
-  const box = cfg.alignWithLayer === false ? { x: 0, y: 0, width: w, height: h } : fieldBounds(alpha, w, h);
-  return clipCanvasToField(gradientCanvas(w, h, cfg, box), alpha, w, h);
+  const { w, h } = env;
+  const box = cfg.alignWithLayer === false ? { x: 0, y: 0, width: w, height: h } : canvasAlphaBounds(env.src);
+  return clipCanvasByCanvas(gradientCanvas(w, h, cfg, box), env.src);
 });
 
 /* ================================================================== */
@@ -575,10 +650,9 @@ registerEffectRenderer('gradientOverlay', (cfg, env) => {
 /* ================================================================== */
 
 registerEffectRenderer('patternOverlay', (cfg, env) => {
-  const { w, h, alpha } = env;
-  const tiled = patternCanvas(cfg.patternId, w, h, num(cfg.scale, 1));
+  const tiled = patternCanvas(cfg.patternId, env.w, env.h, num(cfg.scale, 1));
   if (!tiled) return null;
-  return clipCanvasToField(tiled, alpha, w, h);
+  return clipCanvasByCanvas(tiled, env.src);
 });
 
 /* ================================================================== */
@@ -586,9 +660,34 @@ registerEffectRenderer('patternOverlay', (cfg, env) => {
 /* ================================================================== */
 
 registerEffectRenderer('stroke', (cfg, env) => {
-  const { w, h, alpha } = env;
   const size = Math.max(0, num(cfg.size, 3));
   if (size <= 0) return null;
+  const fill = cfg.fillType;
+  if (fill === 'pattern' && (cfg.patternId == null || cfg.patternId === '')) return null;
+
+  // The band on the GPU. A gradient aligned with the layer needs the band's
+  // own bounds, which only the CPU field gives, so that one stays there.
+  if (!(fill === 'gradient' && cfg.alignWithLayer !== false)) {
+    const position = cfg.position === 'inside' ? 'inside' : cfg.position === 'center' ? 'center' : 'outside';
+    const band = effectFieldOnGPU(env, {
+      kind: 'strokeBand',
+      position,
+      size,
+      noise: 0,
+      color: fill === 'gradient' || fill === 'pattern' ? { r: 0, g: 0, b: 0 } : parseColor(cfg.color || '#000000'),
+    });
+    if (band) {
+      if (fill === 'gradient') {
+        return clipCanvasByCanvas(gradientCanvas(env.w, env.h, cfg, { x: 0, y: 0, width: env.w, height: env.h }), band);
+      }
+      if (fill === 'pattern') {
+        return clipCanvasByCanvas(patternCanvas(cfg.patternId, env.w, env.h, num(cfg.patternScale, 1)), band);
+      }
+      return band;
+    }
+  }
+
+  const { w, h, alpha } = env;
 
   let band;
   if (cfg.position === 'inside') {
