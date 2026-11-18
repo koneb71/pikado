@@ -137,8 +137,8 @@ that are not obvious:
 - Branch off `main`.
 - Keep one concern per PR. A bug fix and a refactor in the same diff are hard to
   review and harder to revert.
-- Run the full suite and say the numbers in the PR description — `348 suites,
-  3846 assertions, 0 failed` (in Chrome, with WebGPU) is the current baseline,
+- Run the full suite and say the numbers in the PR description — `367 suites,
+  4153 assertions, 0 failed` (in Chrome, with WebGPU) is the current baseline,
   and it should only go up.
 - Commit messages: a short imperative subject, then prose explaining *why*. If
   you fixed a bug, give the concrete failing case with real values. Look at

@@ -1,5 +1,5 @@
 import { suite } from '../harness.js';
-import { createRasterLayer } from '/src/core/layer.js';
+import { createRasterLayer, createAdjustmentLayer } from '/src/core/layer.js';
 import {
   compositeDocument, getComposite, compositeVerifyEnabled, setCompositeVerify,
 } from '/src/render/compositor.js';
@@ -12,6 +12,7 @@ import { gpuFilterStats } from '/src/render/gpu-filters.js';
 import { createLiquifyMesh, liquifyDab, applyLiquifyMesh } from '/src/filters/distort.js';
 import { gpuReady, setGPUEnabled } from '/src/render/gpu-device.js';
 import { effectFieldOnGPU } from '/src/render/gpu-effects.js';
+import { gpuAdjustStats } from '/src/render/gpu-adjust.js';
 import { createCanvas, ctx2d, ctx2dRead } from '/src/core/util.js';
 
 /**
@@ -479,5 +480,146 @@ suite('perf / painting beside a shadowed layer reuses its effects', async (t) =>
   } finally {
     ids.forEach((id, k) => renderers.set(id, originals[k]));
     setCompositeVerify(verifying);
+  }
+});
+
+suite('perf / two adjustment layers on a 3 MP document run on WebGPU', async (t) => {
+  // Every composite used to read the whole accumulator back for each
+  // adjustment layer, adjust it in JS and put it back — on every brush frame.
+  // Verified to fail with adjustCanvasOnGPU always declining (no GPU runs).
+  const device = await gpuReady();
+  const doc = t.doc(W, H, '#ffffff', 'perf-adjust');
+  const L = doc.addLayer(createRasterLayer(W, H, 'photo'));
+  const g = L.canvas.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#1d3b72'); grad.addColorStop(0.5, '#e8b04a'); grad.addColorStop(1, '#2f8f5b');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+  doc.addLayer(createAdjustmentLayer('curves', { curves: { channel: 'rgb', rgb: [{ x: 0, y: 30 }, { x: 255, y: 220 }] } }, W, H, 'Curves'));
+  doc.addLayer(createAdjustmentLayer('hue-saturation', { masterHue: -40, masterSat: 30 }, W, H, 'Hue/Sat'));
+  doc.commit('setup');
+  const flush = (cv) => ctx2dRead(cv).getImageData(W / 2, H / 2, 1, 1).data;
+  // Twice: the second sighting of these settings builds Hue/Saturation's table.
+  compositeDocument(doc);
+  compositeDocument(doc);
+  const runs = gpuAdjustStats().runs;
+  let out = null;
+  const ms = t.time(() => { out = flush(compositeDocument(doc)); });
+  let cpuMs = NaN, cpu = null;
+  if (device) {
+    // Drawing the photo is most of a GPU composite, so the timing alone barely
+    // separates the paths; this is the alarm that does.
+    t.eq(gpuAdjustStats().runs - runs, 2, 'both adjustment layers ran on WebGPU');
+    setGPUEnabled(false);
+    try {
+      cpuMs = t.time(() => { cpu = flush(compositeDocument(doc)); });
+    } finally {
+      setGPUEnabled(true);
+    }
+    const worst = Math.max(...[0, 1, 2, 3].map((k) => Math.abs(out[k] - cpu[k])));
+    t.ok(worst <= 1, `the middle pixel matches the CPU composite (${[...out].join(',')} vs ${[...cpu].join(',')})`);
+  } else {
+    t.ok(true, 'WebGPU is not available in this browser — timing the CPU path instead');
+    t.ok(out[3] === 255, 'the composite is opaque');
+  }
+  // Measured on developer hardware: ~25-30 ms with WebGPU, ~85 ms on the CPU.
+  const limit = device ? 150 : 1500;
+  const path = device ? `WebGPU; CPU path ${cpuMs.toFixed(1)} ms` : 'CPU path, no WebGPU';
+  t.lt(ms, limit, `a composite with Curves and Hue/Saturation layers at ${MP} MP took ${ms.toFixed(1)} ms (limit ${limit}, ${path})`);
+});
+
+suite('perf / bevel, satin and stroke on a large shape run on WebGPU', async (t) => {
+  // Verified to fail with those three kinds declined by effectFieldOnGPU:
+  // 218 ms against the limit of 150.
+  const device = await gpuReady();
+  const doc = t.doc(W, H, '#ffffff', 'perf-bevel-gpu');
+  const shape = createRasterLayer(W, H, 'shape');
+  t.fill(shape, 'rgb(40,90,200)', 200, 150, 1400, 1050);
+  shape.styles = {
+    bevelEmboss: { ...DEFAULT_STYLES.bevelEmboss, enabled: true, size: 30, soften: 4 },
+    satin: { ...DEFAULT_STYLES.satin, enabled: true, size: 40, distance: 30 },
+    stroke: { ...DEFAULT_STYLES.stroke, enabled: true, size: 12, position: 'outside', color: '#000000' },
+  };
+  doc.addLayer(shape);
+  const flush = (cv) => ctx2dRead(cv).getImageData(0, 0, 1, 1);
+  compositeDocument(doc);
+  let out = null;
+  const ms = t.time(() => { out = compositeDocument(doc); flush(out); });
+  let cpuMs = NaN;
+  if (device) {
+    setGPUEnabled(false);
+    try {
+      compositeDocument(doc);
+      cpuMs = t.time(() => flush(compositeDocument(doc)));
+    } finally {
+      setGPUEnabled(true);
+    }
+  } else {
+    t.ok(true, 'WebGPU is not available in this browser — timing the CPU path instead');
+  }
+  t.pixel(out, 100, 675, '255,255,255,255', 'far outside the shape is untouched');
+  t.pixel(out, 194, 675, '0,0,0,255', 'the outside stroke is drawn');
+  const lit = t.px(out, 205, 675).split(',').map(Number);
+  t.ok(lit.join() !== '40,90,200,255', `the bevel changes the shape just inside its edge (${lit.join(',')})`);
+  // Measured on developer hardware: ~30 ms on WebGPU, ~300 ms on the CPU.
+  const limit = device ? 150 : 2000;
+  const path = device ? `WebGPU; CPU path ${cpuMs.toFixed(1)} ms` : 'CPU path, no WebGPU';
+  t.lt(ms, limit, `bevel + satin + stroke at ${MP} MP took ${ms.toFixed(1)} ms (limit ${limit}, ${path})`);
+});
+
+suite('perf / the heavy filters at 3 MP run on WebGPU', async (t) => {
+  // Verified to fail with filterOnGPU always declining: every filter ran on
+  // the CPU, at 147-539 ms against the limit of 80.
+  const device = await gpuReady();
+  if (!device) t.ok(true, 'WebGPU is not available in this browser — timing the CPU paths instead');
+  const base = new ImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      base.data[i] = (x * 255) / W; base.data[i + 1] = (y * 255) / H; base.data[i + 2] = ((x ^ y) & 64) ? 200 : 60;
+      base.data[i + 3] = 255;
+      // Specks, so Median (which leaves smooth ramps and large blocks alone)
+      // has something to remove.
+      if ((x * 7 + y * 13) % 97 === 0) { base.data[i] = 255; base.data[i + 1] = 255; base.data[i + 2] = 255; }
+    }
+  }
+  const clone = () => new ImageData(new Uint8ClampedArray(base.data), W, H);
+  const jobs = [
+    ['Unsharp Mask', 'unsharp-mask', { amount: 150, radius: 2, threshold: 0 }],
+    ['High Pass', 'high-pass', { radius: 10 }],
+    ['Surface Blur', 'surface-blur', { radius: 5, threshold: 15 }],
+    ['Median', 'median', { radius: 2 }],
+    ['Add Noise', 'add-noise', { amount: 12.5, distribution: 'gaussian', seed: 1 }],
+  ];
+  const row = (img) => img.data.subarray((H >> 1) * W * 4, ((H >> 1) + 1) * W * 4);
+  for (const [label, id, params] of jobs) {
+    runFilter(id, clone(), params); // warm-up: pipelines
+    const before = gpuFilterStats().runs;
+    let out = null;
+    const ms = t.time(() => { out = runFilter(id, clone(), params); });
+    let note = 'CPU path, no WebGPU';
+    if (device) {
+      t.gt(gpuFilterStats().runs, before, `${label}: ran on WebGPU`);
+      setGPUEnabled(false);
+      let cpu = null, cpuMs = NaN;
+      try {
+        cpuMs = t.time(() => { cpu = runFilter(id, clone(), params); });
+      } finally {
+        setGPUEnabled(true);
+      }
+      const a = row(out), b = row(cpu);
+      let worst = 0;
+      for (let i = 0; i < a.length; i++) worst = Math.max(worst, Math.abs(a[i] - b[i]));
+      t.ok(worst <= 2, `${label}: the middle row matches the CPU result (worst ${worst})`);
+      note = `WebGPU; CPU path ${cpuMs.toFixed(1)} ms`;
+    } else {
+      let changed = false;
+      for (let i = 0; i < out.data.length && !changed; i++) if (out.data[i] !== base.data[i]) changed = true;
+      t.ok(changed, `${label}: the image changed`);
+    }
+    // Measured on developer hardware: ~10-13 ms each on WebGPU; the CPU loops
+    // take ~130-270 ms.
+    const limit = device ? 80 : 5000;
+    t.lt(ms, limit, `${label} at ${MP} MP took ${ms.toFixed(1)} ms (limit ${limit}, ${note})`);
   }
 });

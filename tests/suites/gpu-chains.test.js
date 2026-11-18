@@ -52,13 +52,34 @@ suite('gpu chains / a stack of GPU filters runs as one chain', async (t) => {
 
   // A filter with no GPU stage breaks the chain in two.
   const { doc: doc2, smart: s2 } = smartDoc(t, 400, 'chain-broken');
-  for (const [id, params] of [['twirl', { angle: 120 }], ['median', { radius: 2 }], ['wave', {}]]) {
+  for (const [id, params] of [['twirl', { angle: 120 }], ['oil-paint', {}], ['wave', {}]]) {
     addSmartFilter(doc2, doc2.findLayer(s2.id), id, params);
   }
   const l2 = doc2.findLayer(s2.id);
   const b2 = gpuFilterStats().runs;
   composeSmartCanvas(l2.smart, doc2.width, doc2.height, l2, null);
-  t.eq(gpuFilterStats().runs - b2, 2, 'twirl | median | wave: two GPU runs either side of the CPU median');
+  t.eq(gpuFilterStats().runs - b2, 2, 'twirl | oil paint | wave: two GPU runs either side of the CPU oil paint');
+
+  // A filter that runs as several stages joins a chain whole: Blur More's
+  // three rounded passes between a Box Blur and Add Noise.
+  // Verified to fail with smart.js taking a filter's stage list as one stage:
+  // the chain declined and each filter made its own GPU run.
+  const { doc: doc3, smart: s3 } = smartDoc(t, 400, 'chain-multi');
+  for (const [id, params] of [['box-blur', { radius: 3 }], ['blur-more', {}], ['add-noise', { amount: 20, seed: 4 }]]) {
+    addSmartFilter(doc3, doc3.findLayer(s3.id), id, params);
+  }
+  const l3 = doc3.findLayer(s3.id);
+  const b3 = gpuFilterStats().runs;
+  const gpu3 = composeSmartCanvas(l3.smart, doc3.width, doc3.height, l3, null);
+  t.eq(gpuFilterStats().runs - b3, 1, 'Box Blur, Blur More and Add Noise ran as a single GPU run');
+  setGPUEnabled(false);
+  let cpu3;
+  try {
+    cpu3 = composeSmartCanvas(l3.smart, doc3.width, doc3.height, l3, null);
+  } finally {
+    setGPUEnabled(true);
+  }
+  t.lt(worst(bytes(gpu3), bytes(cpu3)), 3, 'and matches the stack run on the CPU');
 });
 
 suite('gpu chains / a filter dialog re-runs only what changed', async (t) => {

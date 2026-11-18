@@ -6,6 +6,7 @@ import {
   cachedBelowEffects, cachedComposed, beginEffectFrame, endEffectFrame,
 } from '../effects/effect-cache.js';
 import { blendOnGPU } from './gpu-blend.js';
+import { adjustCanvasOnGPU } from './gpu-adjust.js';
 import { applyAdjustment } from '../adjustments/registry.js';
 
 /**
@@ -584,13 +585,15 @@ function drawAdjustmentLayer(layer, ctx, doc, extra = {}) {
   const w = ctx.canvas.width, h = ctx.canvas.height;
   if (w < 1 || h < 1) return;
 
-  const base = ctx.getImageData(0, 0, w, h);
-  const work = new ImageData(new Uint8ClampedArray(base.data), w, h);
-  applyAdjustment(adj.kind, work, adj.params || {});
-
-  // Build the adjusted result as a canvas so we can mask/blend it.
-  const adjusted = createCanvas(w, h);
-  adjusted.getContext('2d').putImageData(work, 0, 0);
+  // The adjusted copy of everything below: on WebGPU without reading the
+  // canvas back (src/render/gpu-adjust.js), else through ImageData.
+  let adjusted = adjustCanvasOnGPU(ctx.canvas, adj.kind, adj.params || {});
+  if (!adjusted) {
+    const work = ctx.getImageData(0, 0, w, h);
+    applyAdjustment(adj.kind, work, adj.params || {});
+    adjusted = createCanvas(w, h);
+    adjusted.getContext('2d').putImageData(work, 0, 0);
+  }
 
   const c = adjusted.getContext('2d');
   if (layer.mask && layer.maskEnabled) {

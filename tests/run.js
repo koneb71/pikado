@@ -26,6 +26,8 @@ import './suites/effect-cache.test.js';
 import './suites/gpu-filters.test.js';
 import './suites/gpu-camera-raw.test.js';
 import './suites/gpu-chains.test.js';
+import './suites/gpu-adjustments.test.js';
+import './suites/gpu-image-filters.test.js';
 import './suites/text-vector.test.js';
 import './suites/fonts.test.js';
 import './suites/io.test.js';

@@ -16,7 +16,9 @@ import {
   motionBlurBuffer,
   luminancePlane,
   sobelMagnitude,
+  gaussianBlurPlan,
 } from './blur.js';
+import { imageFilterStage, filterOnGPU } from '../render/gpu-image-filters.js';
 
 const SOFT3 = new Float32Array([0.25, 0.5, 0.25]);
 
@@ -62,13 +64,27 @@ function unsharpPass(imageData, blurFn, amount, hardThreshold, softThreshold, ga
 
 const soft3Blur = (buf, w, h) => convolveBuffer(buf, w, h, SOFT3, 4);
 
+/** unsharpPass on the GPU: `blur` is a plan (see gaussianBlurPlan). */
+const unsharpStage = (blur, amount, o = {}) => imageFilterStage('unsharp', { blur, amount, ...o });
+const sharpenStage = () => unsharpStage({ kernel: SOFT3 }, 1);
+const sharpenMoreStage = () => unsharpStage({ kernel: SOFT3 }, 2.6);
+// The Sobel gate is computed in the shader from the same luminance.
+const sharpenEdgesStage = () => unsharpStage({ kernel: SOFT3 }, 2.2, { gate: true });
+const unsharpMaskStage = (p) => unsharpStage(gaussianBlurPlan(p.radius), p.amount / 100, { hard: p.threshold });
+// Gaussian removal only: Lens and Motion stay on the CPU.
+const smartSharpenStage = (p) => (p.remove === 'lens' || p.remove === 'motion'
+  ? null
+  : unsharpStage(gaussianBlurPlan(p.radius), p.amount / 100, { soft: (p.reduceNoise / 100) * 22 }));
+
 registerFilter({
   id: 'sharpen',
   name: 'Sharpen',
   menu: 'Sharpen',
   params: [],
   needsDialog: false,
+  gpuStage: sharpenStage,
   apply(imageData) {
+    if (filterOnGPU(imageData, sharpenStage())) return;
     unsharpPass(imageData, soft3Blur, 1, 0, 0, null);
   },
 });
@@ -79,7 +95,9 @@ registerFilter({
   menu: 'Sharpen',
   params: [],
   needsDialog: false,
+  gpuStage: sharpenMoreStage,
   apply(imageData) {
+    if (filterOnGPU(imageData, sharpenMoreStage())) return;
     unsharpPass(imageData, soft3Blur, 2.6, 0, 0, null);
   },
 });
@@ -90,7 +108,9 @@ registerFilter({
   menu: 'Sharpen',
   params: [],
   needsDialog: false,
+  gpuStage: sharpenEdgesStage,
   apply(imageData) {
+    if (filterOnGPU(imageData, sharpenEdgesStage())) return;
     const w = imageData.width, h = imageData.height;
     const n = w * h;
     const mag = sobelMagnitude(luminancePlane(imageData.data, n), w, h);
@@ -115,7 +135,9 @@ registerFilter({
     { key: 'radius', label: 'Radius', type: 'slider', min: 0.1, max: 250, step: 0.1, default: 1.5, unit: 'px' },
     { key: 'threshold', label: 'Threshold', type: 'slider', min: 0, max: 255, step: 1, default: 0, unit: 'levels' },
   ],
+  gpuStage: unsharpMaskStage,
   apply(imageData, p) {
+    if (filterOnGPU(imageData, unsharpMaskStage(p))) return;
     const sigma = p.radius;
     unsharpPass(
       imageData,
@@ -145,7 +167,9 @@ registerFilter({
     { key: 'angle', label: 'Angle', type: 'angle', min: -360, max: 360, step: 1, default: 0,
       when: (s) => s.remove === 'motion' },
   ],
+  gpuStage: smartSharpenStage,
   apply(imageData, p) {
+    if (filterOnGPU(imageData, smartSharpenStage(p))) return;
     const radius = p.radius;
     const angle = p.angle;
     let blurFn;
