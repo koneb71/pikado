@@ -11,7 +11,7 @@ import { writePSD, SELECTION_CHANNEL_NAME } from '/src/io/psd-write.js';
 import { readPSD } from '/src/io/psd-read.js';
 import { POSTSCRIPT_FACES, postScriptFace, familyFromPostScriptName } from '/src/text/fonts.js';
 import { encodeGIF, buildPalette } from '/src/io/gif.js';
-import { exportDocument } from '/src/io/save.js';
+import { exportDocument, webpEncodeSupported } from '/src/io/save.js';
 import { exportSVG } from '/src/io/svg.js';
 
 /* ------------------------------------------------------------------ */
@@ -387,9 +387,38 @@ suite('io / raster + SVG export', async (t) => {
   t.eq([jpegBack.width, jpegBack.height], [40, 30], 'the JPEG decodes at the document size');
   t.lt(t.mad(t.bytes(source), t.bytes(jpegBack)), 12, 'and is a close (lossy) match of the composite');
 
-  const webp = await exportDocument(doc, { format: 'webp', save: false });
-  t.eq(webp.type, 'image/webp', 'WebP export has the WebP MIME type');
-  t.gt(webp.size, 60, 'and a non-trivial size');
+  // WebP depends on the browser's canvas encoder, which Safari's lacks: asked
+  // for image/webp it hands back a PNG. Where it can, the export is WebP; where
+  // it cannot, it must be an honestly labelled PNG with the reason given, and
+  // the Export dialog must grey the format out rather than offer it.
+  const toasts = [];
+  const realToast = t.app.toast;
+  t.app.toast = (text, kind) => { toasts.push(String(text)); return realToast.call(t.app, text, kind); };
+  let webp;
+  try {
+    webp = await exportDocument(doc, { format: 'webp', save: false });
+  } finally {
+    t.app.toast = realToast;
+  }
+  t.eq(webpEncodeSupported(), webp.type === 'image/webp',
+    `webpEncodeSupported() agrees with what the encoder actually wrote (${webp.type})`);
+  if (webpEncodeSupported()) {
+    t.eq(webp.type, 'image/webp', 'WebP export has the WebP MIME type');
+    t.gt(webp.size, 60, 'and a non-trivial size');
+  } else {
+    t.eq(webp.type, 'image/png', 'where WebP cannot be encoded, the export is honestly a PNG');
+    t.ok(toasts.some((m) => m.includes('WEBP') && m.includes('PNG')), 'and the person is told so');
+  }
+  const { showExportDialog } = await import('/src/ui/dialogs/export.js');
+  const pending = showExportDialog(doc);
+  await new Promise((r) => setTimeout(r, 50));
+  const webpOption = document.querySelector('.pkd-export option[value="webp"]');
+  t.ok(webpOption, 'Export As lists WebP');
+  t.eq(webpOption && webpOption.disabled, !webpEncodeSupported(),
+    'and enables it exactly when this browser can encode it');
+  const close = document.querySelector('.pkd-export .pk-dialog-close');
+  if (close) close.click();
+  await pending;
 
   t.eq(await exportDocument(doc, { format: 'tiff', save: false }), null,
     'an unsupported format fails cleanly instead of writing a file');

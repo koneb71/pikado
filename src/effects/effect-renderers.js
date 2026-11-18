@@ -1,7 +1,10 @@
 import {
-  registerEffectRenderer, alphaToCanvas, blurAlpha, spreadAlpha, offsetAlpha,
+  registerEffectRenderer, alphaToCanvas, blurAlpha, spreadAlpha, offsetAlpha, offsetVector,
 } from './styles.js';
 import { createCanvas, clamp, clamp255, deg2rad } from '../core/util.js';
+import { parseColor } from '../core/color.js';
+import { effectFieldOnGPU } from '../render/gpu-effects.js';
+import { signedDistance } from '../core/distance.js';
 import { gcoFor, isNativeBlend } from '../core/blend.js';
 import { renderGradient, resolveStops, reverseStops, buildStopLUT } from '../paint/gradients.js';
 import { getPattern, makeTiledCanvas } from '../paint/patterns.js';
@@ -119,66 +122,14 @@ function boxBlurPass(src, w, h, radius) {
  * 250px Gaussian is ~750 taps per pixel per axis and effects re-render on every
  * composite.
  */
-function blurField(f, w, h, radius) {
+function blurField(f, w, h, radius, clampEdges = false) {
   if (!(radius > 0.05)) return f;
-  if (radius <= 16) return blurAlpha(f, w, h, radius);
+  if (radius <= 16) return blurAlpha(f, w, h, radius, clampEdges);
   const sigma = radius / 2;
   const boxR = Math.max(1, Math.round(Math.sqrt((12 * sigma * sigma) / 3 + 1) / 2));
   let out = f;
   for (let i = 0; i < 3; i++) out = boxBlurPass(out, w, h, boxR);
   return out;
-}
-
-/** Two-pass chamfer distance transform (in place). */
-function chamfer(d, w, h) {
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      let v = d[i];
-      if (x > 0) v = Math.min(v, d[i - 1] + 1);
-      if (y > 0) v = Math.min(v, d[i - w] + 1);
-      if (x > 0 && y > 0) v = Math.min(v, d[i - w - 1] + 1.414);
-      if (x < w - 1 && y > 0) v = Math.min(v, d[i - w + 1] + 1.414);
-      d[i] = v;
-    }
-  }
-  for (let y = h - 1; y >= 0; y--) {
-    for (let x = w - 1; x >= 0; x--) {
-      const i = y * w + x;
-      let v = d[i];
-      if (x < w - 1) v = Math.min(v, d[i + 1] + 1);
-      if (y < h - 1) v = Math.min(v, d[i + w] + 1);
-      if (x < w - 1 && y < h - 1) v = Math.min(v, d[i + w + 1] + 1.414);
-      if (x > 0 && y < h - 1) v = Math.min(v, d[i + w - 1] + 1.414);
-      d[i] = v;
-    }
-  }
-  return d;
-}
-
-/**
- * Signed distance to the shape edge in pixels: positive inside, negative
- * outside. Pixels within one pixel of the border take their distance from the
- * coverage value instead, which keeps antialiased edges sub-pixel accurate.
- */
-function signedDistance(alpha, w, h) {
-  const n = w * h;
-  const INF = 1e9;
-  const din = new Float32Array(n);
-  const dout = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const inside = alpha[i] > 127;
-    din[i] = inside ? INF : 0;
-    dout[i] = inside ? 0 : INF;
-  }
-  chamfer(din, w, h);
-  chamfer(dout, w, h);
-  const sd = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    if (din[i] <= 1.5 && dout[i] <= 1.5) sd[i] = alpha[i] / 255 - 0.5;
-    else sd[i] = din[i] > 0 ? din[i] - 0.5 : 0.5 - dout[i];
-  }
-  return sd;
 }
 
 /**
@@ -188,9 +139,7 @@ function signedDistance(alpha, w, h) {
  */
 function offsetFieldClamped(f, w, h, angleDeg, distance) {
   if (!distance) return f;
-  const rad = deg2rad(angleDeg);
-  const dx = Math.round(-Math.cos(rad) * distance);
-  const dy = Math.round(Math.sin(rad) * distance);
+  const { dx, dy } = offsetVector(angleDeg, distance);
   const out = new Float32Array(w * h);
   for (let y = 0; y < h; y++) {
     const sy = clamp(y - dy, 0, h - 1) * w;
@@ -351,12 +300,22 @@ function fillField(field, w, h, cfg, ramp) {
 /* ================================================================== */
 
 registerEffectRenderer('dropShadow', (cfg, env) => {
-  const { w, h, alpha } = env;
   const size = Math.max(0, num(cfg.size, 5));
   const spreadPx = size * frac(cfg.spread);
   const angle = cfg.useGlobalLight ? num(env.globalLight, 120) : num(cfg.angle, 120);
+  const distance = Math.max(0, num(cfg.distance, 0));
 
-  let f = offsetAlpha(alpha, w, h, angle, Math.max(0, num(cfg.distance, 0)));
+  const gpu = effectFieldOnGPU(env, {
+    ...offsetVector(angle, distance),
+    spread: spreadPx,
+    blurRadius: size - spreadPx,
+    noise: frac(cfg.noise),
+    color: parseColor(cfg.color || '#000000'),
+  });
+  if (gpu) return gpu;
+
+  const { w, h, alpha } = env;
+  let f = offsetAlpha(alpha, w, h, angle, distance);
   if (spreadPx > 0) f = spreadAlpha(f, w, h, spreadPx);
   f = blurField(f, w, h, size - spreadPx);
   f = noiseField(f, frac(cfg.noise));
@@ -370,16 +329,28 @@ registerEffectRenderer('dropShadow', (cfg, env) => {
 /* ================================================================== */
 
 registerEffectRenderer('innerShadow', (cfg, env) => {
-  const { w, h, alpha } = env;
   const size = Math.max(0, num(cfg.size, 5));
   const chokePx = size * frac(cfg.choke);
   const angle = cfg.useGlobalLight ? num(env.globalLight, 120) : num(cfg.angle, 120);
+  const distance = Math.max(0, num(cfg.distance, 0));
+
+  const gpu = effectFieldOnGPU(env, {
+    kind: 'innerShadow',
+    ...offsetVector(angle, distance),
+    spread: chokePx,
+    blurRadius: size - chokePx,
+    noise: frac(cfg.noise),
+    color: parseColor(cfg.color || '#000000'),
+  });
+  if (gpu) return gpu;
 
   // Shadow cast by the hole around the layer: work on the inverted matte.
+  const { w, h, alpha } = env;
   let f = invertField(alpha);
-  f = offsetFieldClamped(f, w, h, angle, Math.max(0, num(cfg.distance, 0)));
+  f = offsetFieldClamped(f, w, h, angle, distance);
   if (chokePx > 0) f = spreadAlpha(f, w, h, chokePx);
-  f = blurField(f, w, h, size - chokePx);
+  // The inverted matte is opaque past the region's border too: clamp.
+  f = blurField(f, w, h, size - chokePx, true);
   f = noiseField(f, frac(cfg.noise));
   f = clipField(f, alpha);
   return alphaToCanvas(f, w, h, cfg.color || '#000000');
@@ -390,10 +361,22 @@ registerEffectRenderer('innerShadow', (cfg, env) => {
 /* ================================================================== */
 
 registerEffectRenderer('outerGlow', (cfg, env) => {
-  const { w, h, alpha } = env;
   const size = Math.max(0, num(cfg.size, 10));
   const spreadPx = size * frac(cfg.spread);
 
+  const wantsGradient = cfg.fillType === 'gradient' && Array.isArray(cfg.stops) && cfg.stops.length > 0;
+  const gpu = effectFieldOnGPU(env, {
+    dx: 0,
+    dy: 0,
+    spread: spreadPx,
+    blurRadius: size - spreadPx,
+    noise: frac(cfg.noise),
+    color: parseColor(cfg.color || '#000000'),
+    lut: wantsGradient ? gradientLUT(cfg.stops, cfg.reverse) : null,
+  });
+  if (gpu) return gpu;
+
+  const { w, h, alpha } = env;
   let f = spreadPx > 0 ? spreadAlpha(alpha, w, h, spreadPx) : alpha;
   f = blurField(f, w, h, size - spreadPx);
   const falloff = f;
@@ -415,10 +398,25 @@ registerEffectRenderer('outerGlow', (cfg, env) => {
 /* ================================================================== */
 
 registerEffectRenderer('innerGlow', (cfg, env) => {
-  const { w, h, alpha } = env;
   const size = Math.max(0.5, num(cfg.size, 10));
   const chokePx = size * frac(cfg.choke);
   const span = Math.max(0.001, size - chokePx);
+  const fromCenter = cfg.source === 'center';
+
+  const wantsGradient = cfg.fillType === 'gradient' && Array.isArray(cfg.stops) && cfg.stops.length > 0;
+  const gpu = effectFieldOnGPU(env, {
+    kind: 'innerGlow',
+    size,
+    span,
+    fromCenter,
+    blurRadius: 1,
+    noise: frac(cfg.noise),
+    color: parseColor(cfg.color || '#000000'),
+    lut: wantsGradient ? gradientLUT(cfg.stops, cfg.reverse) : null,
+  });
+  if (gpu) return gpu;
+
+  const { w, h, alpha } = env;
   const sd = signedDistance(alpha, w, h);
 
   // A blurred inverted matte only reaches 50% right at the edge, which halves
@@ -427,9 +425,8 @@ registerEffectRenderer('innerGlow', (cfg, env) => {
   const edge = new Float32Array(n);
   for (let i = 0; i < n; i++) edge[i] = 255 * clamp((size - sd[i]) / span, 0, 1);
 
-  const fromCenter = cfg.source === 'center';
   let f = fromCenter ? invertField(edge) : edge;
-  f = blurField(f, w, h, 1);
+  f = blurField(f, w, h, 1, true);
   f = noiseField(f, frac(cfg.noise));
   const falloff = f;
   f = clipField(f, alpha);

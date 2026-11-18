@@ -22,6 +22,13 @@ are relative and **must include the `.js` extension**.
    byte-identical copy of the untouched buffer alive in every later snapshot.
    **`doc.selection.mask` is shared the same way**, so no method on `Selection`
    may write into an existing mask; replace the array instead.
+   The same lifecycle is what tells caches that pixels changed. Between
+   `beginEdit` and the commit a layer is *live*, and every `touch()` bumps its
+   buffers' revision (`src/core/pixel-revision.js`) — a brush stroke writes
+   into one buffer for its whole length. A write that skips `beginEdit` (only
+   ever into a buffer nobody else holds) must call `doc.invalidatePixels(layer)`,
+   or the live composite keeps showing what the layer's effects looked like
+   before. Load the app with `?verifycomposite=1` to catch one.
 3. **`layer.canvas` is always document-sized — but the pixels behind it may not
    be.** A layer can hold a compact `tile` instead: its pixels at their natural
    size plus where they sit. Reading `.canvas` materialises the tile and gives up
@@ -30,7 +37,9 @@ are relative and **must include the `.js` extension**.
    must go through `layer.tile` instead, or the whole document expands on the
    first commit or the first frame. Caches keyed on a layer's pixels must key on
    `layer.pixelKey()`, never on `layer.canvas`: reading the key would otherwise
-   be what expands the layer. Snapping measures every layer in the document on
+   be what expands the layer. And on `layer.pixelRevision()` as well — the key
+   alone says *which* buffer, not whether a live stroke has written into it
+   since. Snapping measures every layer in the document on
    every drag, so this is not hypothetical. A 60-layer 4000×3000 PSD opens in 99 MB compact and 3.6 GB
    expanded, so this is the difference between the file opening and not.
 4. **A layer's canvas may be SHARED with another layer.** `beginEdit()` clones
@@ -248,7 +257,10 @@ doc.addLayer(layer, {above?, parent?, index?})
 doc.removeLayer(layer)    doc.duplicateLayer(layer)
 doc.moveLayer(layer, parent, index)
 doc.arrange(layer, 'front'|'forward'|'backward'|'back')
-doc.beginEdit(layerOrLayers?)   doc.commit(label)   doc.touch(reason?)
+doc.beginEdit(layerOrLayers?, {surface?, live?})   doc.commit(label)   doc.touch(reason?)
+doc.endEdit(layers?)            // close a live edit that will not be committed
+doc.invalidatePixels(layers?, surface?)   // redraw after a write outside beginEdit
+doc.settleLiveLayers()          // History calls this once an edit is captured
 doc.resample(w,h,smoothing?)    doc.resizeCanvasTo(w,h,anchor)
 doc.crop(rect)                  doc.transformImage('cw'|'ccw'|'180'|'flip-h'|'flip-v')
 doc.memoryUse()
@@ -314,7 +326,9 @@ layer.styles   // layer effects, see effects/styles.js
 layer.text layer.shape layer.adjustment layer.smart   // type payloads
 layer.isBackground  layer.editingMask
 
-layer.beginEdit()          // COW — prefer doc.beginEdit(layer)
+layer.beginEdit({surface?, live?})   // COW — prefer doc.beginEdit(layer)
+layer.pixelKey() layer.pixelRevision()   // which buffer, and how often it changed
+layer.maskKey()  layer.maskRevision()    layer.markPixelsChanged(surface?)
 layer.paintTarget()        // canvas OR mask depending on editingMask
 layer.ensureCanvas(w,h)    layer.getContext()
 layer.addMask(w,h,fill?)   layer.removeMask()   layer.touchMask()
@@ -333,6 +347,18 @@ anything you hang off `layer.text`/`shape`/`adjustment` must be structured-clona
 
 Factories: `createRasterLayer(w,h,name)`, `createGroupLayer(name)`,
 `createAdjustmentLayer(kind, params, w, h, name)`.
+
+**Pixel revisions** (`src/core/pixel-revision.js`). A revision belongs to a
+buffer, not to a Layer: one global clock, a `WeakMap` from buffer to the last
+tick it was bumped at. Undo rebuilds Layer objects around the buffers history
+kept, and those come back with the revisions they had, so caches built on them
+stay good; and since the clock only moves forward, no revision is ever reused.
+What bumps one: `beginEdit` (the fresh copy), assigning `layer.canvas` or
+`layer.mask`, `setTile` / `setMaskTile` with a *different* buffer (the same
+buffer at a new offset is a move, and the offset is in every key), `touchMask`,
+and `doc.touch()` / `commit()` while the layer is live. `beginEdit({live:
+false})` is for an edit that only moves its buffer — the Move tool's layer drag
+— so a drag invalidates nothing.
 
 ## `src/core/selection.js` — `Selection`
 
@@ -575,8 +601,9 @@ Group id `'pass-through'` is valid only on group layers.
 
 ### `src/render/compositor.js`
 ```
-compositeDocument(doc, opts?) -> canvas
-getComposite(doc)            -> cached canvas
+compositeDocument(doc, opts?) -> canvas   // from scratch: the reference
+getComposite(doc)            -> cached canvas; reuses layer-effect results
+setCompositeVerify(bool)  compositeVerifyStats() -> {checked, mismatches}
 compositeList(list, ctx, doc, opts)
 flattenLayers(doc, layers)   -> canvas
 blendOnto(ctx, srcCanvas, mode, opacity, doc)
@@ -586,6 +613,13 @@ getLayerPreview(layerId)     clearLayerPreviews()
 `setLayerPreview` overrides a whole layer, so it cannot preview an edit to that
 layer's **mask** — the filter runner detects that case and skips the preview
 rather than showing the wrong thing.
+
+`getComposite` — what the canvas view, the eyedropper and the wand use — takes
+each styled layer's effects from the effect cache (below). `compositeDocument`
+always renders everything, so exports, merges and every parity test compare
+against a render that cannot be stale. `?verifycomposite=1` (or
+`setCompositeVerify(true)`) renders each live composite both ways and warns
+on the first pixel that differs.
 
 ### `src/render/viewport.js` — `Viewport`
 ```
@@ -606,18 +640,27 @@ uses N as the **standard deviation**, so it matches the sigma convention the JS
 paths already used.
 
 ```
-supportsCanvasFilter() -> bool                  // feature-detected once, cached
+supportsCanvasFilter() -> bool                  // detected once by blurring a dot, cached
 blurCanvas(src, sigma, clampEdges = true) -> new canvas
 blurImageData(imageData, sigma, jsFallback?) -> the same ImageData, mutated
-blurAlphaField(alpha, w, h, sigma, jsFallback?) -> new Float32Array
+blurAlphaField(alpha, w, h, sigma, jsFallback?, clampEdges = false) -> new Float32Array
 ```
+
+`supportsCanvasFilter()` blurs a single dot and checks that it spread. Asking
+whether the property is accepted is not enough: Safari accepts `blur(…)`, reads
+it back, and draws with no blur at all, so every blur here returned its input
+untouched there until the check became functional. Where it is false the JS
+fallbacks run.
 
 The non-obvious part: **CSS blur treats everything outside the canvas as
 transparent black**, which fades the edge of an opaque image, whereas the JS path
 clamped. `clampEdges` (default true) replicates the edge pixels into a padded
-border first so the two agree. `blurAlphaField` deliberately passes
+border first so the two agree. `blurAlphaField` defaults to
 `clampEdges: false` — a shadow or glow field *must* fade to nothing outside the
-layer. Both `blurImageData` and `blurAlphaField` fall through to `jsFallback`
+layer — and Inner Shadow and Inner Glow pass `true`: they blur the *inverted*
+matte, which is opaque all round the shape, and the crop region can end four
+pixels from it. Fading there weakened the shadow along every side, by up to
+~70 counts, depending on which blur branch ran (the JS kernel always clamped). Both `blurImageData` and `blurAlphaField` fall through to `jsFallback`
 when Canvas2D filters are missing **or the surface is under ~90k px**, where the
 ImageData round trip wins nothing; pass the fallback or you get an unblurred
 result on small images. Used by `filters/blur.js` and `effects/styles.js`.
@@ -627,15 +670,24 @@ result on small images. Used by `filters/blur.js` and `effects/styles.js`.
 Canvas2D provides 17 of the 27 modes. The other ten (`linear-burn`,
 `vivid-light`, `linear-light`, `pin-light`, `hard-mix`, `subtract`, `divide`,
 `darker-color`, `lighter-color`, `dissolve`) ran per-pixel in JS — ~1 s per
-recomposite at 12 MP, on every brush frame. They now run in a fragment shader
-whose maths mirrors `blendCPU` exactly.
+recomposite at 12 MP, on every brush frame. They now run in a shader whose maths
+mirrors `blendCPU` exactly, on one of two backends tried in order: **WebGPU**,
+on the shared device, running the WGSL in `gpu-blend-wgsl.js`; then **WebGL2**,
+a context of its own created only the first time WebGPU declines, for browsers
+without WebGPU (Firefox on macOS and Linux) and the moments before the device
+exists. Both read the canvases' own premultiplied bytes and round identically.
 
 ```
-canBlendOnGPU(w, h) -> bool        // WebGL2 present and within max texture size
+canBlendOnGPU(w, h) -> bool        // either backend present and within texture limits
 shouldBlendOnGPU(w, h) -> bool     // ...and >= 400k px, where the GPU actually wins
 isGPUModeSupported(mode) -> bool
 blendOnGPU(ctx, src, mode, opacity) -> bool   // false = caller must use blendCPU
+blendBackend() -> 'webgpu'|'webgl2'|null      // which took the last call (tests)
 ```
+
+`gpu-blend-wgsl.js` exports `BLEND_WGSL` (`pk_unpremultiply8`, `pk_blend_sep`,
+`pk_blend`) and `BLEND_MODE_IDS`, so any WebGPU shader can blend exactly as
+`blendCPU` does.
 
 Three things a caller must know. **`blendOnGPU` replaces the destination
 wholesale** — the shader already produced the composited result, so it copies
@@ -643,13 +695,152 @@ back with `globalCompositeOperation = 'copy'`; do not composite its output again
 **Its return value is not optional**: it returns `false` for an unsupported mode,
 a too-small or too-large surface, a lost context or any thrown error, and the
 caller must then fall back to `blendCPU` — `compositor.js` does. And **the two
-paths are not bit-identical**: uploading a Canvas2D surface into WebGL round-trips
-through premultiplied 8-bit alpha, costing ~2 counts of precision on *partially
-transparent* pixels (opaque pixels are unaffected). Where a mode makes a discrete
-choice — Hard Mix's threshold, Darker/Lighter Color picking by luminance — that
-can flip ~0.1–0.6 % of semi-transparent pixels, which were exact ties either way.
-Documents under 400k px take the exact CPU path, which is why pixel-exactness
-tests use small documents.
+paths are not bit-identical** on *partially transparent* pixels (opaque pixels
+are exact). The context is premultiplied and textures upload with
+`UNPACK_PREMULTIPLY_ALPHA_WEBGL`, so the shader gets the canvas's own bytes, then
+unpremultiplies and rounds them exactly as `getImageData` does for `blendCPU`, and
+rounds its result as `putImageData` would. Leaving the unpremultiply to the
+browser's upload instead was fine in Chrome but not in Safari, whose upload and
+`getImageData` round differently: 0.24–0.62 counts on average, and up to 171 on
+Vivid Light, which divides by the source. What remains is ~0.04 counts on
+average in both, a few at worst, and up to ~25 at a handful of Vivid Light
+pixels. A discrete-choice mode — Hard Mix's threshold, Darker/Lighter Color
+picking by luminance — can still flip an exact tie. Documents under 400k px take
+the exact CPU path, which is why pixel-exactness tests use small documents.
+
+### `src/render/gpu-device.js` — the shared WebGPU device
+
+```
+getGPUDevice() -> GPUDevice|null     // synchronous; null until ready, after loss, or without WebGPU
+gpuReady() -> Promise<GPUDevice|null> // tests await this
+setGPUEnabled(bool)  isGPUEnabled()  gpuGeneration()  onDeviceLost(cb) -> remove
+GPU_MIN_PIXELS                       // 90k: below it every WebGPU path declines
+fitsTexture(device, w, h)  fitsStorage(device, bytes)
+pipelineCache(device) -> Map         // emptied when the device or generation changes
+uploadCanvas(device, canvas, {slot?, premultiplied?}) -> GPUTexture  // one rgba8unorm per slot
+beginPresent(device, w, h) -> GPUTextureView     // render target for a result
+endPresent(canvas2d, {x?, y?, clear?}) -> canvas2d   // copy it out, SAME TASK
+endPresentTo(ctx)                    // ...replacing everything ctx's canvas holds
+```
+
+WebGPU only hands out a device asynchronously, and every renderer here is
+synchronous, so the request starts on import and `getGPUDevice()` answers with
+whatever exists *now*. **`null` is a normal answer, not an error**: the first
+composites after boot, a browser without WebGPU, a lost device and
+`setGPUEnabled(false)` all look the same to a caller, and the caller takes its
+existing path. `?webgpu=off` in the page URL makes the module behave as if the
+browser had no WebGPU — run `/tests/?webgpu=off` to exercise every fallback.
+
+Results come back through a `webgpu` canvas copied into an ordinary 2D canvas
+by `endPresent`, **in the same task as `beginPresent`** — the swap-chain texture
+expires when the task ends. **Each result gets a fresh `webgpu` canvas**, released
+(`unconfigure`) as soon as it is copied: Safari serves `drawImage` from the copy
+it took the first time a canvas's current texture was read, so with one shared
+canvas the second effect in a composite came back as a copy of the first. Nothing maps a buffer, so nothing awaits. A canvas
+must already have a 2D context to be uploaded (`copyExternalImageToTexture`
+refuses one without), which every layer and crop buffer does. Anything cached
+against the device — pipelines, buffers — keys on `gpuGeneration()` so a lost
+device's objects are never reused.
+
+### `src/render/gpu-effects.js` — shadows and glows on WebGPU
+
+```
+effectFieldOnGPU(env, {kind?, dx, dy, spread?, blurRadius, size?, span?, fromCenter?,
+                       noise, color, lut?}) -> canvas|null
+GPU_MIN_PIXELS        gpuEffectsBroken()
+```
+
+Same contract as `blendOnGPU`: **`null` means run the CPU renderer.** Drop
+Shadow, Outer Glow (`kind: 'outer'`), Inner Shadow and Inner Glow call it first.
+It declines a region under `GPU_MIN_PIXELS` (the CPU is a few ms there and
+bit-exact, which is why small effect tests stay exact), a Spread, Choke or glow
+size past `MAX_DISTANCE_CAP` (256 px), anything too large for the device, and
+any error. After a WebGPU validation error it switches itself off for the
+session. The GPU path never reads `env.alpha`, so a layer whose effects all run
+here skips the `getImageData` too.
+
+One upload of `env.src`, then compute passes that each mirror a CPU function:
+`offsetAlpha` (with the `offsetVector` rounding shared from `styles.js`), or for
+Inner Shadow `invertField` + `offsetFieldClamped`; Spread / Choke through
+`gpu-distance.js`; Inner Glow's falloff from the same transform; `blurField`'s
+two branches — `gaussianKernel(radius/2)` for radii up to 16 (zero outside the
+region for outer effects, clamped for inner ones), three clamped running-sum box
+passes above — then `noiseField` (`pk_hash`, indexed by region pixel),
+`knockOutField` or `clipField`, and the colour or gradient LUT (Inner Glow's ramp
+follows the noisy field, Outer Glow's the clean one), drawn once. Agreement with
+the CPU is within 3 counts of alpha, held by `tests/suites/gpu-effects.test.js`;
+change one side and you must change the other. The three field buffers grow to
+the largest region seen (about 12 bytes a pixel) and are kept.
+
+### `src/render/gpu-distance.js` — the distance field on WebGPU
+
+```
+encodeDistance(device, pass, {src, g, out, alpha}, {w, h, mode, cap, seedsAbove,
+               rad?, size?, span?, invert?})
+distanceCap(r)   MAX_DISTANCE_CAP   DT_GROW   DT_GLOW_EDGE
+```
+
+The exact transform of `src/core/distance.js` (below), line-parallel: a pass
+down each column for the vertical distance to the nearest seed, then per pixel
+the minimum of `k² + g²` over `|k| <= cap`. Every term is a small integer, so the
+squared distance is the CPU's *exactly* wherever it is within the cap, and past
+the cap both outputs have saturated. WGSL's `sqrt` need not be correctly rounded,
+so a perfect square is returned exactly — every straight-axis distance would
+otherwise put a spread's ramp a hair off its half-count tie.
+
+### `src/render/wgsl-math.js` — `WGSL_MATH`
+
+Shader helpers where a WGSL builtin is not what the JS does: `pk_jsround`
+(`Math.round`; WGSL `round` sends halves to even), `pk_u8` (a
+`Uint8ClampedArray` store), `pk_hash` (`hashRandom`), and `pk_sincos`,
+`pk_atan2`, `pk_asin` to ~1e-7 — WGSL only promises sin/cos to 2^-11 and atan2
+to 4096 ULP, enough to put a twirl a pixel off at a radius of 2000.
+
+### `src/render/gpu-filters.js` — filters on WebGPU
+
+```
+registerGPUStage(kind, {encode(d, pass, inTex, outTex, stage, w, h), accepts?})
+runStagesOnGPU(imageData, stages) -> imageData|null   // writes the result back
+runStagesToCanvas(imageData, stages, ctx) -> bool      // straight to a canvas, no readback
+gpuImageDevice(w, h)  gpuFilterStats() -> {runs}  gpuFiltersBroken()  trimGPUScratch()
+IDENTITY_STAGE                                         // a stage that changes nothing
+computePipeline(d, name, wgsl, constants?)  bindGroup(d, pipeline, resources)  dataBuffer(d, data, usage)
+```
+
+A filter's contract is `apply(imageData)`, so an image goes up as its raw bytes
+(`writeTexture` into `rgba8uint`), runs through stages — each a compute pass from
+one such texture to another, 8-bit straight bytes between them as between CPU
+filters — and comes back once, presented premultiplied exactly as `putImageData`
+stores straight bytes, drawn into a 2D canvas and read with `getImageData`. **So
+a GPU filter's result is what `getImageData(putImageData(x))` gives for the CPU
+filter's result `x`** — what the filter runner and smart filters do next anyway.
+Parity tests put the CPU result through that round trip before comparing. The
+same null-means-CPU contract, with `GPU_MIN_PIXELS`.
+
+### `src/render/gpu-warp.js` — Distort and Liquify
+
+```
+warpStage(map, edge, f, aux?) -> stage    WARP_MAP  WARP_EDGE
+warpOnGPU(imageData, stage) -> imageData|null    warpToCanvas(imageData, stage, ctx) -> bool
+```
+
+The `warp` loop of `src/filters/distort.js` as one compute pass: the same
+integer premultiply, bilinear taps and edge rules, and the same transparency
+threshold, with the source coordinate from one of nine maps. Maps with a part
+that depends only on x or only on y (Wave, Ripple, Shear, Polar to Rectangular)
+are tabulated by the filter in float64, so those coordinates are the CPU's; the
+radial ones compute in the shader with `WGSL_MATH`'s trig. Lens Correction keeps
+its own CPU loop.
+
+### `src/render/gpu-develop.js` — Camera Raw
+
+The `develop` stage, run from `developOnGPU` in `camera-raw.js` with a plan
+(`developPlan`) built by the CPU develop's own helpers: every LUT, gain, radius
+and the grain field. Linear light in float32, point stages one pixel per
+invocation, blurs as `gaussianBlurBuffer` does them (a true kernel up to sigma
+2.5, three box passes above). **Dehaze stays on the CPU**: its airlight is the
+99.9th percentile of the dark channel, a whole-image sort. The stage needs about
+32 bytes a pixel of scratch and declines when that does not fit.
 
 ---
 
@@ -866,6 +1057,16 @@ routes through `setLayerPreview`, which is why a **mask** edit cannot preview
 Do not add a `renderUI` to a filter — nothing reads it. For a custom dialog body,
 use a `custom` ParamDescriptor, which `paramDialog` does render.
 
+**On WebGPU.** A filter may also carry `gpuStage(params, {width, height}) ->
+stage | null | IDENTITY_STAGE` (see `src/render/gpu-filters.js`): the stage that
+does the same work on the GPU, null when it cannot (the CPU runs it), or
+`IDENTITY_STAGE` when its settings change nothing. The ten warp distortions and
+Liquify get theirs by running their own `apply` with `warp` set to record rather
+than draw, so the stage is built by exactly the code a direct run uses; Camera
+Raw's comes from `developPlan`. Run directly, those filters try the GPU first
+inside `apply` (`warp`, `developOnGPU`); in a smart filter stack, consecutive
+ones run as one chain (below).
+
 ## Camera Raw — `src/filters/camera-raw.js`
 
 A develop module registered as an ordinary filter, which is the whole design: a
@@ -876,9 +1077,19 @@ no new machinery.
 ```
 developImage(imageData, params) -> imageData        // mutates in place
 isNeutralDevelop(params) -> boolean                 // true when nothing would change
+developPlan(params, w, h) -> {C, steps}|null        // the GPU develop's constants; null with Dehaze
+developOnGPU(imageData, params) -> imageData|null   // null: run developImage
 CAMERA_RAW_DEFAULTS                                 // every key, at its neutral value
 CAMERA_RAW_BANDS                                    // the eight colour-mixer bands
 ```
+
+`apply` tries `developOnGPU` (src/render/gpu-develop.js) after the neutral check
+and before `developImage`, so the defaults never reach the GPU. Every table the
+GPU uses comes out of the same helpers as the CPU's — `developPlan` only lays
+them out — so the two agree to a level. Colour grading and Grain read luminance
+through `encodeGamma`, which treats anything at or below black as black:
+Clarity, Texture and Sharpening can push a pixel beside a bright edge below
+zero, and the unguarded power of a negative number was NaN — a black speck.
 
 Three invariants that are easy to "simplify" away, each of which was a real bug:
 
@@ -991,19 +1202,67 @@ opens a dialog at all; the body is never rendered. Believe this file.
 
 ```js
 registerEffectRenderer(id, (cfg, env) => canvas|null)
-// env = {w, h, alpha: Float32Array, src: canvas, layer, doc, styles, globalLight}
+// env = {w, h, alpha: Float32Array (a lazy getter), src: canvas, layer, doc, styles, globalLight}
 ```
 Effect ids: `dropShadow`, `innerShadow`, `outerGlow`, `innerGlow`, `bevelEmboss`,
 `satin`, `colorOverlay`, `gradientOverlay`, `patternOverlay`, `stroke`.
 `DEFAULT_STYLES` holds every default. Helpers: `alphaOf(canvas)`,
-`alphaToCanvas(alpha,w,h,color)`, `blurAlpha(alpha,w,h,r)`,
+`alphaToCanvas(alpha,w,h,color)`, `blurAlpha(alpha,w,h,r,clampEdges?)`,
 `spreadAlpha(alpha,w,h,amount)`, `offsetAlpha(alpha,w,h,angle,distance)`,
 `defaultStyle(id)`, `hasStyles(layer)`, `enabledEffects(styles)`,
 `applyLayerStyles(...)`, `belowEffectResults(...)`, `EFFECT_ORDER_BELOW`,
 `EFFECT_ORDER_ABOVE`, and the `renderers` Map.
-The renderer returns a **document-sized canvas**; `applyLayerStyles` handles
-opacity and blend mode from `cfg`. `env.globalLight` is `doc.globalLight` with a
-default of 120 degrees, and `blurAlpha` routes through `render/fast-blur.js`.
+The renderer returns a canvas the size of `env` — the region the effects can
+reach, at `env.offsetX/offsetY` in the document (or the whole document when
+cropping would not pay); `applyLayerStyles` handles opacity and blend mode from
+`cfg`. `env.globalLight` is `doc.globalLight` with a default of 120 degrees, and
+`blurAlpha` routes through `render/fast-blur.js`.
+
+**Distances are exact.** Spread, Choke, every Stroke position, Inner Glow and
+Bevel measure true Euclidean distance (`src/core/distance.js`:
+`distanceField`, `spreadField`, `signedDistance` — Felzenszwalb and
+Huttenlocher's separable transform, exact integers squared). The two-pass
+chamfer this replaced read off-axis distances up to 8% long — a stroke's
+corners came out octagonal — and could not run on a GPU; the exact transform
+can (`gpu-distance.js`). Select and Mask's `edgeBand` keeps its own chamfer:
+its matting is tuned to that band.
+
+`env.alpha` is read back from `env.src` **on first access**, not up front: the
+drop shadow, outer glow, inner shadow and inner glow try `effectFieldOnGPU`
+first, and when the GPU takes them the readback never happens. A renderer that needs the alpha just reads it.
+`applyLayerStyles` builds no environment at all when none of the effects it is
+asked for are enabled — the compositor calls it with `skipBelow` for every
+styled layer, so a layer with only a drop shadow would otherwise pay for a bounds
+scan and a readback to draw nothing.
+
+### `src/effects/effect-cache.js` — results kept between composites
+
+```
+cachedBelowEffects(layer, doc) -> [{canvas, x, y, mode, opacity}]
+cachedComposed(layer, doc, fill) -> {canvas, x, y}   // content at fill + the effects above it
+beginEffectFrame(doc)  endEffectFrame(doc)
+setEffectCacheBudget(bytes)  effectCacheBudget()  effectCacheStats(doc)  clearEffectCache(doc)
+```
+
+The live composite (`getComposite`) runs every frame of a brush stroke, and every
+styled layer used to re-run its renderers each time, though nothing they read
+had changed. Now each styled layer's results are kept, per layer id on
+`doc._fxCache`, at three levels: a **base** (the pixel buffer and its revision,
+the tile offset, the document size, and whether WebGPU renders effects — its
+results differ from the CPU's by a count or two); the **region** (content bounds,
+measured once per base, grown by the effects' reach); and **one result per
+effect**, keyed by its settings compared *by value* — the Layer Style dialog and
+the panel's eye edit them in place — minus opacity and blend mode, which are
+applied when drawing, plus the global light angle when it uses it, the colours a
+`'foreground'`/`'background'` gradient stop resolves to, and the renderer
+itself. `composed` adds Fill and the above effects' full settings. A hit draws
+region-sized canvases at their offsets — exact, as a transparent source leaves
+every Canvas2D mode's backdrop alone — and never calls `renderCanvas()`, so a
+compact layer stays compact. Results are never written again once handed out. A
+layer showing a preview is never cached. Counted in `doc.memoryUse()`; least
+recently used entries go once a document holds more than the budget (half of
+Preferences > Memory Budget), and an entry bigger than half the budget is used
+for its frame and dropped.
 
 ## Brush engine — `src/paint/brush-engine.js`
 
@@ -1101,7 +1360,7 @@ decomposeMatrix(m, sw, sh) -> {centerX, centerY, scaleX, scaleY, angle}
 composeMatrix({centerX,centerY,scaleX,scaleY,angle}, sw, sh) -> matrix
 isSmartLayer(layer)   smartPayload(layer)   getSmartTransform(layer)
 getSmartFilters(layer)   cloneSourceDocument(src, name)
-smartSourcePixels(s, layer, cacheHolder)   composeSmartCanvas(s, w, h, layer?, cache?)
+smartSourcePixels(s, layer, cacheHolder, prefix?)   composeSmartCanvas(s, w, h, layer?, cache?, prefix?)
 renderSmartObject(layer, doc)   invalidateSmartCache(layer)
 createSmartObject(doc, layers)  setSmartTransform(doc, layer, matrix, opts?)
 resetSmartTransform(doc, layer)
@@ -1115,6 +1374,15 @@ editSmartFilter(doc, layer, ref)  promptSmartFilter(doc, layer, filterId, preset
 **Every render starts from `source`**: composite the source document, re-run the
 stored filters in order, apply the transform last. `layer.canvas` is only a cache
 of that render, which is why scaling down and back up is lossless.
+
+Consecutive filters with a `gpuStage` (the distortions, Liquify, Camera Raw) run
+as **one GPU chain**: one upload, one readback, instead of a
+`getImageData`/`putImageData` round trip per filter; a filter without one breaks
+the chain and runs on the CPU, as does everything when the GPU declines. A
+filter dialog on a smart layer passes a `prefix` Map, which keeps what each
+leading run of the stack produced, keyed by the source and those filters'
+settings, so moving a slider re-runs only the filter being edited and those
+above it.
 
 The rule to obey: **`Layer.snapshot()` shallow-copies `layer.smart`**, so history
 states share the payload object. Nothing in this module ever edits `layer.smart`
@@ -1628,7 +1896,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/filters/{blur,distort,noise,pixelate,render,sharpen,stylize,other}.js`
 - `src/filters/camera-raw.js`
 - `src/adjustments/{basic,advanced}.js`
-- `src/effects/{effect-renderers,styles-dialog}.js`
+- `src/effects/{effect-renderers,styles-dialog,effect-cache}.js`
 - `src/ui/{menubar,toolbar,options-bar,statusbar,tabbar,shortcuts,panel-host}.js`
 - `src/ui/panels/*.js`
 - `src/ui/dialogs/*.js`
@@ -1637,7 +1905,9 @@ Never write outside your own list — parallel work depends on it.
 - `src/io/{decode,heif-info,heif-read,heif-write,icns}.js` + `scripts/make-apple-fixtures.py`, `tests/fixtures/`
 - `src/io/{store,session,offline}.js` + `public/sw.js`, `public/manifest.webmanifest`
 - `src/edit/{clipboard,fill-stroke}.js`
-- `src/render/{fast-blur,gpu-blend}.js`
+- `src/render/{fast-blur,gpu-blend,gpu-blend-wgsl,gpu-device,gpu-effects,gpu-distance}.js`
+- `src/render/{gpu-filters,gpu-warp,gpu-develop,wgsl-math}.js`
+- `src/core/{distance,pixel-revision}.js`
 - `src/ui/{welcome,canvas-menu,brand,curve-editor,gradient-editor}.js`
 - `src/ui/cross-doc-drag.js` — dragging pixels between two open documents
 - `src/core/smart.js`
@@ -1674,9 +1944,10 @@ must be green before anything ships.
 tests/index.html      the runner page — also hosts a real, off-screen app shell
 tests/run.js          imports /src/main.js to boot the app, then every suite
 tests/harness.js      suite() + the assertion context
-tests/suites/*.test.js  core, compositor, paint, filters, adjustments, layers,
-                        effects, text-vector, io, smart, liquify, channels,
-                        select, camera-raw, animation, color-management, i18n, perf
+tests/suites/*.test.js  core, compositor, distance, paint, filters, adjustments, layers,
+                        effects, gpu-effects, pixel-revision, effect-cache, gpu-filters,
+                        gpu-camera-raw, gpu-chains, text-vector, io, smart, liquify,
+                        channels, select, camera-raw, animation, color-management, i18n, perf
 ```
 
 The test page pins the interface to English with `<meta name="pikado-language"
@@ -1688,7 +1959,11 @@ fails on any English that escaped `tr()`.
 
 **Running it:** open `http://localhost:5174/tests/` on the dev server. Automation
 reads `window.__pikadoTests` (the full report) once `window.__pikadoTestsDone` is
-true. Node is not an option: essentially every subsystem depends on working
+true. Run it a second time as `/tests/?webgpu=off` to take every WebGPU fallback;
+the GPU-only checks then say in a visible assertion that they were not exercised.
+`/tests/?grep=gpu|effect cache` runs only the suites whose names contain one of
+the `|`-separated terms; `/tests/?verifycomposite=1` also checks every live
+composite against a fresh render. Node is not an option: essentially every subsystem depends on working
 Canvas2D or WebGL, and a jsdom canvas would make the suite meaningless.
 `tests/index.html` boots the genuine app off-screen at 1280×860 so tool
 registration, panels, menus and `ResizeObserver` are all exercised.

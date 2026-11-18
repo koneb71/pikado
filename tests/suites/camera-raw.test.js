@@ -738,3 +738,40 @@ suite('camera raw / lifting near-black keeps its colour', async (t) => {
   t.ok(rising, 'the blue channel rises monotonically through the lift');
   t.eq(px(0).join(), '0,0,0', 'and true black stays black');
 });
+
+suite('camera raw / clarity beside a bright edge leaves no black specks', async (t) => {
+  // Clarity darkens the dark side of a bright edge, and on a blue sky beside a
+  // white disc that pushes luminance below zero. Colour grading and Grain then
+  // raised it to the power 1/2.2 unguarded: NaN, encoded as a black pixel — a
+  // ring of black specks round anything bright. Verified to fail before the
+  // guard: grading left 1664 pure-black pixels here and grain 380, against a
+  // baseline of 240 that the sharpening alone drives below black.
+  const w = 160, h = 120;
+  const img = new ImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const disc = Math.hypot(x - 80, y - 60) < 30;
+      img.data[i] = disc ? 255 : 118; img.data[i + 1] = disc ? 255 : 154; img.data[i + 2] = disc ? 255 : 201;
+      img.data[i + 3] = 255;
+    }
+  }
+  const blackAfter = (extra) => {
+    const out = developImage(new ImageData(new Uint8ClampedArray(img.data), w, h), {
+      clarity: 100, texture: 100, sharpenAmount: 150, ...extra,
+    });
+    let black = 0;
+    for (let i = 0; i < out.data.length; i += 4) {
+      if (out.data[i] === 0 && out.data[i + 1] === 0 && out.data[i + 2] === 0) black++;
+    }
+    return black;
+  };
+  // At these extreme settings some pixels beside the disc really are driven
+  // below black on every channel; that is the baseline. Grading and Grain
+  // must not add to it.
+  const baseline = blackAfter({});
+  for (const [label, extra] of [['colour grading', { shadowSat: 40 }], ['grain', { grain: 40 }]]) {
+    const black = blackAfter(extra);
+    t.ok(black <= baseline, `with ${label}, no more pure-black pixels than without it (${black} vs ${baseline})`);
+  }
+});

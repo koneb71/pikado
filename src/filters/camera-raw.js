@@ -1,5 +1,7 @@
-import { registerFilter, makeRandom } from './registry.js';
-import { gaussianBlurBuffer } from './blur.js';
+import { registerFilter, getFilter, makeRandom, gaussianKernel } from './registry.js';
+import { gaussianBlurBuffer, boxRadiiForGauss } from './blur.js';
+import { runStagesOnGPU, IDENTITY_STAGE } from '../render/gpu-filters.js';
+import { DEVELOP_LAYOUT, S as SLOT } from '../render/gpu-develop.js';
 import { curveParam, curveToLUT, isIdentityCurve, defaultCurves } from '../ui/curve-editor.js';
 import { msg } from '../core/i18n.js';
 
@@ -73,6 +75,9 @@ const encode = (l) => TO_SRGB[l <= 0 ? 0 : l >= 1 ? ENCODE_STEPS : Math.round(l 
 const luminance = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/** Linear to the 2.2 gamma the colour stages work in; 0 at or below black. */
+const encodeGamma = (v) => (v <= 0 ? 0 : v ** (1 / 2.2));
 
 /* ------------------------------------------------------------------ */
 /* White balance                                                       */
@@ -821,7 +826,10 @@ export function developImage(image, params = {}) {
     const shTint = hslToRgb(num(p.shadowHue, 220), 1, 0.5);
     const pivot = clamp01(0.5 + balance * 0.35);
     for (let i = 0; i < n * 4; i += 4) {
-      const l = clamp01(luminance(lin[i], lin[i + 1], lin[i + 2]) ** (1 / 2.2));
+      // Clarity and Texture can push a pixel beside a bright edge below zero;
+      // a negative base to a fractional power is NaN, and NaN encoded as a
+      // black pixel — specks all round a bright subject. Read it as black.
+      const l = clamp01(encodeGamma(luminance(lin[i], lin[i + 1], lin[i + 2])));
       const up = clamp01((l - pivot) / Math.max(0.05, 1 - pivot));
       const down = clamp01((pivot - l) / Math.max(0.05, pivot));
       for (let c = 0; c < 3; c++) {
@@ -862,6 +870,170 @@ export function developImage(image, params = {}) {
     d[i + 2] = encode(lin[i + 2]);
   }
   return image;
+}
+
+/* ------------------------------------------------------------------ */
+/* The same develop, on WebGPU                                         */
+/* ------------------------------------------------------------------ */
+
+/** How `gaussianBlurBuffer(buf, w, h, sigma, 1)` blurs, as a GPU plan. */
+function bufferBlurPlan(sigma, push) {
+  if (!(sigma > 0.05)) return null;
+  if (sigma <= 2.5) {
+    const k = gaussianKernel(sigma);
+    const r = (k.length - 1) >> 1;
+    if (r < 1) return null;
+    return { kind: 'gauss', kr: r, koff: push(k) };
+  }
+  return { kind: 'box', radii: boxRadiiForGauss(sigma, 3).filter((r) => r >= 1).map((r) => Math.round(r)) };
+}
+
+/**
+ * Everything `developImage` computes before touching a pixel, laid out for
+ * src/render/gpu-develop.js — built by the same helpers, so the two cannot
+ * disagree about a table. Null when the develop cannot run there (Dehaze,
+ * which needs a percentile of the whole image).
+ *
+ * @returns {{C:Float32Array, steps:object[]}|null}
+ */
+export function developPlan(params, w, h) {
+  const p = { ...CAMERA_RAW_DEFAULTS, ...params };
+  if (num(p.dehaze)) return null;
+  const L = DEVELOP_LAYOUT;
+  const extra = [];
+  let extraLen = 0;
+  const push = (arr) => {
+    const off = L.VAR + extraLen;
+    extra.push([off, arr]);
+    extraLen += arr.length;
+    return off;
+  };
+  const sc = {};
+  const steps = [];
+
+  /* 1-5: white balance, exposure, tone regions, contrast, tone curve */
+  const wb = whiteBalanceGains(p.temperature, p.tint);
+  if (wb) { sc[SLOT.HAS_WB] = 1; sc[SLOT.WB] = wb.r; sc[SLOT.WB + 1] = wb.g; sc[SLOT.WB + 2] = wb.b; }
+  const exposure = num(p.exposure);
+  if (exposure) { sc[SLOT.HAS_EXP] = 1; sc[SLOT.EXPK] = 2 ** exposure; }
+  const hi = num(p.highlights) / 100, sh = num(p.shadows) / 100;
+  const wh = num(p.whites) / 100, bl = num(p.blacks) / 100;
+  const tone = hi || sh || wh || bl ? toneRegionLUT(sh, hi, wh, bl) : null;
+  if (tone) sc[SLOT.HAS_TONE] = 1;
+  const contrast = num(p.contrast) / 100;
+  const contrastTable = contrast ? contrastLUT(contrast) : null;
+  if (contrastTable) sc[SLOT.HAS_CONTRAST] = 1;
+  const curves = [];
+  if (p.curves && !identityCurves(p.curves)) {
+    ['rgb', 'r', 'g', 'b'].forEach((ch, i) => {
+      const pts = p.curves[ch];
+      if (pts && pts.length && !isIdentityCurve(pts)) { curves[i] = curveToLUT(pts); sc[SLOT.CURVE + i] = 1; }
+    });
+  }
+
+  /* 6: presence */
+  const clarity = num(p.clarity) / 100 * 1.6;
+  if (clarity) {
+    steps.push({ k: 'local', amount: clarity, detail: 0, flat: false,
+      blur: bufferBlurPlan(Math.max(3, Math.min(w, h) / 200), push) });
+  }
+  const texture = num(p.texture) / 100 * 1.2;
+  if (texture) {
+    steps.push({ k: 'local', amount: texture, detail: 0.5, flat: false,
+      blur: bufferBlurPlan(1.2, push), fineBlur: bufferBlurPlan(Math.max(0.6, 1.2 * 0.35), push) });
+  }
+
+  /* 7-8: colour and grading */
+  const bw = p.treatment === 'bw';
+  const anyHsl = BANDS.some((b) => p[`${b.key}Hue`] || p[`${b.key}Sat`] || p[`${b.key}Lum`]);
+  const vibrance = num(p.vibrance) / 100;
+  const saturation = num(p.saturation) / 100;
+  const hlSat = num(p.highlightSat) / 100, shSat = num(p.shadowSat) / 100;
+  const doColour = anyHsl || vibrance || saturation || bw;
+  if (doColour || hlSat || shSat) {
+    steps.push({ k: 'colour' });
+    sc[SLOT.DO_COLOUR] = doColour ? 1 : 0;
+    sc[SLOT.ANY_HSL] = anyHsl ? 1 : 0;
+    sc[SLOT.VIBRANCE] = vibrance;
+    sc[SLOT.SATURATION] = saturation;
+    sc[SLOT.BW] = bw ? 1 : 0;
+    sc[SLOT.HL_SAT] = hlSat;
+    sc[SLOT.SH_SAT] = shSat;
+    sc[SLOT.PIVOT] = clamp01(0.5 + num(p.splitBalance) / 100 * 0.35);
+    hslToRgb(num(p.highlightHue, 45), 1, 0.5).forEach((v, i) => { sc[SLOT.HL_TINT + i] = v; });
+    hslToRgb(num(p.shadowHue, 220), 1, 0.5).forEach((v, i) => { sc[SLOT.SH_TINT + i] = v; });
+  }
+
+  /* 9: detail */
+  const sharpen = num(p.sharpenAmount) / 100;
+  if (sharpen) {
+    const sigma = Math.max(0.5, num(p.sharpenRadius, 1));
+    const detail = clamp01(num(p.sharpenDetail, 25) / 100);
+    steps.push({ k: 'local', amount: sharpen * 2.2, detail, flat: true,
+      blur: bufferBlurPlan(sigma, push), fineBlur: detail > 0 ? bufferBlurPlan(Math.max(0.6, sigma * 0.35), push) : null });
+  }
+  const nrLum = num(p.noiseLuminance) / 100;
+  if (nrLum > 0) {
+    steps.push({ k: 'nrLum', blur: bufferBlurPlan(0.7 + nrLum * 1.3, push) });
+    sc[SLOT.NR_LUM] = nrLum;
+    sc[SLOT.NR_THRESH] = 0.03 + nrLum * 0.12;
+  }
+  const nrCol = num(p.noiseColor) / 100;
+  if (nrCol > 0) {
+    steps.push({ k: 'nrCol', blur: bufferBlurPlan(1 + nrCol * 5, push) });
+    sc[SLOT.NR_COL] = nrCol;
+  }
+
+  /* 10: effects — the grain field is drawn by the same generator */
+  const grain = num(p.grain) / 100;
+  if (grain) {
+    const scale = Math.max(1, num(p.grainSize, 25) / 25);
+    const gw = Math.max(1, Math.round(w / scale));
+    const gh = Math.max(1, Math.round(h / scale));
+    const rnd = makeRandom(0x5eed);
+    const field = new Float32Array(gw * gh);
+    for (let i = 0; i < field.length; i++) field[i] = rnd() * 2 - 1;
+    if (scale > 1.5) gaussianBlurBuffer(field, gw, gh, 0.5, 1);
+    sc[SLOT.GRAIN] = grain * 0.12;
+    sc[SLOT.GW] = gw; sc[SLOT.GH] = gh; sc[SLOT.GSCALE] = scale;
+    sc[SLOT.GOFF] = push(field);
+  }
+  const vig = num(p.vignette) / 100;
+  if (vig) {
+    const cx = (w - 1) / 2, cy = (h - 1) / 2;
+    sc[SLOT.VIG] = vig;
+    sc[SLOT.VSTART] = clamp01(num(p.vignetteMidpoint, 50) / 100) * 0.9;
+    sc[SLOT.VCX] = cx; sc[SLOT.VCY] = cy; sc[SLOT.VMAXR] = Math.hypot(cx, cy) || 1;
+  }
+
+  const C = new Float32Array(L.VAR + extraLen);
+  C.set(TO_LINEAR, L.TOLIN);
+  C.set(TO_SRGB, L.TOSRGB);
+  if (tone) C.set(tone, L.TONE);
+  if (contrastTable) C.set(contrastTable, L.CONTRAST);
+  curves.forEach((lut, i) => { if (lut) C.set(lut, L.CURVES + i * 256); });
+  for (const [k, v] of Object.entries(sc)) C[L.S + Number(k)] = v;
+  BANDS.forEach((b, i) => {
+    const o = L.BANDS + i * 6;
+    C[o] = b.hue;
+    C[o + 1] = BAND_GAPS[i].left;
+    C[o + 2] = BAND_GAPS[i].right;
+    C[o + 3] = num(p[`${b.key}Hue`]) * 0.3;
+    C[o + 4] = num(p[`${b.key}Sat`]) / 100;
+    C[o + 5] = num(p[`${b.key}Lum`]) / 100;
+  });
+  for (const [off, arr] of extra) C.set(arr, off);
+  return { C, steps };
+}
+
+/**
+ * `developImage` on WebGPU, writing into `image`. Null when it declines (no
+ * device, a small image, Dehaze, not enough GPU memory): run the CPU develop.
+ */
+export function developOnGPU(image, params) {
+  const plan = developPlan(params, image.width, image.height);
+  if (!plan) return null;
+  return runStagesOnGPU(image, [{ kind: 'develop', plan }]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1041,7 +1213,7 @@ function applyGrain(lin, w, h, amount, size) {
     for (let x = 0; x < w; x++) {
       const gx = Math.min(gw - 1, (x / scale) | 0);
       const i = (y * w + x) * 4;
-      const l = clamp01(luminance(lin[i], lin[i + 1], lin[i + 2]) ** (1 / 2.2));
+      const l = clamp01(encodeGamma(luminance(lin[i], lin[i + 1], lin[i + 2])));
       const weight = 4 * l * (1 - l);
       const g = field[gy * gw + gx] * strength * weight;
       lin[i] += g; lin[i + 1] += g; lin[i + 2] += g;
@@ -1146,8 +1318,16 @@ registerFilter({
     // Every control neutral: hand the pixels back untouched rather than paying
     // for a linear round trip that cannot change anything.
     if (isNeutralDevelop(params)) return imageData;
+    if (developOnGPU(imageData, params)) return imageData;
     return developImage(imageData, params);
   },
 });
+
+/* Camera Raw can join a GPU filter chain (see applySmartFilters). */
+getFilter('camera-raw').gpuStage = (params, size) => {
+  if (isNeutralDevelop(params)) return IDENTITY_STAGE;
+  const plan = developPlan(params, size.width, size.height);
+  return plan ? { kind: 'develop', plan } : null;
+};
 
 export { BANDS as CAMERA_RAW_BANDS, defaultCurves };

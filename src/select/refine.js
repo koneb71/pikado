@@ -38,9 +38,12 @@ const copy = (mask) => new Uint8ClampedArray(mask);
  *
  * Found by a two-pass chamfer distance transform over the binary mask rather
  * than by dilating in a loop: one pass forward, one back, so the cost is the
- * same whether the radius is 1 or 250. The distances are approximate (3-4
- * chamfer weights, about 2% off true Euclidean), which is far below what any of
- * these controls can express.
+ * same whether the radius is 1 or 250. The distances are approximate — steps
+ * of 1 and sqrt(2), so a path off the axes reads up to 8% long and the band is
+ * a little narrower on diagonals. Layer effects moved to the exact transform
+ * in src/core/distance.js; this band stays as it is because the matting below
+ * is tuned to it (an exact band at the same radius made the soft-edge matting
+ * test's error about 10% worse).
  *
  * @returns {{band:Uint8Array, dist:Float32Array}} `band` is 1 inside the band;
  *   `dist` is the signed distance to the edge, negative outside the selection.

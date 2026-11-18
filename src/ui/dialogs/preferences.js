@@ -6,6 +6,7 @@ import { Dialog, buildForm } from '../dialog.js';
 import { BRAND } from '../brand.js';
 import { tr } from '../../core/i18n.js';
 import { languageOptions, applyLanguagePreference } from '../language.js';
+import { setEffectCacheBudget } from '../../effects/effect-cache.js';
 
 /**
  * Preferences. Values persist in `localStorage["pikado.prefs"]` and are pushed
@@ -289,6 +290,9 @@ export function applyStoredPreferences() {
   app.previewQuality = p.previewQuality;
   app.historyLimit = p.historyStates;
   app.memoryLimitMB = p.memoryLimitMB;
+  // Cached layer-effect results get half the budget history does: they are
+  // rebuilt from the layers whenever needed, so they are the first to give way.
+  setEffectCacheBudget((p.memoryLimitMB || 512) * 1048576 / 2);
   app.autoPurgeHistory = !!p.autoPurgeHistory;
   app.recentLimit = p.recentLimit;
   app.confirmBeforeClosing = !!p.confirmBeforeClosing;

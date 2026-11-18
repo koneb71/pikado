@@ -1,4 +1,5 @@
 import { createCanvas, cloneCanvas, clamp255, ctx2dRead } from '../core/util.js';
+import { spreadField } from '../core/distance.js';
 import { toCss, parseColor } from '../core/color.js';
 import { gaussianKernel, separableConvolve } from '../filters/registry.js';
 import { blurAlphaField } from '../render/fast-blur.js';
@@ -115,10 +116,16 @@ export function alphaToCanvas(alpha, w, h, color) {
  * This runs on every recomposite of a layer with a shadow or glow, so on a
  * large document the JS kernel below dominates frame time. Hand off to the GPU
  * where we can and keep the kernel as the fallback.
+ *
+ * `clampEdges` treats the region's border as if its outermost pixels carried
+ * on; without it the field fades to nothing past the border. The JS kernel
+ * always clamps. Inner effects blur an *inverted* matte, opaque all round the
+ * shape, and must clamp — fading it at a border a few pixels from the shape
+ * would weaken the shadow along that side.
  */
-export function blurAlpha(alpha, w, h, radius) {
+export function blurAlpha(alpha, w, h, radius, clampEdges = false) {
   if (radius <= 0) return alpha;
-  return blurAlphaField(alpha, w, h, radius / 2, blurAlphaJS);
+  return blurAlphaField(alpha, w, h, radius / 2, blurAlphaJS, clampEdges);
 }
 
 /** Separable Gaussian on an alpha field — the fallback for `blurAlpha`. */
@@ -146,51 +153,27 @@ function blurAlphaJS(alpha, w, h, sigma) {
 
 /**
  * Grow (`amount > 0`) or shrink the alpha field, used for Spread / Choke and
- * for stroke geometry. Chamfer distance transform on the 50% threshold.
+ * for stroke geometry: an exact Euclidean distance from the 50% threshold,
+ * with a one-pixel ramp (src/core/distance.js).
  */
 export function spreadAlpha(alpha, w, h, amount) {
-  if (!amount) return alpha;
-  const grow = amount > 0;
-  const rad = Math.abs(amount);
-  const INF = 1e9;
-  const d = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    const inside = alpha[i] > 127;
-    d[i] = (grow ? inside : !inside) ? 0 : INF;
-  }
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const i = y * w + x;
-    let v = d[i];
-    if (x > 0) v = Math.min(v, d[i - 1] + 1);
-    if (y > 0) v = Math.min(v, d[i - w] + 1);
-    if (x > 0 && y > 0) v = Math.min(v, d[i - w - 1] + 1.414);
-    if (x < w - 1 && y > 0) v = Math.min(v, d[i - w + 1] + 1.414);
-    d[i] = v;
-  }
-  for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) {
-    const i = y * w + x;
-    let v = d[i];
-    if (x < w - 1) v = Math.min(v, d[i + 1] + 1);
-    if (y < h - 1) v = Math.min(v, d[i + w] + 1);
-    if (x < w - 1 && y < h - 1) v = Math.min(v, d[i + w + 1] + 1.414);
-    if (x > 0 && y < h - 1) v = Math.min(v, d[i + w - 1] + 1.414);
-    d[i] = v;
-  }
-  const out = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    // Soft 1px edge so the result stays antialiased.
-    const t = grow ? rad - d[i] : d[i] - rad;
-    out[i] = clamp255((t + 0.5) * 255);
-  }
-  return out;
+  return spreadField(alpha, w, h, amount);
+}
+
+/**
+ * The whole-pixel shift `offsetAlpha` applies for an angle/distance, in
+ * Photoshop's convention. Shared with the GPU path so the two cannot disagree.
+ */
+export function offsetVector(angleDeg, distance) {
+  if (!distance) return { dx: 0, dy: 0 };
+  const rad = (angleDeg * Math.PI) / 180;
+  return { dx: Math.round(-Math.cos(rad) * distance), dy: Math.round(Math.sin(rad) * distance) };
 }
 
 /** Offset an alpha field by an angle/distance in Photoshop's convention. */
 export function offsetAlpha(alpha, w, h, angleDeg, distance) {
   if (!distance) return alpha;
-  const rad = (angleDeg * Math.PI) / 180;
-  const dx = Math.round(-Math.cos(rad) * distance);
-  const dy = Math.round(Math.sin(rad) * distance);
+  const { dx, dy } = offsetVector(angleDeg, distance);
   const out = new Float32Array(w * h);
   for (let y = 0; y < h; y++) {
     const sy = y - dy;
@@ -246,7 +229,7 @@ const EXACT_BOUNDS_MAX_PIXELS = 1400 * 1000;
  * double small alphas. Saturating as we go means a single opaque pixel survives
  * the reduction instead of being averaged into nothing.
  */
-function alphaBoundsFast(canvas) {
+export function alphaBoundsFast(canvas) {
   const w = canvas.width, h = canvas.height;
   if (w * h <= EXACT_BOUNDS_MAX_PIXELS) return alphaBoundsExact(canvas);
 
@@ -278,7 +261,7 @@ function alphaBoundsFast(canvas) {
 }
 
 /** How far outside the layer content the enabled effects can reach, in px. */
-function effectReach(styles) {
+export function effectReach(styles) {
   let reach = 0;
   const s = styles || {};
   const bump = (v) => { if (v > reach) reach = v; };
@@ -305,9 +288,16 @@ function effectReach(styles) {
  * Returns null when cropping would not pay for itself.
  */
 function effectRegion(src, styles, w, h) {
-  const b = alphaBoundsFast(src);
+  return regionFromBounds(alphaBoundsFast(src), effectReach(styles), w, h);
+}
+
+/**
+ * `effectRegion` from bounds already measured: the content box `b` (or null
+ * for an empty layer) grown by `reach`, or null when that covers most of the
+ * `w x h` document anyway. The effect cache keeps `b` across frames.
+ */
+export function regionFromBounds(b, reach, w, h) {
   if (!b) return { x: 0, y: 0, w: 1, h: 1 }; // empty layer: nothing can render
-  const reach = effectReach(styles);
   const x0 = Math.max(0, Math.floor(b.x - reach));
   const y0 = Math.max(0, Math.floor(b.y - reach));
   const x1 = Math.min(w, Math.ceil(b.x + b.width + reach));
@@ -318,7 +308,7 @@ function effectRegion(src, styles, w, h) {
   return { x: x0, y: y0, w: rw, h: rh };
 }
 
-function cropCanvas(src, r) {
+export function cropCanvas(src, r) {
   const out = createCanvas(r.w, r.h);
   out.getContext('2d').drawImage(src, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
   return out;
@@ -328,23 +318,34 @@ function cropCanvas(src, r) {
 function buildEnv(src, layer, doc, styles, w, h) {
   const region = effectRegion(src, styles, w, h);
   const esrc = region ? cropCanvas(src, region) : src;
+  return { region, env: envFor(esrc, region, layer, doc, styles, w, h) };
+}
+
+/**
+ * The environment every renderer gets, for `esrc` — the layer's pixels
+ * already cropped to `region` (or whole, when `region` is null).
+ */
+export function envFor(esrc, region, layer, doc, styles, w, h) {
+  let alpha = null;
   return {
-    region,
-    env: {
-      w: region ? region.w : w,
-      h: region ? region.h : h,
-      alpha: alphaOf(esrc),
-      src: esrc,
-      layer,
-      doc,
-      styles,
-      globalLight: doc.globalLight || 120,
-      // Where this region sits in the document, for renderers that need it.
-      offsetX: region ? region.x : 0,
-      offsetY: region ? region.y : 0,
-      docW: w,
-      docH: h,
+    w: region ? region.w : w,
+    h: region ? region.h : h,
+    // Read back on first use: the GPU renderers never touch it, so a layer
+    // whose effects all run there skips the getImageData entirely.
+    get alpha() {
+      if (!alpha) alpha = alphaOf(esrc);
+      return alpha;
     },
+    src: esrc,
+    layer,
+    doc,
+    styles,
+    globalLight: doc.globalLight || 120,
+    // Where this region sits in the document, for renderers that need it.
+    offsetX: region ? region.x : 0,
+    offsetY: region ? region.y : 0,
+    docW: w,
+    docH: h,
   };
 }
 
@@ -366,30 +367,38 @@ function buildEnv(src, layer, doc, styles, w, h) {
 export function applyLayerStyles(ctx, src, layer, doc, fillOpacity = 1, opts = {}) {
   const w = ctx.canvas.width, h = ctx.canvas.height;
   const styles = layer.styles || {};
-  const { region, env } = buildEnv(src, layer, doc, styles, w, h);
+  const below = opts.skipBelow ? [] : runnableEffects(styles, EFFECT_ORDER_BELOW);
+  const above = runnableEffects(styles, EFFECT_ORDER_ABOVE);
+
+  // The compositor passes `skipBelow` for every styled layer, so a layer whose
+  // only effect is a drop shadow lands here with nothing to render. Building the
+  // environment anyway scans the document-sized source for bounds and reads its
+  // alpha back — ~16 ms per recomposite at 12 MP, spent drawing nothing.
+  let region = null, env = null;
+  if (below.length || above.length) ({ region, env } = buildEnv(src, layer, doc, styles, w, h));
   const ox = region ? region.x : 0;
   const oy = region ? region.y : 0;
 
-  if (!opts.skipBelow) {
-    for (const id of EFFECT_ORDER_BELOW) {
-      const cfg = styles[id];
-      if (!cfg || !cfg.enabled) continue;
-      const fn = renderers.get(id);
-      if (fn) drawEffectResult(ctx, fn(cfg, env), cfg, ox, oy);
-    }
-  }
+  for (const [cfg, fn] of below) drawEffectResult(ctx, fn(cfg, env), cfg, ox, oy);
 
   ctx.save();
   ctx.globalAlpha = fillOpacity;
   ctx.drawImage(src, 0, 0);
   ctx.restore();
 
-  for (const id of EFFECT_ORDER_ABOVE) {
+  for (const [cfg, fn] of above) drawEffectResult(ctx, fn(cfg, env), cfg, ox, oy);
+}
+
+/** `[cfg, renderer, id]` for each enabled effect in `order` that has a renderer. */
+export function runnableEffects(styles, order) {
+  const out = [];
+  for (const id of order) {
     const cfg = styles[id];
     if (!cfg || !cfg.enabled) continue;
     const fn = renderers.get(id);
-    if (fn) drawEffectResult(ctx, fn(cfg, env), cfg, ox, oy);
+    if (fn) out.push([cfg, fn, id]);
   }
+  return out;
 }
 
 /**
@@ -425,7 +434,7 @@ export function belowEffectResults(src, layer, doc, w, h) {
   return out;
 }
 
-function drawEffectResult(ctx, canvas, cfg, ox = 0, oy = 0) {
+export function drawEffectResult(ctx, canvas, cfg, ox = 0, oy = 0) {
   if (!canvas) return;
   const opacity = cfg.opacity == null ? 1 : cfg.opacity;
   const mode = cfg.blendMode || 'normal';

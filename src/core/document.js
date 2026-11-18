@@ -306,7 +306,49 @@ export class PikaDocument extends Emitter {
 
   invalidate() {
     this._compositeValid = false;
-    for (const l of this.flatLayers()) l.thumbDirty = true;
+    for (const l of this.flatLayers()) {
+      l.thumbDirty = true;
+      // A layer mid-edit is being written frame after frame into the same
+      // buffer; this is what tells pixel caches (src/core/pixel-revision.js)
+      // that it changed. Layers nobody is editing keep their revision, which
+      // is the whole point: painting one layer must not invalidate the rest.
+      if (l._live) l.markPixelsChanged(l._live === 3 ? 'both' : l._live === 2 ? 'mask' : 'canvas');
+    }
+  }
+
+  /**
+   * Close an edit session that will not be committed (a cancelled or empty
+   * gesture): bump once more and stop treating the layers as live. Purely an
+   * optimisation — a layer left live only costs cache misses until the next
+   * commit settles it.
+   * @param {import('./layer.js').Layer|import('./layer.js').Layer[]} [layers]
+   */
+  endEdit(layers) {
+    const list = layers == null ? [this.activeLayer()] : Array.isArray(layers) ? layers : [layers];
+    for (const l of list) {
+      if (!l || !l._live) continue;
+      l.markPixelsChanged(l._live === 3 ? 'both' : l._live === 2 ? 'mask' : 'canvas');
+      l._live = 0;
+    }
+  }
+
+  /** Called by History once an edit is captured: its buffers are frozen from here on. */
+  settleLiveLayers() {
+    for (const l of this.flatLayers()) l._live = 0;
+  }
+
+  /**
+   * Redraw after writing pixels *without* `beginEdit` — which golden rule 2
+   * forbids for anything history can see, but a few preview and import paths
+   * write into buffers nobody else holds. Bumps the layers' revisions so no
+   * cache keeps their old contents.
+   * @param {import('./layer.js').Layer|import('./layer.js').Layer[]} [layers]
+   * @param {'canvas'|'mask'|'both'} [surface]
+   */
+  invalidatePixels(layers, surface = 'canvas') {
+    const list = layers == null ? [this.activeLayer()] : Array.isArray(layers) ? layers : [layers];
+    for (const l of list) if (l) l.markPixelsChanged(surface);
+    this.invalidate();
   }
 
   /* ------------------------------------------------------------------ */
@@ -583,6 +625,8 @@ export class PikaDocument extends Emitter {
     for (const c of this.alphaChannels || []) add(c.canvas);
     add(this._composite);
     add(this._channelComposite);
+    // Cached layer-effect results (src/effects/effect-cache.js).
+    if (this._fxCache) for (const cv of this._fxCache.canvases()) add(cv);
     return n;
   }
 }

@@ -1,4 +1,5 @@
 import { uid, createCanvas, cloneCanvas, ctx2d } from './util.js';
+import { bufferRevision, bumpBuffer } from './pixel-revision.js';
 import { tr } from './i18n.js';
 
 /**
@@ -129,6 +130,14 @@ export class Layer {
 
     this.thumbDirty = true;
     this._thumb = null;
+
+    /**
+     * Which buffers are mid-edit: 1 = pixels, 2 = mask. Set by `beginEdit`,
+     * cleared once history captures the edit (or `doc.endEdit`). While set,
+     * every `doc.touch()` / `commit()` bumps the buffer's revision, because a
+     * live gesture writes into it frame after frame. See pixel-revision.js.
+     */
+    this._live = 0;
   }
 
   /* ------------------------------------------------------------------ */
@@ -154,6 +163,9 @@ export class Layer {
   set canvas(cv) {
     this._full = cv || null;
     this._tile = null;
+    // A canvas handed over may have been drawn into before; never let a cache
+    // keyed on an earlier life of the same object match it.
+    bumpBuffer(cv);
   }
 
   /** A document-sized mask view; reads retain the off-canvas source. Writers
@@ -175,11 +187,13 @@ export class Layer {
   set mask(value) {
     this._mask = value || null;
     this._maskTile = null;
+    bumpBuffer(value);
   }
 
   get maskTile() { return this._maskTile; }
 
   setMaskTile(canvas, x, y, docWidth, docHeight, defaultColor = 0) {
+    if (canvas !== this.maskKey()) bumpBuffer(canvas);
     this._maskTile = { canvas, x, y, docWidth, docHeight, defaultColor };
     this._mask = null;
     this.maskVersion++;
@@ -211,6 +225,10 @@ export class Layer {
    * document. Replaces whatever was there.
    */
   setTile(src, x, y, docWidth, docHeight) {
+    // The move tool hands the same buffer back at a new offset on every frame
+    // of a drag: its pixels have not changed, only where they sit, and the
+    // offset is part of every cache key already. A different buffer is new.
+    if (src && src !== this.pixelKey()) bumpBuffer(src);
     this._full = null;
     this._tile = src ? { canvas: src, x, y, docWidth, docHeight } : null;
     this.thumbDirty = true;
@@ -231,6 +249,36 @@ export class Layer {
    */
   pixelKey() {
     return this._full || (this._tile ? this._tile.canvas : null);
+  }
+
+  /**
+   * The revision of the buffer `pixelKey()` returns. A cache must check both:
+   * the same buffer is written frame after frame during a stroke, and only
+   * the revision says it changed. See src/core/pixel-revision.js.
+   */
+  pixelRevision() {
+    return bufferRevision(this.pixelKey());
+  }
+
+  /** The mask's buffer, in whichever form is authoritative (cf. `pixelKey`). */
+  maskKey() {
+    return this._maskTile ? this._maskTile.canvas : this._mask;
+  }
+
+  maskRevision() {
+    return bufferRevision(this.maskKey());
+  }
+
+  /**
+   * Tell caches that this layer's pixels (and/or mask) changed outside an
+   * edit session — for code that writes without `beginEdit`, which golden
+   * rule 2 otherwise forbids. `doc.invalidatePixels(layer)` does this and the
+   * redraw together.
+   * @param {'canvas'|'mask'|'both'} [surface]
+   */
+  markPixelsChanged(surface = 'canvas') {
+    if (surface !== 'mask') bumpBuffer(this.pixelKey());
+    if (surface !== 'canvas') bumpBuffer(this.maskKey());
   }
 
   /** Bytes of pixel buffer this layer holds, without materialising anything. */
@@ -281,9 +329,17 @@ export class Layer {
    */
   beginEdit(opts = {}) {
     const surface = opts.surface || 'both';
+    // `live: false` is for an edit that only moves the buffer (setTile at a
+    // new offset) and never writes into it, so caches keyed on its contents
+    // stay valid for the whole gesture.
+    const live = opts.live !== false;
     if (surface !== 'mask') {
       if (this._full) this._full = cloneCanvas(this._full);
       else if (this._tile) this._tile = { ...this._tile, canvas: cloneCanvas(this._tile.canvas) };
+      if (this.pixelKey()) {
+        bumpBuffer(this.pixelKey());
+        if (live) this._live |= 1;
+      }
     }
     if ((this._mask || this._maskTile) && surface !== 'canvas') {
       if (this._maskTile) {
@@ -292,6 +348,8 @@ export class Layer {
       } else this._mask = cloneCanvas(this._mask);
       this.maskVersion++;
       this._maskAlphaVersion = -1;
+      bumpBuffer(this.maskKey());
+      if (live) this._live |= 2;
     }
     this.thumbDirty = true;
     return this;
@@ -308,6 +366,7 @@ export class Layer {
     const c = this.mask.getContext('2d');
     c.fillStyle = fill;
     c.fillRect(0, 0, w, h);
+    bumpBuffer(this._mask);
     this.maskVersion++;
     this._maskAlphaVersion = -1;
     return this.mask;
@@ -323,6 +382,7 @@ export class Layer {
   touchMask() {
     // Painting tools edit the materialised document view.
     if (this._mask) this._maskTile = null;
+    bumpBuffer(this.maskKey());
     this.maskVersion++;
     this._maskAlphaVersion = -1;
     this.thumbDirty = true;

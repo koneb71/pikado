@@ -1,4 +1,5 @@
-import { registerFilter } from './registry.js';
+import { registerFilter, getFilter } from './registry.js';
+import { IDENTITY_STAGE } from '../render/gpu-filters.js';
 import { operableRect, operableSurface } from './run.js';
 import { app } from '../core/app.js';
 import { tr } from '../core/i18n.js';
@@ -6,6 +7,7 @@ import { el, createCanvas, clamp, deg2rad } from '../core/util.js';
 import {
   FACE_SLIDERS, applyFaceLiquify, faceParamsAreNeutral, defaultFaceBox,
 } from './face-liquify.js';
+import { warpOnGPU, warpToCanvas, warpStage, WARP_MAP } from '../render/gpu-warp.js';
 import './distort.css';
 
 /**
@@ -75,12 +77,24 @@ function sampleEdge(src, w, h, x, y, edge, out) {
 
 /**
  * Inverse-map an ImageData in place.
+ *
+ * With a `gpu` stage describing the same mapping (src/render/gpu-warp.js),
+ * large images warp on WebGPU instead; the loop below is the reference it
+ * mirrors and the fallback whenever the GPU declines.
+ *
  * @param {ImageData} imageData
  * @param {number} edge one of EDGE_CLAMP / EDGE_WRAP / EDGE_NONE
  * @param {(x:number,y:number,out:Float64Array)=>void} mapFn writes the source
  *   coordinate for destination pixel (x,y) into out[0], out[1].
+ * @param {[number, number[], Float32Array?]} [gpu] `[map, params, aux]` for warpStage
  */
-function warp(imageData, edge, mapFn) {
+function warp(imageData, edge, mapFn, gpu = null) {
+  if (capturing) {
+    capturing.called = true;
+    capturing.stage = gpu ? warpStage(gpu[0], edge, gpu[1], gpu[2] || null) : null;
+    return imageData;
+  }
+  if (gpu && warpOnGPU(imageData, warpStage(gpu[0], edge, gpu[1], gpu[2] || null))) return imageData;
   const { width: w, height: h, data } = imageData;
   const src = premultiply(data);
   const co = new Float64Array(2);
@@ -100,6 +114,39 @@ function warp(imageData, edge, mapFn) {
     }
   }
   return imageData;
+}
+
+/**
+ * A filter's GPU stage, found by running its own `apply` with `warp` set to
+ * record rather than draw: the stage is built by exactly the code that builds
+ * it for a direct run, so a chain and a single filter cannot disagree. A
+ * filter that returns before warping (Amount 0) changes nothing.
+ * Only for filters whose apply touches no pixels before `warp`.
+ */
+let capturing = null;
+function capturedStage(id, params, width, height) {
+  const def = getFilter(id);
+  capturing = { called: false, stage: null };
+  let c;
+  try {
+    def.apply({ width, height, data: null }, { ...def.defaults, ...(params || {}) });
+  } finally {
+    c = capturing;
+    capturing = null;
+  }
+  if (!c.called) return IDENTITY_STAGE;
+  return c.stage;
+}
+
+/**
+ * A SHIFT warp for maps of the form (x + sx(y), y + sy(x)): both parts are
+ * tabulated here in float64, so the GPU reads exactly the CPU's coordinates.
+ */
+function shiftStage(w, h, sx, sy) {
+  const t = new Float32Array(h + w);
+  for (let y = 0; y < h; y++) t[y] = sx(y);
+  for (let x = 0; x < w; x++) t[h + x] = sy(x);
+  return [WARP_MAP.SHIFT, [0, h], t];
 }
 
 const UNDEFINED_AREAS = [
@@ -233,11 +280,14 @@ registerFilter({
     const kx = p.fit === 'tile' ? g / tile : g / w;
     const ky = p.fit === 'tile' ? g / tile : g / h;
     const d = new Float64Array(2);
+    const aux = new Float32Array(g * g * 2);
+    aux.set(field.dx, 0);
+    aux.set(field.dy, g * g);
     return warp(imageData, edgeCode(p.undefinedAreas), (x, y, out) => {
       sampleField(field, x * kx, y * ky, d);
       out[0] = x + d[0] * p.horizontal;
       out[1] = y + d[1] * p.vertical;
-    });
+    }, [WARP_MAP.DISPLACE, [kx, ky, p.horizontal, p.vertical, g], aux]);
   },
 });
 
@@ -266,7 +316,7 @@ registerFilter({
       const s = Math.pow(d, q) / d;
       out[0] = cx + nx * s * rx;
       out[1] = cy + ny * s * ry;
-    });
+    }, [WARP_MAP.PINCH, [cx, cy, rx, ry, q]]);
   },
 });
 
@@ -302,14 +352,22 @@ registerFilter({
         if (a < 0) a += TAU;
         out[0] = (a / TAU) * (w - 1);
         out[1] = (r / rmax) * (h - 1);
-      });
+      }, [WARP_MAP.POLAR_R2P, [cx, cy, rmax, w - 1, h - 1]]);
     }
+    // The angle depends only on x and the radius only on y: tabulate both.
+    const tables = new Float32Array(w * 2 + h);
+    for (let x = 0; x < w; x++) {
+      const a = (x / Math.max(1, w - 1)) * TAU;
+      tables[x] = Math.sin(a);
+      tables[w + x] = Math.cos(a);
+    }
+    for (let y = 0; y < h; y++) tables[2 * w + y] = (y / Math.max(1, h - 1)) * rmax;
     return warp(imageData, EDGE_CLAMP, (x, y, out) => {
       const a = (x / Math.max(1, w - 1)) * TAU;
       const r = (y / Math.max(1, h - 1)) * rmax;
       out[0] = cx + r * Math.sin(a);
       out[1] = cy - r * Math.cos(a);
-    });
+    }, [WARP_MAP.POLAR_P2R, [cx, cy], tables]);
   },
 });
 
@@ -333,10 +391,11 @@ registerFilter({
     const wl = p.size === 'small' ? 9 : p.size === 'large' ? 64 : 24;
     const amp = (p.amount / 100) * wl * 0.18;
     const k = (Math.PI * 2) / wl;
+    const w = imageData.width, h = imageData.height;
     return warp(imageData, EDGE_CLAMP, (x, y, out) => {
       out[0] = x + Math.sin(y * k) * amp;
       out[1] = y + Math.sin(x * k * 1.13 + 1.7) * amp;
-    });
+    }, shiftStage(w, h, (y) => Math.sin(y * k) * amp, (x) => Math.sin(x * k * 1.13 + 1.7) * amp));
   },
 });
 
@@ -360,7 +419,7 @@ registerFilter({
     return warp(imageData, edgeCode(p.undefinedAreas), (x, y, out) => {
       out[0] = x - Math.sin(y * k) * p.amount;
       out[1] = y;
-    });
+    }, shiftStage(imageData.width, h, (y) => -Math.sin(y * k) * p.amount, () => 0));
   },
 });
 
@@ -404,7 +463,7 @@ registerFilter({
         const d = Math.abs(nx);
         out[0] = d >= 1 ? x : cx + Math.sign(nx) * lens(d) * rx;
         out[1] = y;
-      });
+      }, [WARP_MAP.SPHERIZE, [cx, cy, rx, ry, k, 1]]);
     }
     if (p.mode === 'vertical') {
       return warp(imageData, EDGE_CLAMP, (x, y, out) => {
@@ -412,7 +471,7 @@ registerFilter({
         const d = Math.abs(ny);
         out[0] = x;
         out[1] = d >= 1 ? y : cy + Math.sign(ny) * lens(d) * ry;
-      });
+      }, [WARP_MAP.SPHERIZE, [cx, cy, rx, ry, k, 2]]);
     }
     return warp(imageData, EDGE_CLAMP, (x, y, out) => {
       const nx = (x - cx) / rx, ny = (y - cy) / ry;
@@ -421,7 +480,7 @@ registerFilter({
       const s = lens(d) / d;
       out[0] = cx + nx * s * rx;
       out[1] = cy + ny * s * ry;
-    });
+    }, [WARP_MAP.SPHERIZE, [cx, cy, rx, ry, k, 0]]);
   },
 });
 
@@ -450,7 +509,7 @@ registerFilter({
       const a = Math.atan2(dy, dx) - maxAngle * f * f;
       out[0] = cx + r * Math.cos(a);
       out[1] = cy + r * Math.sin(a);
-    });
+    }, [WARP_MAP.TWIRL, [cx, cy, rmax, maxAngle]]);
   },
 });
 
@@ -539,7 +598,7 @@ registerFilter({
     return warp(imageData, edgeCode(p.undefinedAreas), (x, y, out) => {
       out[0] = x + shiftX[y];
       out[1] = y + shiftY[x];
-    });
+    }, shiftStage(w, h, (y) => shiftX[y], (x) => shiftY[x]));
   },
 });
 
@@ -582,7 +641,7 @@ registerFilter({
       const sa = Math.atan2(dy, dx) + (angular ? push / Math.max(2, r) : 0);
       out[0] = cx + sr * Math.cos(sa);
       out[1] = cy + sr * Math.sin(sa);
-    });
+    }, [WARP_MAP.ZIGZAG, [cx, cy, rmax, amp, k, radial ? 1 : 0, angular ? 1 : 0]]);
   },
 });
 
@@ -774,7 +833,25 @@ export function applyLiquifyMesh(imageData, mesh) {
     meshAt(mesh, x / iw, y / ih, d);
     out[0] = x - d[0] * w;
     out[1] = y - d[1] * h;
-  });
+  }, liquifyGPU(mesh, w, h));
+}
+
+/** The GPU description of `applyLiquifyMesh` for a `w x h` image. */
+function liquifyGPU(mesh, w, h) {
+  const nn = mesh.n * mesh.n;
+  const aux = new Float32Array(nn * 2);
+  aux.set(mesh.dx.subarray(0, nn), 0);
+  aux.set(mesh.dy.subarray(0, nn), nn);
+  return [WARP_MAP.LIQUIFY, [mesh.n, Math.max(1, w - 1), Math.max(1, h - 1), w, h], aux];
+}
+
+/**
+ * Draw `src` warped through `mesh` straight into `ctx` (same size) on the GPU,
+ * for the Liquify dialog's live view. False when the GPU declines.
+ */
+export function previewLiquifyOnGPU(src, mesh, ctx) {
+  const [map, f, aux] = liquifyGPU(mesh, src.width, src.height);
+  return warpToCanvas(src, warpStage(map, EDGE_CLAMP, f, aux), ctx);
 }
 
 /**
@@ -1049,9 +1126,13 @@ function renderLiquify(container, state, onChange) {
   };
 
   const draw = () => {
-    work.data.set(baseData.data);
-    if (!liquifyMeshIsEmpty(mesh)) applyLiquifyMesh(work, mesh);
-    vctx.putImageData(work, 0, 0);
+    // On WebGPU the warped view is drawn straight into the canvas: no copy of
+    // the pixels, no readback, no putImageData on every pointer move.
+    if (liquifyMeshIsEmpty(mesh) || !previewLiquifyOnGPU(baseData, mesh, vctx)) {
+      work.data.set(baseData.data);
+      if (!liquifyMeshIsEmpty(mesh)) applyLiquifyMesh(work, mesh);
+      vctx.putImageData(work, 0, 0);
+    }
     drawChrome();
   };
 
@@ -1242,4 +1323,9 @@ function faceBoxFor(imageData) {
   return selected
     ? { x: 0, y: 0, width: imageData.width, height: imageData.height }
     : defaultFaceBox(imageData.width, imageData.height);
+}
+
+/* Every warp-based filter can join a GPU filter chain (see applySmartFilters). */
+for (const id of ['displace', 'pinch', 'polar-coordinates', 'ripple', 'shear', 'spherize', 'twirl', 'wave', 'zigzag', 'liquify']) {
+  getFilter(id).gpuStage = (params, size) => capturedStage(id, params, size.width, size.height);
 }

@@ -2,6 +2,7 @@ import { suite } from '../harness.js';
 import { compositeDocument } from '/src/render/compositor.js';
 import { createRasterLayer } from '/src/core/layer.js';
 import { DEFAULT_STYLES, defaultStyle, hasStyles, enabledEffects, renderers } from '/src/effects/styles.js';
+import { ctx2dRead } from '/src/core/util.js';
 
 /**
  * The ten layer effects.
@@ -404,7 +405,18 @@ suite('effects / colour, gradient and pattern overlays', async (t) => {
   t.gt(top[0], 225, 'angle 90 puts the white end of the ramp at the top of the shape');
   t.lt(bottom[0], 30, 'and the black end at the bottom');
   t.gt(top[0] - bottom[0], 195, 'so it is a real gradient, not a flat fill');
-  t.eq([top[0] === top[1], top[1] === top[2]], [true, true], 'a black-to-white ramp stays neutral');
+  // Neutral as the eye sees it. Safari dithers canvas gradients, nudging single
+  // channels of single pixels by a count or two, so R = G = B at one pixel is
+  // not a fair test there. A real tint — stops resolved through the wrong colour
+  // path, channels swapped — moves a whole channel, so compare each channel's
+  // average over the shape instead.
+  const img = ctx2dRead(cv).getImageData(40, 40, 40, 40).data;
+  const sums = [0, 0, 0];
+  for (let i = 0; i < img.length; i += 4) for (let k = 0; k < 3; k++) sums[k] += img[i + k];
+  const means = sums.map((s) => s / (img.length / 4));
+  const spread = Math.max(...means) - Math.min(...means);
+  t.lt(spread, 0.5,
+    `a black-to-white ramp stays neutral (channel means ${means.map((m) => m.toFixed(2)).join(' / ')})`);
   t.eq(t.px(cv, 85, 60), '255,255,255,255', 'the gradient is clipped to the shape');
 
   only(layer, 'gradientOverlay', { ...grad, reverse: true });
@@ -463,7 +475,7 @@ suite('effects / colour, gradient and pattern overlays', async (t) => {
 
 suite('effects / stroke', async (t) => {
   const { doc, layer } = fxDoc(t);
-  // Outside stroke, size 3: the chamfer field gives full coverage at 1-2px out
+  // Outside stroke, size 3: the distance field gives full coverage at 1-2px out
   // and half coverage at exactly 3px out, so (81,60) is solid and (84,60) clean.
   only(layer, 'stroke', {
     size: 3, position: 'outside', blendMode: 'normal', opacity: 1, fillType: 'color', color: '#000000',
@@ -685,6 +697,77 @@ suite('effects / region cropping has no seam', async (t) => {
   t.gt(r(t, shadow, 100, 200), 248, 'the effect has faded out before the crop boundary, so nothing is lost');
   t.lt(r(t, shadow, 240, 200), 220, 'while it is unmistakably present just outside the shape');
   t.eq(t.px(shadow, 200, 200), '0,0,0,255', 'and the shape itself is intact');
+});
+
+/* ================================================================== */
+
+suite('effects / a stroke measures true distance round a corner', async (t) => {
+  // Outside a corner the stroke's edge is a quarter circle. The pixel 36 left
+  // of and 18 above the corner pixel is sqrt(36^2 + 18^2) = 40.25 px from the
+  // shape, so a 40 px stroke covers it by (40 - 40.25 + 0.5) = 25%: 191 over
+  // white. The chamfer this replaced measured that path as 43.45 px — outside
+  // the stroke — which squared the corner off into an octagon.
+  const { doc, layer } = fxDoc(t, { size: 200, rect: [60, 60, 80, 80] });
+  only(layer, 'stroke', {
+    size: 40, position: 'outside', blendMode: 'normal', opacity: 1, fillType: 'color', color: '#000000',
+  });
+  const cv = compositeDocument(doc);
+  t.close(r(t, cv, 60 - 36, 60 - 18), 191, 2, 'the pixel 40.25 px from the corner is a quarter covered');
+  t.eq(t.px(cv, 60 - 39, 70), '0,0,0,255', 'straight out from an edge, 39 px is solid');
+  t.eq(t.px(cv, 60 - 30, 60 - 30), '255,255,255,255', 'and (30, 30) off the corner — 42.4 px — is clean');
+});
+
+/* ================================================================== */
+
+suite('effects / an inner shadow does not depend on the crop', async (t) => {
+  /**
+   * Inner Shadow blurs the *inverted* matte, which is opaque all round the
+   * shape. The pipeline is cropped to the content plus a few pixels, and a blur
+   * that fades to nothing past that border (as Canvas2D's blur() does) pulls
+   * the matte down along every side — a weaker shadow than the same layer gets
+   * when cropping declines. The renderer must clamp at the border instead.
+   *
+   * The two documents differ only in four corner blocks, which make the
+   * content edge-to-edge so cropping declines. Comparing the shadow along the
+   * square's lit edge, far from the blocks, shows whether the crop leaked in.
+   * Chrome blurs a region this size through ctx.filter, which fades, so this
+   * failed there by ~60 counts; Safari's filter does nothing, so it takes the
+   * JS kernel, which always clamped.
+   */
+  const envSizes = [];
+  const build = (uncropped) => {
+    const doc = t.doc(1000, 1000, '#ffffff', uncropped ? 'is-nocrop' : 'is-crop');
+    const l = doc.addLayer(createRasterLayer(1000, 1000, 'shape'));
+    const c = l.canvas.getContext('2d');
+    c.fillStyle = '#ff0000';
+    c.fillRect(300, 300, 400, 400);
+    if (uncropped) {
+      c.fillRect(0, 0, 8, 8); c.fillRect(992, 0, 8, 8); c.fillRect(0, 992, 8, 8); c.fillRect(992, 992, 8, 8);
+    }
+    l.styles = {
+      innerShadow: {
+        ...defaultStyle('innerShadow'), enabled: true, useGlobalLight: false, angle: 120, distance: 0,
+        size: 16, choke: 0, noise: 0, opacity: 1, color: '#000000', blendMode: 'normal',
+      },
+    };
+    const orig = renderers.get('innerShadow');
+    renderers.set('innerShadow', (cfg, env) => { envSizes.push(env.w * env.h); return orig(cfg, env); });
+    try {
+      return compositeDocument(doc);
+    } finally {
+      renderers.set('innerShadow', orig);
+    }
+  };
+  const cropped = build(false);
+  const full = build(true);
+  t.lt(envSizes[0], 1000 * 1000, 'precondition: the lone square is cropped to a sub-region');
+  t.gt(envSizes[0], 90000, 'precondition: and that region is big enough for the accelerated blur');
+  t.eq(envSizes[1], 1000 * 1000, 'precondition: the edge-to-edge document declines cropping');
+  // Along the left edge, inside the square, where the shadow is strongest.
+  const strip = (cv) => ctx2dRead(cv).getImageData(300, 400, 12, 200).data;
+  const a = strip(cropped), b = strip(full);
+  t.lt(a[0], 200, 'precondition: the shadow really darkens the inside of the edge');
+  t.lt(maxDiff(a, b), 3, 'the inner shadow is the same whether or not the pipeline was cropped');
 });
 
 /* ================================================================== */

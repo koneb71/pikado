@@ -2,6 +2,9 @@ import { LayerType } from '../core/layer.js';
 import { gcoFor, isNativeBlend, blendCPU } from '../core/blend.js';
 import { createCanvas, cloneCanvas, ctx2d, ctx2dRead } from '../core/util.js';
 import { applyLayerStyles, belowEffectResults, hasStyles } from '../effects/styles.js';
+import {
+  cachedBelowEffects, cachedComposed, beginEffectFrame, endEffectFrame,
+} from '../effects/effect-cache.js';
 import { blendOnGPU } from './gpu-blend.js';
 import { applyAdjustment } from '../adjustments/registry.js';
 
@@ -30,9 +33,15 @@ export function getLayerPreview(layerId) {
 }
 
 /**
- * Render the whole document.
+ * Render the whole document, from scratch.
+ *
+ * This is the reference renderer: nothing is reused between calls, so it is
+ * what exports, merges and the tests compare against. The canvas view goes
+ * through `getComposite`, which reuses layer-effect results between frames.
+ *
  * @param {import('../core/document.js').PikaDocument} doc
- * @param {{skipLayerIds?:Set<string>, onlyLayerIds?:Set<string>, ignoreEffects?:boolean}} [opts]
+ * @param {{skipLayerIds?:Set<string>, onlyLayerIds?:Set<string>, ignoreEffects?:boolean,
+ *          cache?:boolean}} [opts] `cache` reuses effect results (src/effects/effect-cache.js)
  * @returns {HTMLCanvasElement}
  */
 export function compositeDocument(doc, opts = {}) {
@@ -48,9 +57,70 @@ export function getComposite(doc, opts) {
   if (doc._compositeValid && doc._composite && doc._composite.width === doc.width && doc._composite.height === doc.height) {
     return doc._composite;
   }
-  doc._composite = compositeDocument(doc);
+  doc._composite = compositeLive(doc);
   doc._compositeValid = true;
   return doc._composite;
+}
+
+/**
+ * The composite the editor shows: the same pixels `compositeDocument` makes,
+ * reusing each styled layer's effects while nothing they depend on changes.
+ */
+function compositeLive(doc) {
+  beginEffectFrame(doc);
+  try {
+    const out = compositeDocument(doc, { cache: true });
+    if (verify.on) verifyComposite(doc, out);
+    return out;
+  } finally {
+    endEffectFrame(doc);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Verify mode                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `?verifycomposite=1` re-renders every live composite from scratch and
+ * compares the two. A mismatch means something wrote into a layer without
+ * the edit lifecycle telling the caches (golden rule 2) — it is logged with
+ * the document's name. Slow, and for debugging only.
+ */
+const verify = {
+  on: (() => {
+    try { return new URLSearchParams(location.search).get('verifycomposite') === '1'; } catch { return false; }
+  })(),
+  checked: 0,
+  mismatches: 0,
+};
+
+export function setCompositeVerify(on) {
+  verify.on = !!on;
+}
+
+export function compositeVerifyEnabled() {
+  return verify.on;
+}
+
+export function compositeVerifyStats() {
+  return { checked: verify.checked, mismatches: verify.mismatches };
+}
+
+function verifyComposite(doc, live) {
+  const fresh = compositeDocument(doc);
+  const a = ctx2dRead(live).getImageData(0, 0, live.width, live.height).data;
+  const b = ctx2dRead(fresh).getImageData(0, 0, fresh.width, fresh.height).data;
+  verify.checked++;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      verify.mismatches++;
+      const p = i >> 2;
+      console.warn(`[compositor] live composite of "${doc.name}" differs from a fresh render at`
+        + ` (${p % live.width}, ${Math.floor(p / live.width)}): a layer was written without beginEdit?`);
+      return;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -276,12 +346,24 @@ function layerPixels(layer, doc, opts) {
   if (layer.type === LayerType.GROUP) return groupPixels(layer, doc, opts);
   if (layer.type === LayerType.ADJUSTMENT) return null;
 
-  let src = previewOverrides.get(layer.id) || layer.renderCanvas();
-  if (!src) return null;
-
   const needsStyles = !opts.ignoreEffects && hasStyles(layer);
   const needsMask = layer.mask && layer.maskEnabled;
   const fill = layer.fillOpacity == null ? 1 : layer.fillOpacity;
+
+  if (needsStyles && usesEffectCache(layer, opts)) {
+    if (!layer.pixelKey()) return null;
+    // Content and the effects above it, reused from the last frame when
+    // nothing they depend on changed.
+    const fx = cachedComposed(layer, doc, fill);
+    const out = createCanvas(doc.width, doc.height);
+    const c = out.getContext('2d');
+    c.drawImage(fx.canvas, fx.x, fx.y);
+    if (needsMask) applyMaskAlpha(c, layer);
+    return out;
+  }
+
+  let src = previewOverrides.get(layer.id) || layer.renderCanvas();
+  if (!src) return null;
 
   if (!needsStyles && !needsMask && fill >= 1) return src;
 
@@ -300,15 +382,26 @@ function layerPixels(layer, doc, opts) {
     c.globalAlpha = 1;
   }
 
-  if (needsMask) {
-    const ma = layer.maskAlphaCanvas();
-    if (ma) {
-      c.globalCompositeOperation = 'destination-in';
-      c.drawImage(ma, 0, 0);
-      c.globalCompositeOperation = 'source-over';
-    }
-  }
+  if (needsMask) applyMaskAlpha(c, layer);
   return out;
+}
+
+/** Cut a document-sized surface down to the layer's mask. */
+function applyMaskAlpha(c, layer) {
+  const ma = layer.maskAlphaCanvas();
+  if (!ma) return;
+  c.globalCompositeOperation = 'destination-in';
+  c.drawImage(ma, 0, 0);
+  c.globalCompositeOperation = 'source-over';
+}
+
+/**
+ * Whether this layer's effects come from the effect cache: on the live path
+ * only, and never for a layer showing a preview (its pixels are a stand-in
+ * that changes on every slider move; caching it would only churn).
+ */
+function usesEffectCache(layer, opts) {
+  return !!opts.cache && !previewOverrides.has(layer.id);
 }
 
 function groupPixels(group, doc, opts) {
@@ -338,6 +431,11 @@ function effectiveOpacity(layer) {
 function drawBelowEffects(layer, ctx, doc, opts) {
   if (opts.ignoreEffects || !hasStyles(layer)) return;
   if (layer.type === LayerType.GROUP || layer.type === LayerType.ADJUSTMENT) return;
+  if (usesEffectCache(layer, opts)) {
+    if (!layer.pixelKey()) return;
+    drawCachedBelowEffects(layer, ctx, doc);
+    return;
+  }
   const src = previewOverrides.get(layer.id) || layer.renderCanvas();
   if (!src) return;
   const list = belowEffectResults(src, layer, doc, doc.width, doc.height);
@@ -356,6 +454,47 @@ function drawBelowEffects(layer, ctx, doc, opts) {
       px = clipped;
     }
     blendOnto(ctx, px, e.mode, e.opacity * op, doc);
+  }
+}
+
+/**
+ * `drawBelowEffects` from cached, region-sized results: each is drawn at its
+ * offset, which is pixel for pixel what drawing it pasted into a
+ * document-sized canvas did. Modes Canvas2D lacks still need a document-sized
+ * source, so those are expanded first, as before.
+ */
+function drawCachedBelowEffects(layer, ctx, doc) {
+  const list = cachedBelowEffects(layer, doc);
+  if (!list.length) return;
+  const op = effectiveOpacity(layer);
+  const ma = layer.mask && layer.maskEnabled ? layer.maskAlphaCanvas() : null;
+  for (const e of list) {
+    const opacity = e.opacity * op;
+    if (opacity <= 0) continue;
+    if (isNativeBlend(e.mode)) {
+      let px = e.canvas;
+      if (ma) {
+        px = createCanvas(e.canvas.width, e.canvas.height);
+        const pc = px.getContext('2d');
+        pc.drawImage(e.canvas, 0, 0);
+        pc.globalCompositeOperation = 'destination-in';
+        pc.drawImage(ma, -e.x, -e.y);
+      }
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      ctx.globalCompositeOperation = gcoFor(e.mode);
+      ctx.drawImage(px, e.x, e.y);
+      ctx.restore();
+    } else {
+      const full = createCanvas(doc.width, doc.height);
+      const fc = full.getContext('2d');
+      fc.drawImage(e.canvas, e.x, e.y);
+      if (ma) {
+        fc.globalCompositeOperation = 'destination-in';
+        fc.drawImage(ma, 0, 0);
+      }
+      blendOnto(ctx, full, e.mode, opacity, doc);
+    }
   }
 }
 
@@ -404,6 +543,28 @@ function drawLayer(layer, ctx, doc, opts, extra = {}) {
     ctx.globalAlpha = op;
     ctx.globalCompositeOperation = gcoFor(layer.blendMode === 'pass-through' ? 'normal' : layer.blendMode);
     ctx.drawImage(tile.canvas, tile.x, tile.y);
+    ctx.restore();
+    return;
+  }
+
+  /*
+   * The same idea for a styled layer on the live path: with no mask and a
+   * native mode, its cached content-plus-effects draws straight onto the
+   * backdrop at its offset. Outside that region the document-sized surface
+   * layerPixels() would build is transparent, and a transparent source leaves
+   * the backdrop untouched in every Canvas2D mode — so this is exact.
+   */
+  const mode = layer.blendMode === 'pass-through' ? 'normal' : layer.blendMode;
+  if (!opts.ignoreEffects && hasStyles(layer) && usesEffectCache(layer, opts)
+    && !(layer.mask && layer.maskEnabled) && isNativeBlend(mode)) {
+    if (!layer.pixelKey()) return;
+    const op = effectiveOpacity(layer);
+    if (op <= 0) return;
+    const fx = cachedComposed(layer, doc, layer.fillOpacity == null ? 1 : layer.fillOpacity);
+    ctx.save();
+    ctx.globalAlpha = op;
+    ctx.globalCompositeOperation = gcoFor(mode);
+    ctx.drawImage(fx.canvas, fx.x, fx.y);
     ctx.restore();
     return;
   }

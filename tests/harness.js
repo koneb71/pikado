@@ -280,7 +280,15 @@ export async function runAll({ onProgress } = {}) {
   const app = await liveApp();
 
   const only = suites.filter((s) => s.only);
-  const list = (only.length ? only : suites).filter((s) => !s.skip);
+  // `/tests/?grep=gpu` runs only the suites whose name contains "gpu"; several
+  // terms separated by `|` run the suites matching any of them.
+  let grep = [];
+  try {
+    grep = (new URLSearchParams(location.search).get('grep') || '').split('|').filter(Boolean);
+  } catch { /* no location outside a browser */ }
+  const list = (only.length ? only : suites)
+    .filter((s) => !s.skip)
+    .filter((s) => !grep.length || grep.some((g) => s.name.includes(g)));
 
   const report = { suites: [], passed: 0, failed: 0, errors: 0, startedAt: Date.now() };
 
