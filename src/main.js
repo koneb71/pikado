@@ -80,6 +80,7 @@ import { installCanvasMenu } from './ui/canvas-menu.js';
 import { installWelcome } from './ui/welcome.js';
 import { installSession, restoreSession, isKept } from './io/session.js';
 import { installOffline } from './io/offline.js';
+import { installDesktop } from './io/desktop.js';
 import { tools } from './tools/base.js';
 import { getPref } from './ui/dialogs/preferences.js';
 import { startLanguage, reportLanguageFailure } from './ui/language.js';
@@ -120,6 +121,9 @@ function boot() {
   document.title = `${BRAND.name} — ${tr(BRAND.tagline)}`;
 
   initTools();
+  // The desktop app's bridge, when there is one: before the chrome is built,
+  // so the menus and title strip are laid out for it from the start.
+  installDesktop();
 
   const view = new CanvasView(canvasEl, areaEl);
   app.view = view;

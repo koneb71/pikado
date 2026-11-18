@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 dist-ssr/
+desktop/release/
 *.local
 
 # Vite / tooling caches

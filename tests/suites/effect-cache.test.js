@@ -400,6 +400,25 @@ suite('effect cache / memory is counted and bounded', async (t) => {
   }
 });
 
+suite('effect cache / the largest memory limit still caches', async (t) => {
+  // Verified to fail with the budget stored as `bytes | 0`: the 2 GiB that the
+  // Preferences maximum of 4096 MB gives (and the desktop app's default on a
+  // 16 GB machine) wrapped to a negative 32-bit number, became 0, and nothing
+  // was ever kept.
+  const prev = effectCacheBudget();
+  setEffectCacheBudget((4096 * 1048576) / 2);
+  try {
+    t.eq(effectCacheBudget(), 2147483648, 'a 2 GiB budget is 2 GiB');
+    const { doc } = scene(t, 'fx-big-budget');
+    clearEffectCache(doc);
+    doc.touch('x');
+    getComposite(doc);
+    t.gt(effectCacheStats(doc).entries, 0, 'and the composite keeps its effects');
+  } finally {
+    setEffectCacheBudget(prev);
+  }
+});
+
 suite('effect cache / verify mode catches a write that skipped beginEdit', async (t) => {
   // The debugging aid for golden rule 2: a write into a styled layer without
   // beginEdit leaves the cache serving old effects, and ?verifycomposite=1

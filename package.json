@@ -30,7 +30,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "test": "vite --open /tests/"
+    "test": "vite --open /tests/",
+    "desktop:install": "npm --prefix desktop install",
+    "desktop:dev": "node desktop/scripts/dev.mjs",
+    "desktop:test": "node desktop/scripts/dev.mjs --tests",
+    "desktop:unit": "node --test desktop/test/",
+    "desktop": "vite build && node desktop/scripts/dev.mjs --built",
+    "desktop:build": "vite build && npm --prefix desktop run dist"
   },
   "devDependencies": {
     "vite": "^8.3.8"

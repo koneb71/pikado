@@ -21,6 +21,9 @@ import { brandLock, BRAND, installFavicon } from './brand.js';
  * separators, nested `{label, items}` groups, or `{label, dynamic}` groups whose
  * contents are enumerated from a registry at open time.
  *
+ * An entry may carry `when: () => boolean`; it is left out while that is false
+ * (Help > Check for Updates… exists only in the desktop app).
+ *
  * Every label in the tree and in the registries it enumerates is English data;
  * this module translates each one as it draws it. The Window menu's document
  * names are the exception — a document's name is the user's, not the
@@ -277,6 +280,7 @@ function normalizeList(list) {
       continue;
     }
     if (typeof entry !== 'object') continue;
+    if (typeof entry.when === 'function' && !entry.when()) continue;
 
     if (entry.dynamic) {
       const items = dynamicItems(entry.dynamic);
@@ -321,6 +325,9 @@ function commandItem(id) {
   return {
     label: labelOf(id),
     accel: formatAccel(cmd.accel),
+    rawAccel: cmd.accel || '',
+    commandId: id,
+    checkable: typeof cmd.checked === 'function',
     checked: isChecked(id),
     enabled: isEnabled(id),
     run: () => runCommand(id),
@@ -413,6 +420,7 @@ function documentItems() {
   return app.docs.map((doc) => ({
     label: doc.name + (doc.dirty ? ' *' : ''),
     verbatim: true,
+    checkable: true,
     checked: doc === app.activeDoc,
     run: () => app.setActiveDoc(doc),
   }));
@@ -426,10 +434,54 @@ function toolItems() {
       out.push({
         label: tr(t.name),
         accel: t.shortcut || '',
+        rawAccel: t.shortcut || '',
+        checkable: true,
         checked: app.tool === t,
         run: () => app.setTool(t.id),
       });
     }
   }
   return collapseSeparators(out);
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapshot for the system menu bar                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The menus as plain data, for the macOS menu bar of the desktop app
+ * (src/io/desktop.js, desktop/lib/menu.cjs). Built from the same entries the
+ * menu bar draws: labels already translated, enabled and checked states as they
+ * are now, dynamic sections expanded. Each leaf gets an `actionId`; its `run`
+ * and its accelerator stay here, in `actions`, since a function cannot cross
+ * to another process.
+ *
+ * @param {any[]} tree MENU_TREE
+ * @returns {{menus: object[], actions: Map<number, {run: Function, accel: string}>}}
+ */
+export function menuSnapshot(tree) {
+  const actions = new Map();
+  let next = 1;
+  const walk = (items) => items.map((it) => {
+    if (it.type === 'sep') return { type: 'separator' };
+    const node = { label: it.label, enabled: it.enabled !== false };
+    if (it.commandId) node.commandId = it.commandId;
+    if (it.children) {
+      const kids = typeof it.children === 'function' ? it.children() : it.children;
+      node.submenu = walk(kids || []);
+      return node;
+    }
+    if (it.checkable) {
+      node.checkable = true;
+      node.checked = !!it.checked;
+    }
+    if (it.rawAccel) node.accel = it.rawAccel;
+    node.actionId = next++;
+    actions.set(node.actionId, { run: it.run, accel: it.rawAccel || '' });
+    return node;
+  });
+  const menus = (tree || [])
+    .filter((entry) => entry && entry.label && !(typeof entry.when === 'function' && !entry.when()))
+    .map((entry) => ({ key: entry.label, label: tr(entry.label), submenu: walk(normalizeList(entry.items || [])) }));
+  return { menus, actions };
 }
