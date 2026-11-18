@@ -1,6 +1,7 @@
 import { suite } from '../harness.js';
 import { compositeDocument, getComposite, blendOnto } from '/src/render/compositor.js';
-import { blendOnGPU, shouldBlendOnGPU, canBlendOnGPU, isGPUModeSupported } from '/src/render/gpu-blend.js';
+import { blendOnGPU, shouldBlendOnGPU, canBlendOnGPU, isGPUModeSupported, blendBackend } from '/src/render/gpu-blend.js';
+import { gpuReady, setGPUEnabled } from '/src/render/gpu-device.js';
 import { BLEND_MODES, blendCPU, isNativeBlend } from '/src/core/blend.js';
 import { createRasterLayer, createGroupLayer, createAdjustmentLayer } from '/src/core/layer.js';
 import { createCanvas, ctx2dRead } from '/src/core/util.js';
@@ -402,8 +403,9 @@ suite('compositor / GPU blend path matches the CPU path', async (t) => {
   t.notOk(blendOnGPU(small.getContext('2d'), small, 'subtract', 1),
     'blendOnGPU declines a small surface so the CPU path stays bit-exact');
 
+  const device = await gpuReady();
   const available = canBlendOnGPU(W, H);
-  t.ok(available, 'WebGL2 is available for the shader path');
+  t.ok(available, 'a GPU backend (WebGPU or WebGL2) is available for the shader path');
 
   const surface = (fn) => {
     const cv = createCanvas(W, H);
@@ -424,7 +426,32 @@ suite('compositor / GPU blend path matches the CPU path', async (t) => {
     'subtract', 'divide', 'darker-color', 'lighter-color'];
   for (const m of MODES) t.notOk(isNativeBlend(m), `${m} needs the CPU/GPU path`);
 
-  if (available) {
+  const baseCv = surface((x, y) => [(x * 7 + y * 3) % 256, (x * 13) % 256, (y * 11) % 256, 255]);
+  const srcCv = surface((x, y) => [(x * 5 + y * 17) % 256, (y * 23) % 256, (x * 3 + y * 7) % 256, 255]);
+  const baseData = ctx2dRead(baseCv).getImageData(0, 0, W, H);
+  const srcData = ctx2dRead(srcCv).getImageData(0, 0, W, H);
+  const baseT = surface((x, y) => [(x * 7 + y * 3) % 256, (x * 13) % 256, (y * 11) % 256,
+    128 + ((x * 3 + y * 5) % 128)]);
+  const srcT = surface((x, y) => [(x * 5 + y * 17) % 256, (y * 23) % 256, (x * 3 + y * 7) % 256,
+    160 + ((x * 7) % 96)]);
+  const baseTD = ctx2dRead(baseT).getImageData(0, 0, W, H);
+  const srcTD = ctx2dRead(srcT).getImageData(0, 0, W, H);
+
+  // The same checks hold for both backends: WebGPU on the shared device, and
+  // WebGL2, which runs where WebGPU is missing (forced here by switching the
+  // WebGPU paths off).
+  const backends = device ? ['webgpu', 'webgl2'] : ['webgl2'];
+  if (!device) t.ok(true, 'NOT exercised: no WebGPU device in this browser, so only WebGL2 is checked');
+  for (const backend of backends) {
+    setGPUEnabled(backend === 'webgpu');
+    try {
+      if (available) checkBackend(backend);
+    } finally {
+      setGPUEnabled(true);
+    }
+  }
+
+  function checkBackend(backend) {
     // --- fully opaque: the two paths must agree exactly ---
     // Opaque pixels upload losslessly (nothing is premultiplied away), so the
     // only legitimate disagreements are (a) a single count of rounding where the
@@ -434,18 +461,14 @@ suite('compositor / GPU blend path matches the CPU path', async (t) => {
     const EXACT = new Set(['linear-burn', 'linear-light', 'pin-light', 'hard-mix', 'subtract']);
     const DIVIDES = new Set(['vivid-light', 'divide']);
     const lum = (rr, gg, bb) => 0.3 * rr + 0.59 * gg + 0.11 * bb;
-
-    const baseCv = surface((x, y) => [(x * 7 + y * 3) % 256, (x * 13) % 256, (y * 11) % 256, 255]);
-    const srcCv = surface((x, y) => [(x * 5 + y * 17) % 256, (y * 23) % 256, (x * 3 + y * 7) % 256, 255]);
-    const baseData = ctx2dRead(baseCv).getImageData(0, 0, W, H);
-    const srcData = ctx2dRead(srcCv).getImageData(0, 0, W, H);
     const bb = baseData.data, ss = srcData.data;
 
     for (const mode of MODES) {
       const dst = createCanvas(W, H);
       const dctx = dst.getContext('2d');
       dctx.drawImage(baseCv, 0, 0);
-      t.ok(blendOnGPU(dctx, srcCv, mode, 1), `blendOnGPU takes ${mode}`);
+      t.ok(blendOnGPU(dctx, srcCv, mode, 1), `${backend}: blendOnGPU takes ${mode}`);
+      t.eq(blendBackend(), backend, `${backend}: ${mode} ran on ${backend}`);
       const gpu = ctx2dRead(dst).getImageData(0, 0, W, H).data;
       const exp = new ImageData(new Uint8ClampedArray(bb), W, H);
       blendCPU(exp, srcData, mode, 1);
@@ -466,34 +489,55 @@ suite('compositor / GPU blend path matches the CPU path', async (t) => {
       }
 
       if (EXACT.has(mode)) {
-        t.eq(worst, 0, `GPU ${mode} is bit-identical to blendCPU on every opaque pixel`);
+        t.eq(worst, 0, `${backend}: GPU ${mode} is bit-identical to blendCPU on every opaque pixel`);
       } else if (DIVIDES.has(mode)) {
-        t.eq(over, 0, `GPU ${mode} never differs from blendCPU by more than one count when opaque`);
-        t.lt(worst, 2, `GPU ${mode} worst opaque error is float32-vs-float64 rounding only`);
+        t.eq(over, 0, `${backend}: GPU ${mode} never differs from blendCPU by more than one count when opaque`);
+        t.lt(worst, 2, `${backend}: GPU ${mode} worst opaque error is float32-vs-float64 rounding only`);
       } else {
-        t.eq(over, tied, `GPU ${mode} only disagrees with blendCPU on exact luminance ties (${over} px)`);
-        t.lt(over, W * H * 0.0005, `and on fewer than 0.05% of opaque pixels (${over} of ${W * H})`);
+        t.eq(over, tied, `${backend}: GPU ${mode} only disagrees with blendCPU on exact luminance ties (${over} px)`);
+        t.lt(over, W * H * 0.0005, `${backend}: and on fewer than 0.05% of opaque pixels (${over} of ${W * H})`);
       }
     }
 
-    // --- semi-transparent: premultiplied 8-bit upload costs ~2 counts ---
-    const baseT = surface((x, y) => [(x * 7 + y * 3) % 256, (x * 13) % 256, (y * 11) % 256,
-      128 + ((x * 3 + y * 5) % 128)]);
-    const srcT = surface((x, y) => [(x * 5 + y * 17) % 256, (y * 23) % 256, (x * 3 + y * 7) % 256,
-      160 + ((x * 7) % 96)]);
-    const baseTD = ctx2dRead(baseT).getImageData(0, 0, W, H);
-    const srcTD = ctx2dRead(srcT).getImageData(0, 0, W, H);
-    for (const mode of ['linear-burn', 'subtract', 'linear-light']) {
+    // --- semi-transparent: within a few counts, and well under a tenth on average ---
+    // The shader unpremultiplies and rounds exactly as getImageData does, so
+    // what is left is where a browser's own rounding differs from the nearest
+    // byte. Letting the WebGL upload unpremultiply instead (as this once did)
+    // was fine in Chrome but averaged 0.24-0.62 counts in Safari, whose upload
+    // and getImageData round differently; a mean limit of 0.15 catches that.
+    for (const mode of ['linear-burn', 'subtract', 'linear-light', 'vivid-light']) {
       const dst = createCanvas(W, H);
       const dctx = dst.getContext('2d');
       dctx.drawImage(baseT, 0, 0);
-      t.ok(blendOnGPU(dctx, srcT, mode, 1), `blendOnGPU takes ${mode} on translucent pixels`);
+      t.ok(blendOnGPU(dctx, srcT, mode, 1), `${backend}: blendOnGPU takes ${mode} on translucent pixels`);
       const gpu = ctx2dRead(dst).getImageData(0, 0, W, H);
       const exp = new ImageData(new Uint8ClampedArray(baseTD.data), W, H);
       blendCPU(exp, srcTD, mode, 1);
-      t.lt(maxDiff(gpu.data, exp.data), 5, `GPU ${mode} stays within the documented ~2 counts when translucent`);
-      t.lt(t.mad(gpu, exp), 0.5, `GPU ${mode} translucent mean error is negligible`);
+      // Vivid Light divides by the source, so where the source is near 0 or 1 a
+      // single count of input rounding moves the output by many: its worst case
+      // is not a useful bound, its mean is.
+      if (mode !== 'vivid-light') {
+        t.lt(maxDiff(gpu.data, exp.data), 5, `${backend}: GPU ${mode} stays within a few counts when translucent`);
+      }
+      const mean = t.mad(gpu, exp);
+      t.lt(mean, 0.15, `${backend}: GPU ${mode} translucent mean error is negligible (${mean.toFixed(3)} counts)`);
     }
+
+    // --- two blends back to back in one task ---
+    // A composite with two non-native layers uploads into the same textures
+    // twice before the browser next renders. Each result must reflect its own
+    // inputs: a backend that served the first upload again would give the
+    // second blend the first one's backdrop.
+    const dst = createCanvas(W, H);
+    const dctx = dst.getContext('2d');
+    dctx.drawImage(baseCv, 0, 0);
+    t.ok(blendOnGPU(dctx, srcCv, 'subtract', 1), `${backend}: first of two stacked blends runs on the GPU`);
+    t.ok(blendOnGPU(dctx, baseCv, 'linear-burn', 0.7), `${backend}: second of two stacked blends runs on the GPU`);
+    const exp = new ImageData(new Uint8ClampedArray(bb), W, H);
+    blendCPU(exp, srcData, 'subtract', 1);
+    blendCPU(exp, baseData, 'linear-burn', 0.7);
+    t.lt(maxDiff(ctx2dRead(dst).getImageData(0, 0, W, H).data, exp.data), 2,
+      `${backend}: two stacked non-native blends in one task match blendCPU`);
   }
 });
 

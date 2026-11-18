@@ -42,6 +42,24 @@ function withExtension(name, extension) {
   return name.toLowerCase().endsWith(`.${extension.toLowerCase()}`) ? name : `${name}.${extension}`;
 }
 
+let webpSupport = null;
+
+/**
+ * Whether this browser's canvas encoder writes WebP. Safari's does not: asked
+ * for `image/webp` it quietly hands back a PNG, which `exportDocument` then
+ * labels as one. The Export dialog uses this to grey the format out up front.
+ */
+export function webpEncodeSupported() {
+  if (webpSupport === null) {
+    try {
+      webpSupport = createCanvas(1, 1).toDataURL('image/webp').startsWith('data:image/webp');
+    } catch {
+      webpSupport = false;
+    }
+  }
+  return webpSupport;
+}
+
 function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error(tr('Could not encode the image as {format}', { format: type })))), type, quality);

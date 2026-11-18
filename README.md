@@ -301,6 +301,10 @@ Everything tonal runs in linear light, which is where exposure is a multiply:
 on encoded lightness instead, because that is what makes them feel linear — the
 same gain applied to linear light is invisible in deep shadow.
 
+With WebGPU it develops on the GPU — every stage but Dehaze, which needs a
+percentile of the whole image and stays on the CPU — about 35× faster on a
+12 MP photo, so the preview keeps up with the sliders.
+
 Two honest notes. This is the Camera Raw *filter*, working on 8-bit RGB, so
 highlight and black recovery has an 8-bit ceiling: what is clipped in the file is
 gone, and no slider can invent it. And Temperature is a relative −100…+100 slider
@@ -496,6 +500,8 @@ Ten tools on one forward-displacement mesh — Forward Warp, Reconstruct, Smooth
 both Twirls, Pucker, Bloat, Push Left, and Freeze/Thaw masking — with a live
 preview. Nothing compounds: the mesh is inverse-mapped once from the untouched
 original, so pushing pixels around all afternoon costs exactly one resample.
+With WebGPU the resample runs on the GPU, and the live preview is drawn straight
+from it with no readback.
 
 Sixteen **face-aware sliders** sit on the same mesh: eye size, height, width,
 tilt and distance; nose height and width; smile, upper and lower lip, mouth
@@ -543,7 +549,8 @@ version:
 src/
   core/        document, layer, selection, history, colour, blend modes,
                smart objects, snapping, app singleton
-  render/      compositor, viewport, GPU blend shader, GPU blur
+  render/      compositor, viewport, GPU blur, and WebGPU: blend modes, layer
+               effects, distortions, Liquify, Camera Raw
   paint/       brush engine, patterns, gradients
   tools/       one module per toolbar group
   filters/     filter registry + implementations by menu
@@ -620,7 +627,7 @@ traps the suite is built to avoid.
 
 | Format | Open | Save |
 |---|---|---|
-| PNG / JPEG / WebP | yes | yes |
+| PNG / JPEG / WebP | yes | yes — WebP where the browser can encode it (not Safari; Export As greys it out there and says why) |
 | GIF | first frame (all frames where `ImageDecoder` exists) | yes — animated, per-frame palettes + LZW |
 | PSD / PSB | yes — layers, groups, masks, blend modes, text, adjustments | yes — layered, see caveats below |
 | SVG | yes — rasterized, with simple shapes kept as editable paths | yes |
@@ -776,16 +783,22 @@ Measured on a 4000×3000 (12 MP) document with 8 layers — a realistic photo ed
 | Brush stroke, per frame | 3 ms |
 | Curves / Levels / any LUT adjustment | 1 ms |
 | Gaussian Blur, any radius | 66–99 ms |
-| Drop shadow on a small layer, per recomposite | ~106 ms |
+| Drop shadow on a small layer, per recomposite | ~16 ms |
+| Drop shadow under a shape covering half the canvas, per recomposite | 14–19 ms with WebGPU (50–250 ms without) |
+| Inner shadow and inner glow on a shape covering half the canvas | 21 ms with WebGPU (434 ms without) |
+| Painting beside a layer with a shadow, stroke and glow, per frame | 4 ms (101 ms re-rendering its effects) |
+| Twirl / Liquify | 29 / 28 ms with WebGPU (402 / 314 ms without) |
+| Camera Raw: exposure, clarity, vibrance | 37 ms with WebGPU (1.3 s without) |
 | History step (copy-on-write) | 0 ms |
 
-Three things make that possible:
+Five things make that possible:
 
 - **Blend modes on the GPU.** Canvas2D implements 17 of the 27 modes natively.
   The other ten used to run per-pixel in JS over the whole document — about
   1 second per recomposite at 12 MP, on *every brush frame*. They now run in a
-  fragment shader (`src/render/gpu-blend.js`). The CPU path is kept for small
-  documents, where it is already fast and bit-exact.
+  shader (`src/render/gpu-blend.js`) — on WebGPU, or WebGL2 where WebGPU is
+  missing. The CPU path is kept for small documents, where it is already fast
+  and bit-exact.
 - **Blur on the GPU.** The browser's own `ctx.filter = 'blur()'` is a true
   Gaussian on the GPU, ~30× faster end-to-end than the equivalent JS box passes
   and independent of radius. Edge pixels are replicated into a padded border
@@ -793,14 +806,29 @@ Three things make that possible:
 - **Region-cropped layer effects.** Effects used to process the full document
   even for a logo covering 5% of it. They now run on the content bounds expanded
   by each effect's reach — worth about 5× on a large canvas.
+- **Shadows and glows on WebGPU.** Cropping cannot help when the shape itself is
+  large. Drop shadow, outer glow, inner shadow and inner glow on a region over
+  ~300×300 px run as compute passes (`src/render/gpu-effects.js`) — Spread and
+  Choke included, through an exact distance transform that runs there too: one
+  upload, one draw back, 4–20× faster end to end at 12 MP, within 3 counts of
+  alpha of the CPU renderer. Distortions, Liquify and Camera Raw run the same
+  way (`src/render/gpu-filters.js`), and a smart filter stack runs consecutive
+  ones as a single chain.
+- **Effects are kept between frames.** A layer's shadow, glow or stroke is
+  re-rendered only when something it depends on changes — its pixels, its
+  settings, the global light — not on every brush frame of some other layer
+  (`src/effects/effect-cache.js`).
 
-One deliberate trade-off: uploading a Canvas2D surface into WebGL round-trips
-through premultiplied 8-bit alpha, costing ~2 counts of precision on *partially
-transparent* pixels. Fully opaque pixels are unaffected. Where a mode makes a
-discrete choice (Hard Mix's threshold, Darker/Lighter Color picking by
-luminance) that can flip the result on roughly 0.1–0.6% of semi-transparent
-pixels — values that were exact ties either way. Documents under ~400k pixels
-use the exact CPU path regardless.
+One deliberate trade-off: the GPU paths are not bit-identical to the CPU ones.
+The blend shader rounds exactly as the CPU path does, so on *partially
+transparent* pixels the difference is ~0.04 counts on average in Chrome and
+Safari and a few counts at worst (Vivid Light, which divides by the source, up
+to ~25 at a handful of pixels); fully opaque pixels are exact. Where a mode
+makes a discrete choice (Hard Mix's threshold, Darker/Lighter Color picking by
+luminance) an exact tie can still fall either way. Effects and filters are
+within 1–3 counts, from float32 arithmetic against the CPU's float64. Documents
+under ~400k pixels (blend modes) or regions under ~90k (effects and filters)
+use the exact CPU paths regardless.
 
 ## Browser support
 
@@ -818,8 +846,9 @@ error:
 | IndexedDB | autosave, session restore, recent projects | autosave off, and the refresh warning comes back |
 | `navigator.storage.persist` | asking not to be evicted under disk pressure | best effort; Safari and private windows say no |
 | Service workers | offline start, installability | needs a network to load, then works as normal |
-| WebGL2 | the ten non-native blend modes at speed | exact CPU path, slower on large documents |
-| Canvas2D `filter` | GPU Gaussian blur | JS box-blur passes |
+| WebGL2 | the ten non-native blend modes at speed, where WebGPU is missing | exact CPU path, slower on large documents |
+| WebGPU | the non-native blend modes; shadows and glows, distortions, Liquify and Camera Raw on large images | WebGL2 for blend modes; the CPU renderers and filters, many times slower on a large image |
+| Canvas2D `filter` that actually blurs (Safari accepts the property but ignores it) | GPU Gaussian blur | JS box-blur passes |
 
 ## Contributing
 

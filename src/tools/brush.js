@@ -322,7 +322,10 @@ export class BrushToolBase extends Tool {
     // A stroke that never stamped a dab (every dab fell outside the canvas)
     // must not push an empty step onto the undo stack.
     if (stroke.dirty) doc.commit(this.strokeLabel);
-    else doc.touch();
+    else {
+      doc.touch();
+      doc.endEdit(this.strokeLayer);
+    }
     this.strokeDoc = null;
     this.strokeLayer = null;
   }
@@ -352,7 +355,10 @@ export class BrushToolBase extends Tool {
     ctx.drawImage(stroke.base, 0, 0);
     ctx.restore();
     if (this.strokeLayer && this.strokeLayer.editingMask) this.strokeLayer.touchMask();
-    if (this.strokeDoc) this.strokeDoc.touch();
+    if (this.strokeDoc) {
+      this.strokeDoc.touch();
+      this.strokeDoc.endEdit(this.strokeLayer);
+    }
     this.strokeDoc = null;
     this.strokeLayer = null;
   }

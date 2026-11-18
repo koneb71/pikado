@@ -61,6 +61,8 @@ export class History extends Emitter {
   record(label) {
     if (this.suspended) return;
     const state = this.doc.captureState();
+    // Captured buffers are frozen by copy-on-write from here on.
+    this.doc.settleLiveLayers?.();
     // Drop the redo tail.
     if (this.index < this.states.length - 1) this.states.length = this.index + 1;
     this.states.push(entryFor(label, state));
@@ -73,6 +75,7 @@ export class History extends Emitter {
   replaceTop(label) {
     if (this.suspended || this.index < 0) return this.record(label);
     this.states[this.index] = entryFor(label, this.doc.captureState());
+    this.doc.settleLiveLayers?.();
     this.emit('change');
   }
 

@@ -440,7 +440,10 @@ class MoveTool extends Tool {
 
     const boxBounds = !pixelMove ? layersBounds(layers) : null;
     const priorBounds = layers.map(peekBounds);
-    doc.beginEdit(layers);
+    // Moving whole layers only re-places their buffers at a new offset; it
+    // never writes into them, so the pixels' revisions (and every cache keyed
+    // on them) survive the whole drag. Moving a selection repaints in place.
+    doc.beginEdit(layers, { live: pixelMove });
     const drag = {
       doc,
       layers,

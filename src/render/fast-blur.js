@@ -20,13 +20,36 @@ import { createCanvas, ctx2dRead } from '../core/util.js';
 
 let _supported = null;
 
-/** Whether this browser implements Canvas2D filters. */
+/**
+ * Whether Canvas2D filters actually blur in this browser.
+ *
+ * Accepting the property is not enough. Safari takes `ctx.filter = 'blur(2px)'`,
+ * reads it back unchanged, and then draws with no blur at all, so a check on the
+ * property alone sent every Safari blur down a path that returned its input
+ * untouched: hard-edged shadows and glows, and a Gaussian Blur that did nothing.
+ * So blur one dot, the way `blurCanvas` does (a `putImageData` source drawn
+ * through the filter), and see whether it spread.
+ */
 export function supportsCanvasFilter() {
   if (_supported !== null) return _supported;
   try {
-    const c = createCanvas(1, 1).getContext('2d');
-    c.filter = 'blur(1px)';
-    _supported = c.filter === 'blur(1px)';
+    const n = 15, mid = 7;
+    const img = new ImageData(n, n);
+    img.data[(mid * n + mid) * 4 + 3] = 255;
+    const src = createCanvas(n, n);
+    src.getContext('2d').putImageData(img, 0, 0);
+    const dst = createCanvas(n, n);
+    const c = dst.getContext('2d', { willReadFrequently: true });
+    c.filter = 'blur(2px)';
+    if (c.filter !== 'blur(2px)') {
+      _supported = false;
+      return _supported;
+    }
+    c.drawImage(src, 0, 0);
+    const d = c.getImageData(0, 0, n, n).data;
+    const centre = d[(mid * n + mid) * 4 + 3];
+    const twoAway = d[(mid * n + mid + 2) * 4 + 3];
+    _supported = centre < 255 && twoAway > 0;
   } catch {
     _supported = false;
   }
@@ -115,8 +138,12 @@ export function blurImageData(imageData, sigma, jsFallback) {
  *
  * @param {Float32Array} alpha
  * @param {(alpha:Float32Array,w:number,h:number,sigma:number)=>Float32Array} [jsFallback]
+ * @param {boolean} [clampEdges] replicate the border instead of fading to
+ *   nothing past it. A shadow or glow field fades (the default); an inner
+ *   effect's inverted matte, opaque all round, must clamp. Pass the same value
+ *   the fallback uses, so the two branches agree.
  */
-export function blurAlphaField(alpha, w, h, sigma, jsFallback) {
+export function blurAlphaField(alpha, w, h, sigma, jsFallback, clampEdges = false) {
   if (!(sigma > 0.05)) return alpha;
   if (!supportsCanvasFilter() || w * h < GPU_MIN_PIXELS) {
     return jsFallback ? jsFallback(alpha, w, h, sigma) : alpha;
@@ -129,8 +156,7 @@ export function blurAlphaField(alpha, w, h, sigma, jsFallback) {
   }
   const src = createCanvas(w, h);
   src.getContext('2d').putImageData(img, 0, 0);
-  // A shadow/glow field must fade to nothing outside the layer, so no clamping.
-  const blurred = blurCanvas(src, sigma, false);
+  const blurred = blurCanvas(src, sigma, clampEdges);
   const res = ctx2dRead(blurred).getImageData(0, 0, w, h).data;
   const out = new Float32Array(w * h);
   for (let i = 3, p = 0; p < w * h; p++, i += 4) out[p] = res[i];

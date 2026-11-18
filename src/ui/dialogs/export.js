@@ -169,6 +169,16 @@ export async function showExportDialog(doc = app.activeDoc) {
       heicNote.style.display = '';
     }
   });
+  // Same treatment for WebP: Safari's canvas cannot encode it.
+  const webpOption = formatSelect.querySelector('option[value="webp"]');
+  const webpNote = el('div.pkd-note', { style: { display: 'none' } });
+  saveModule().then((mod) => {
+    if (!mod || typeof mod.webpEncodeSupported !== 'function' || mod.webpEncodeSupported()) return;
+    webpOption.disabled = true;
+    webpOption.textContent = tr('WebP (not available in this browser)');
+    webpNote.textContent = tr('This browser cannot encode WebP. Chrome, Edge and Firefox can.');
+    webpNote.style.display = '';
+  });
   const qualityRange = el('input.pk-range', { type: 'range', min: 1, max: 100, step: 1, value: state.quality });
   const qualityNum = el('input.pk-num', { type: 'number', min: 1, max: 100, step: 1, value: state.quality });
   const qualityRow = el('div.pk-field', {}, el('label', { text: tr('Quality') }), el('div.pk-slider-row', {}, qualityRange, qualityNum));
@@ -317,7 +327,8 @@ export async function showExportDialog(doc = app.activeDoc) {
         transparentRow,
         allLayersRow,
         el('div.pkd-note', { text: tr('GIF is written with a 256-colour median-cut palette. SVG embeds the rendered raster.') }),
-        heicNote
+        heicNote,
+        webpNote
       )
     )
   );

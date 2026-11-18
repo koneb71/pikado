@@ -218,7 +218,7 @@ export function convolveBuffer(buf, w, h, kernel, ch) {
 
 // Three successive box passes converge on a gaussian (central limit); these
 // are the box widths that best match a given sigma.
-function boxRadiiForGauss(sigma, n) {
+export function boxRadiiForGauss(sigma, n) {
   const ideal = Math.sqrt((12 * sigma * sigma) / n + 1);
   let wl = Math.floor(ideal);
   if (wl % 2 === 0) wl--;

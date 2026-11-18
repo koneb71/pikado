@@ -5,6 +5,7 @@ import { commandName, msg, tr } from './i18n.js';
 import { uid, createCanvas, ctx2d, ctx2dRead, imageDataToCanvas, download } from './util.js';
 import { compositeDocument, setLayerPreview } from '../render/compositor.js';
 import { getFilter, runFilter } from '../filters/registry.js';
+import { runStagesOnGPU } from '../render/gpu-filters.js';
 
 /**
  * Smart Objects — genuinely non-destructive embedded documents.
@@ -576,9 +577,30 @@ function sourceKey(s) {
   return `${src ? src.id : '?'}|${s.sourceVersion || 0}|${hist}|${fs}`;
 }
 
-/** Run the stored smart filters over the composited source, in order. */
-function applySmartFilters(canvas, s, layer) {
+/** The part of `sourceKey` that is about the source, not the filters. */
+function sourceBaseKey(s) {
+  const src = s.source;
+  const hist = src && src.history ? `${src.history.index}.${src.history.states.length}` : '0';
+  return `${src ? src.id : '?'}|${s.sourceVersion || 0}|${hist}`;
+}
+
+/**
+ * Run the stored smart filters over the composited source, in order.
+ *
+ * Consecutive filters that can run on WebGPU (they have a `gpuStage`: the
+ * distortions, Liquify, Camera Raw) run as one chain — one upload, one
+ * readback, bytes between them as between CPU filters — instead of a
+ * getImageData / putImageData round trip each. A filter without one breaks
+ * the chain and runs on the CPU as it always did; so does every filter when
+ * the GPU declines.
+ *
+ * `prefix`, when given, keeps what each leading run of filters produced, keyed
+ * by the source and those filters' settings: a filter dialog previewing the
+ * top of a stack re-runs only what changed (see `runFilterDialog`).
+ */
+function applySmartFilters(canvas, s, layer, prefix = null, keys = null) {
   let cur = canvas;
+  const list = [];
   for (const f of s.filters || []) {
     if (!f.enabled) continue;
     const def = getFilter(f.filterId);
@@ -586,7 +608,41 @@ function applySmartFilters(canvas, s, layer) {
       app.toast(tr('Smart filter "{filter}" is not registered — skipped.', { filter: f.filterId }), 'error');
       continue;
     }
+    list.push({ f, def });
+  }
+  let i = 0;
+  if (prefix && keys) {
+    // Resume after the longest run of leading filters already computed.
+    for (let k = list.length; k > 0; k--) {
+      const hit = prefix.get(keys[k]);
+      if (hit) { cur = hit; i = k; break; }
+    }
+  }
+  let gpuDeclined = false;
+  while (i < list.length) {
     const w = cur.width, h = cur.height;
+    if (!gpuDeclined) {
+      const stages = [];
+      let j = i;
+      for (; j < list.length; j++) {
+        const { f, def } = list[j];
+        const st = def.gpuStage ? def.gpuStage({ ...def.defaults, ...(f.params || {}) }, { width: w, height: h }) : null;
+        if (!st) break;
+        if (st.kind !== 'identity') stages.push(st);
+      }
+      if (j > i) {
+        if (!stages.length) { i = j; if (prefix && keys) prefix.set(keys[i], cur); continue; }
+        const res = runStagesOnGPU(ctx2dRead(cur).getImageData(0, 0, w, h), stages);
+        if (res) {
+          cur = imageDataToCanvas(res);
+          i = j;
+          if (prefix && keys) prefix.set(keys[i], cur);
+          continue;
+        }
+        gpuDeclined = true;
+      }
+    }
+    const { f } = list[i];
     const region = ctx2dRead(cur).getImageData(0, 0, w, h);
     let res = runFilter(f.filterId, region, f.params, {
       doc: s.source, layer, rect: { x: 0, y: 0, width: w, height: h },
@@ -594,6 +650,8 @@ function applySmartFilters(canvas, s, layer) {
     });
     if (!(res instanceof ImageData)) res = region;
     cur = imageDataToCanvas(res);
+    i++;
+    if (prefix && keys) prefix.set(keys[i], cur);
   }
   return cur;
 }
@@ -629,12 +687,27 @@ function prescale(src, sx, sy) {
  * so dragging a transform does not re-run the filter chain every frame.
  * @returns {HTMLCanvasElement}
  */
-export function smartSourcePixels(s, layer, cacheHolder) {
+export function smartSourcePixels(s, layer, cacheHolder, prefix = null) {
   const key = sourceKey(s);
   if (cacheHolder && cacheHolder._smartCache && cacheHolder._smartCache.key === key) {
     return cacheHolder._smartCache.canvas;
   }
-  const composed = applySmartFilters(compositeDocument(s.source), s, layer);
+  let composed;
+  if (prefix) {
+    // keys[k]: the source plus the first k enabled filters' settings.
+    const keys = [sourceBaseKey(s)];
+    for (const f of s.filters || []) {
+      if (f.enabled && getFilter(f.filterId)) keys.push(`${keys[keys.length - 1]};${f.filterId}:${JSON.stringify(f.params || {})}`);
+    }
+    let source = prefix.get(keys[0]);
+    if (!source) prefix.set(keys[0], (source = compositeDocument(s.source)));
+    composed = applySmartFilters(source, s, layer, prefix, keys);
+    // Forget what this stack can no longer reach.
+    const live = new Set(keys);
+    for (const k of prefix.keys()) if (!live.has(k)) prefix.delete(k);
+  } else {
+    composed = applySmartFilters(compositeDocument(s.source), s, layer);
+  }
   if (cacheHolder) cacheHolder._smartCache = { key, canvas: composed };
   return composed;
 }
@@ -672,8 +745,8 @@ function gridSteps(mapFn) {
  *
  * @returns {HTMLCanvasElement}
  */
-export function composeSmartCanvas(s, width, height, layer = null, cacheHolder = null) {
-  const src = smartSourcePixels(s, layer, cacheHolder);
+export function composeSmartCanvas(s, width, height, layer = null, cacheHolder = null, prefix = null) {
+  const src = smartSourcePixels(s, layer, cacheHolder, prefix);
   const t = s.transform || {};
   const matrix = validMatrix(t.matrix) ? t.matrix : IDENTITY_MATRIX;
   const persp = validPerspective(t.perspective) ? t.perspective : NO_PERSPECTIVE;
@@ -1332,6 +1405,9 @@ export async function editSmartFilter(doc, layer, ref) {
  */
 async function runFilterDialog(doc, layer, def, state, buildFilters) {
   const { paramDialog } = await import('../ui/dialog.js');
+  // Every slider move re-renders the stack; the filters below the one being
+  // edited have not changed, so keep what they produced for the dialog's life.
+  const prefix = new Map();
   const preview = (params) => {
     if (!params) {
       setLayerPreview(layer.id, null);
@@ -1339,7 +1415,7 @@ async function runFilterDialog(doc, layer, def, state, buildFilters) {
       return;
     }
     const trial = { ...layer.smart, filters: buildFilters(params) };
-    setLayerPreview(layer.id, composeSmartCanvas(trial, doc.width, doc.height, layer, null));
+    setLayerPreview(layer.id, composeSmartCanvas(trial, doc.width, doc.height, layer, null, prefix));
     doc.touch('preview');
   };
   const result = await paramDialog({

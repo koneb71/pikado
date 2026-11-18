@@ -10,24 +10,25 @@
  * shader, so nothing crosses back into JS. The result is copied to the target
  * with `drawImage`, which stays on the GPU.
  *
- * The maths mirrors `blendCPU` exactly so the two paths agree pixel for pixel
- * (within 8-bit rounding); `blendCPU` remains the fallback when WebGL is
- * unavailable or the document exceeds the maximum texture size.
+ * Two backends, tried in order:
+ *   1. WebGPU, on the device every other GPU module shares (gpu-device.js),
+ *      running the WGSL in gpu-blend-wgsl.js;
+ *   2. WebGL2, its own context, for browsers without WebGPU (Firefox on macOS
+ *      and Linux, blocklisted adapters, and the moments before the WebGPU
+ *      device exists). Created only the first time WebGPU declines.
+ * Both mirror `blendCPU` and round where it rounds, so the paths agree pixel
+ * for pixel within 8-bit rounding; `blendCPU` remains the fallback when neither
+ * is available or the document exceeds the maximum texture size.
  */
 
-/** mode id -> shader branch. Must match the switch in FRAGMENT_SRC. */
-const MODE_IDS = {
-  'linear-burn': 1,
-  'vivid-light': 2,
-  'linear-light': 3,
-  'pin-light': 4,
-  'hard-mix': 5,
-  subtract: 6,
-  divide: 7,
-  'darker-color': 8,
-  'lighter-color': 9,
-  dissolve: 10,
-};
+import { BLEND_MODE_IDS, BLEND_WGSL } from './gpu-blend-wgsl.js';
+import { WGSL_MATH } from './wgsl-math.js';
+import {
+  getGPUDevice, fitsTexture, uploadCanvas, beginPresent, endPresentTo, presentFormat, pipelineCache,
+} from './gpu-device.js';
+
+/** mode id -> shader branch. Shared by the WGSL and the GLSL below. */
+const MODE_IDS = BLEND_MODE_IDS;
 
 const VERTEX_SRC = `#version 300 es
 in vec2 aPos;
@@ -71,20 +72,36 @@ float sep(int mode, float b, float s) {
   return s;
 }
 
+// Both textures hold the canvases' own premultiplied bytes. blendCPU sees
+// those pixels through getImageData, which unpremultiplies and rounds each
+// channel to a whole byte, so do exactly that here. Leaving it to the browser's
+// WebGL upload instead rounds however that browser happens to: Safari's upload
+// and Safari's getImageData disagree, and Vivid Light, which divides by the
+// source, turned the disagreement into errors of over 170 counts.
+vec3 unpremultiply(vec4 p) {
+  float a = floor(p.a * 255.0 + 0.5);
+  if (a <= 0.0) return vec3(0.0);
+  vec3 c = floor(p.rgb * 255.0 + 0.5);
+  return min(floor(c * 255.0 / a + 0.5), vec3(255.0)) / 255.0;
+}
+
 void main() {
-  vec4 B = texture(uBase, vUV);
-  vec4 S = texture(uSrc, vUV);
+  vec4 Bp = texture(uBase, vUV);
+  vec4 Sp = texture(uSrc, vUV);
+  vec4 B = vec4(unpremultiply(Bp), Bp.a);
+  vec4 S = vec4(unpremultiply(Sp), Sp.a);
 
   float sa = S.a * uOpacity;
   float ba = B.a;
 
+  // Every result leaves premultiplied, matching the drawing buffer.
   if (uMode == 10) {                                        // dissolve
     float r = hash(gl_FragCoord.xy, uSeed);
-    outColor = (sa > 0.0 && r < sa) ? vec4(S.rgb, 1.0) : B;
+    outColor = (sa > 0.0 && r < sa) ? vec4(S.rgb, 1.0) : Bp;
     return;
   }
 
-  if (sa <= 0.0) { outColor = B; return; }
+  if (sa <= 0.0) { outColor = Bp; return; }
 
   float ra = sa + ba * (1.0 - sa);
   if (ra <= 0.0) { outColor = vec4(0.0); return; }
@@ -103,7 +120,11 @@ void main() {
   vec3 cs = S.rgb * (1.0 - ba) + blended * ba;
   vec3 rgb = (cs * sa + B.rgb * ba * (1.0 - sa)) / ra;
 
-  outColor = vec4(clamp(rgb, 0.0, 1.0), ra);
+  // blendCPU writes whole bytes through putImageData, which premultiplies them;
+  // round to bytes the same way, then premultiply for the drawing buffer.
+  vec3 rgb8 = floor(clamp(rgb, 0.0, 1.0) * 255.0 + 0.5) / 255.0;
+  float ra8 = floor(ra * 255.0 + 0.5) / 255.0;
+  outColor = vec4(rgb8 * ra8, ra8);
 }`;
 
 let gl = null;
@@ -145,7 +166,13 @@ function init() {
     glCanvas.height = 1;
     gl = glCanvas.getContext('webgl2', {
       alpha: true,
-      premultipliedAlpha: false, // we work in straight alpha, like blendCPU
+      // Premultiplied end to end. A canvas stores premultiplied pixels; asking
+      // for straight alpha made the browser unpremultiply every upload and
+      // premultiply the result again, each time rounding to 8 bits. Chrome's
+      // conversions cost ~0.04 counts on translucent pixels; Safari's cost ~0.5
+      // on average and up to 171 on Vivid Light, where the blend divides by
+      // the source. So the shader divides out alpha itself, in float.
+      premultipliedAlpha: true,
       antialias: false,
       depth: false,
       stencil: false,
@@ -205,26 +232,145 @@ function init() {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* WebGPU backend                                                      */
+/* ------------------------------------------------------------------ */
+
+const WGPU_SRC = /* wgsl */`${WGSL_MATH}${BLEND_WGSL}
+struct BlendParams { mode: u32, seed: u32, opacity: f32, _pad: f32 };
+@group(0) @binding(0) var baseT: texture_2d<f32>;
+@group(0) @binding(1) var srcT: texture_2d<f32>;
+@group(0) @binding(2) var<uniform> U: BlendParams;
+
+@vertex
+fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+  var p = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+  return vec4<f32>(p[vi], 0.0, 1.0);
+}
+
+@fragment
+fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+  let p = vec2<i32>(pos.xy);
+  let w = textureDimensions(baseT).x;
+  let rnd = pk_hash((u32(p.y) * w + u32(p.x)) ^ U.seed);
+  return pk_blend(U.mode, textureLoad(baseT, p, 0), textureLoad(srcT, p, 0), U.opacity, rnd);
+}
+`;
+
+let wgpuBroken = false;
+let lastBackend = null;
+
+function wgpuPipeline(d) {
+  const cache = pipelineCache(d);
+  let s = cache.get('blend');
+  if (s) return s;
+  d.pushErrorScope('validation');
+  const module = d.createShaderModule({ code: WGPU_SRC });
+  s = {
+    pipeline: d.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs' },
+      fragment: { module, entryPoint: 'fs', targets: [{ format: presentFormat() }] },
+      primitive: { topology: 'triangle-list' },
+    }),
+    params: d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+  };
+  d.popErrorScope().then((err) => {
+    if (err) { wgpuBroken = true; console.warn('[gpu-blend] WebGPU pipeline failed:', err.message); }
+  });
+  cache.set('blend', s);
+  return s;
+}
+
+/** The WebGPU device when it can take a `w x h` blend, else null. */
+function wgpuDeviceFor(w, h) {
+  if (wgpuBroken) return null;
+  const d = getGPUDevice();
+  return d && fitsTexture(d, w, h) ? d : null;
+}
+
+function blendOnWebGPU(d, ctx, src, id, opacity) {
+  const w = ctx.canvas.width, h = ctx.canvas.height;
+  try {
+    const s = wgpuPipeline(d);
+    // The canvases' own premultiplied bytes, unconverted: the shader rounds
+    // them as getImageData would (FRAGMENT_SRC above says why that matters).
+    const base = uploadCanvas(d, ctx.canvas, { slot: 'blend-base', premultiplied: true });
+    const srcTex = uploadCanvas(d, src, { slot: 'blend-src', premultiplied: true });
+    const params = new ArrayBuffer(16);
+    new Uint32Array(params, 0, 2).set([id, (Math.random() * 0xffffffff) >>> 0]);
+    new Float32Array(params, 8, 1)[0] = opacity;
+    d.queue.writeBuffer(s.params, 0, params);
+
+    d.pushErrorScope('validation');
+    const view = beginPresent(d, w, h);
+    const enc = d.createCommandEncoder();
+    const rp = enc.beginRenderPass({
+      colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+    });
+    rp.setPipeline(s.pipeline);
+    rp.setBindGroup(0, d.createBindGroup({
+      layout: s.pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: base.createView() },
+        { binding: 1, resource: srcTex.createView() },
+        { binding: 2, resource: { buffer: s.params } },
+      ],
+    }));
+    rp.draw(3);
+    rp.end();
+    d.queue.submit([enc.finish()]);
+    d.popErrorScope().then((err) => {
+      if (err) { wgpuBroken = true; console.warn('[gpu-blend] WebGPU disabled after a validation error:', err.message); }
+    });
+    // Replace the backdrop wholesale — the shader already produced the
+    // composited result, so compositing it again would double-apply.
+    endPresentTo(ctx);
+    return true;
+  } catch (err) {
+    console.warn('[gpu-blend] WebGPU blend failed, trying WebGL2:', err && err.message);
+    return false;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Choosing a path                                                     */
+/* ------------------------------------------------------------------ */
+
 /**
  * Below this many pixels `blendCPU` costs only a few ms, so we keep it and get
  * bit-exact results.
  *
- * Accuracy note: uploading a 2D canvas into WebGL round-trips through
- * premultiplied 8-bit alpha, which costs roughly two counts of precision on
- * partially transparent pixels. Fully opaque pixels are unaffected (measured
- * max difference 0-1). Where a mode makes a discrete choice — Hard Mix's
- * threshold, Darker/Lighter Color picking a whole pixel by luminance — that
- * small error can flip the choice, so ~0.1-0.6 % of *semi-transparent* pixels
- * differ visibly from the CPU path. Those are exact ties either way. The
- * trade is worth it: the CPU path costs ~1 s per recomposite at 12 MP.
+ * Accuracy note: the shader reads the canvases' premultiplied bytes and
+ * rounds them exactly as getImageData does, so on translucent pixels the two
+ * paths differ only where a browser's own unpremultiply rounding strays from
+ * the nearest byte — measured at ~0.04 counts on average in Chrome and Safari,
+ * 2-3 at worst, and up to ~25 at a handful of pixels for Vivid Light, which
+ * divides by the source. Fully opaque pixels are exact. Where a mode makes a
+ * discrete choice — Hard Mix's threshold, Darker/Lighter Color picking a whole
+ * pixel by luminance — a one-count difference can still flip an exact tie.
+ * The trade is worth it: the CPU path costs ~1 s per recomposite at 12 MP.
  */
 const GPU_MIN_PIXELS = 400000; // ~640x640
 
-/** Whether the GPU path can handle a surface of this size. */
+/** Whether either GPU backend can handle a surface of this size. */
 export function canBlendOnGPU(width, height) {
+  if (wgpuDeviceFor(width, height)) return true;
+  return canBlendOnWebGL(width, height);
+}
+
+function canBlendOnWebGL(width, height) {
   if (unavailable) return false;
   if (!init()) return false;
   return width <= maxTexture && height <= maxTexture;
+}
+
+/**
+ * Which backend took the last `blendOnGPU` call that returned true:
+ * 'webgpu' or 'webgl2' (null before the first). For tests and diagnostics.
+ */
+export function blendBackend() {
+  return lastBackend;
 }
 
 /** Whether the GPU path is actually worth taking for this surface. */
@@ -240,7 +386,7 @@ function upload(tex, unit, source) {
   gl.activeTexture(gl.TEXTURE0 + unit);
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); // the canvas's own bytes, unconverted
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
 }
 
@@ -257,7 +403,14 @@ export function blendOnGPU(ctx, src, mode, opacity) {
   const id = MODE_IDS[mode];
   if (id === undefined) return false;
   const w = ctx.canvas.width, h = ctx.canvas.height;
-  if (!shouldBlendOnGPU(w, h)) return false;
+  if (w * h < GPU_MIN_PIXELS) return false;
+
+  const d = wgpuDeviceFor(w, h);
+  if (d && blendOnWebGPU(d, ctx, src, id, opacity)) {
+    lastBackend = 'webgpu';
+    return true;
+  }
+  if (!canBlendOnWebGL(w, h)) return false;
 
   try {
     if (glCanvas.width !== w || glCanvas.height !== h) {
@@ -287,6 +440,7 @@ export function blendOnGPU(ctx, src, mode, opacity) {
     ctx.globalCompositeOperation = 'copy';
     ctx.drawImage(glCanvas, 0, 0);
     ctx.restore();
+    lastBackend = 'webgl2';
     return true;
   } catch (err) {
     console.warn('[gpu-blend] blend failed, falling back to CPU:', err && err.message);

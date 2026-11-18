@@ -1,11 +1,17 @@
 import { suite } from '../harness.js';
 import { createRasterLayer } from '/src/core/layer.js';
-import { compositeDocument } from '/src/render/compositor.js';
+import {
+  compositeDocument, getComposite, compositeVerifyEnabled, setCompositeVerify,
+} from '/src/render/compositor.js';
 import { blendCPU } from '/src/core/blend.js';
 import { runFilter, getFilter } from '/src/filters/registry.js';
 import { supportsCanvasFilter, blurCanvas } from '/src/render/fast-blur.js';
 import { PaintStroke } from '/src/paint/brush-engine.js';
-import { DEFAULT_STYLES } from '/src/effects/styles.js';
+import { DEFAULT_STYLES, renderers } from '/src/effects/styles.js';
+import { gpuFilterStats } from '/src/render/gpu-filters.js';
+import { createLiquifyMesh, liquifyDab, applyLiquifyMesh } from '/src/filters/distort.js';
+import { gpuReady, setGPUEnabled } from '/src/render/gpu-device.js';
+import { effectFieldOnGPU } from '/src/render/gpu-effects.js';
 import { createCanvas, ctx2d, ctx2dRead } from '/src/core/util.js';
 
 /**
@@ -185,6 +191,66 @@ suite('perf / layer effects stay cropped to the layer content', async (t) => {
     `uncropped ${MP} MP drop shadow (the control for the crop above) took ${msFull.toFixed(1)} ms (limit 900)`);
 });
 
+suite('perf / a wide drop shadow on a large shape runs on WebGPU', async (t) => {
+  // The case the GPU path exists for: a soft shadow under a shape covering half
+  // the canvas, so the effect region is ~2 MP and nothing can be cropped away.
+  // On the CPU this is a readback, the three-pass box blur and a putImageData
+  // per recomposite; on WebGPU one upload, compute passes and one draw.
+  const device = await gpuReady();
+  const doc = t.doc(W, H, '#ffffff', 'perf-shadow-gpu');
+  const shape = createRasterLayer(W, H, 'shape');
+  t.fill(shape, 'rgb(255,0,0)', 200, 150, 1400, 1050);
+  shape.styles = {
+    dropShadow: {
+      ...DEFAULT_STYLES.dropShadow,
+      enabled: true, opacity: 1, blendMode: 'normal', color: '#000000',
+      angle: 90, useGlobalLight: false, distance: 40, spread: 0, size: 80, noise: 0,
+    },
+  };
+  doc.addLayer(shape);
+
+  if (device) {
+    const probe = createCanvas(1600, 1200);
+    probe.getContext('2d'); // WebGPU will not upload a canvas that has no context
+    t.ok(effectFieldOnGPU({ w: 1600, h: 1200, src: probe },
+      { dx: 0, dy: 0, blurRadius: 80, noise: 0, color: { r: 0, g: 0, b: 0 } }) instanceof HTMLCanvasElement,
+    'WebGPU is present and takes a region this size');
+  } else {
+    t.ok(true, 'WebGPU is not available in this browser — timing the CPU path instead');
+  }
+
+  const flush = (cv) => ctx2dRead(cv).getImageData(0, 0, 1, 1);
+  compositeDocument(doc);                                            // warm-up: pipelines, buffers
+  let out = null;
+  const ms = t.time(() => { out = compositeDocument(doc); flush(out); });
+  let cpuMs = NaN;
+  if (device) {
+    setGPUEnabled(false);
+    try {
+      compositeDocument(doc);
+      cpuMs = t.time(() => flush(compositeDocument(doc)));
+    } finally {
+      setGPUEnabled(true);
+    }
+  }
+
+  t.pixel(out, 800, 600, '255,0,0,255', 'the shape itself renders');
+  // Angle 90 puts the shadow straight down by 40 px, so it ends at y = 1239,
+  // softened by a sigma-40 blur: 30 px under the shape it is still mostly dark;
+  // beside the shape at mid-height there is none.
+  const under = Number(t.px(out, 800, 1210).split(',')[0]);
+  t.lt(under, 120, `the shadow lands under the shape (red channel ${under})`);
+  t.pixel(out, 1850, 600, '255,255,255,255', 'and does not reach far to the side');
+  // Measured on developer hardware: ~6-25 ms on WebGPU, ~55-100 ms on the CPU.
+  // Each limit is several times its own path's cost. A quiet fallback to the
+  // CPU would still fit under 120 ms here, so that is caught by the "takes a
+  // region this size" assertion above and by tests/suites/gpu-effects.test.js.
+  const limit = device ? 120 : 600;
+  const path = device ? `WebGPU; CPU path ${cpuMs.toFixed(1)} ms` : 'CPU path, no WebGPU';
+  t.lt(ms, limit,
+    `wide drop shadow on a large shape at ${MP} MP took ${ms.toFixed(1)} ms (limit ${limit}, ${path})`);
+});
+
 suite('perf / one brush frame on a 3 MP layer', async (t) => {
   const doc = t.doc(W, H, 'transparent', 'perf-brush');
   const layer = doc.activeLayer();
@@ -251,9 +317,26 @@ suite('perf / copy-on-write beginEdit on a 3 MP layer', async (t) => {
 suite('perf / Canvas2D filter support and edge clamping', async (t) => {
   // Everything in the blur/effect fast paths keys off this. When it is false the
   // JS fallbacks (gaussianBlurBuffer / blurAlphaJS) run instead — correct, but
-  // ~30x slower, so the thresholds in this file assume the GPU path.
-  t.ok(supportsCanvasFilter(),
-    'supportsCanvasFilter() is true in this browser (when false, the JS fallback runs and is ~30x slower)');
+  // ~30x slower. When it is WRONGLY true the fast paths return their input
+  // unblurred, which is what Safari did while the check only asked whether the
+  // property was accepted: Safari accepts `blur(…)` and then ignores it. So the
+  // detection must agree with what a filtered draw of a large canvas really does.
+  const probe = createCanvas(400, 400);
+  const pc = ctx2d(probe);
+  pc.fillStyle = '#000000';
+  pc.fillRect(0, 0, 200, 400);
+  const drawn = createCanvas(400, 400);
+  const dc = drawn.getContext('2d');
+  dc.filter = 'blur(4px)';
+  dc.drawImage(probe, 0, 0);
+  const edgeAlpha = Number(t.px(drawn, 202, 200).split(',')[3]);
+  const reallyBlurs = edgeAlpha > 0 && edgeAlpha < 255;
+  t.eq(supportsCanvasFilter(), reallyBlurs,
+    `supportsCanvasFilter() matches what ctx.filter really does here (2 px past a hard edge: alpha ${edgeAlpha})`);
+  if (!reallyBlurs) {
+    t.ok(true, 'Canvas2D filters do not blur in this browser — the JS blur fallbacks are in use, edge-clamp checks skipped');
+    return;
+  }
 
   // The GPU path's one behavioural wrinkle: CSS blur treats outside-the-canvas
   // as transparent black, so an opaque image would fade at the border. The
@@ -269,4 +352,132 @@ suite('perf / Canvas2D filter support and edge clamping', async (t) => {
   t.lt(cornerA, 200, `precondition: without clamping the corner fades to alpha ${cornerA}`);
   t.pixel(clamped, 0, 0, '255,255,255,255', 'edge clamping keeps an opaque corner fully opaque');
   t.pixel(clamped, 200, 200, '255,255,255,255', 'and blurring a solid colour leaves the middle unchanged');
+});
+
+suite('perf / inner shadow and inner glow on a large shape run on WebGPU', async (t) => {
+  // The inner effects are the same shape of work as the drop shadow — a
+  // readback, a distance field or blur over the whole region, a putImageData —
+  // so they get the same alarm.
+  const device = await gpuReady();
+  const doc = t.doc(W, H, '#ffffff', 'perf-inner-gpu');
+  const shape = createRasterLayer(W, H, 'shape');
+  t.fill(shape, 'rgb(255,0,0)', 200, 150, 1400, 1050);
+  shape.styles = {
+    innerShadow: {
+      ...DEFAULT_STYLES.innerShadow, enabled: true, opacity: 1, blendMode: 'normal', color: '#000000',
+      distance: 0, size: 40, choke: 0.2, noise: 0, useGlobalLight: false,
+    },
+    innerGlow: { ...DEFAULT_STYLES.innerGlow, enabled: true, opacity: 0.8, blendMode: 'normal', color: '#ffffff', size: 30 },
+  };
+  doc.addLayer(shape);
+  const flush = (cv) => ctx2dRead(cv).getImageData(0, 0, 1, 1);
+  compositeDocument(doc);
+  let out = null;
+  const ms = t.time(() => { out = compositeDocument(doc); flush(out); });
+  let cpuMs = NaN;
+  if (device) {
+    setGPUEnabled(false);
+    try {
+      compositeDocument(doc);
+      cpuMs = t.time(() => flush(compositeDocument(doc)));
+    } finally {
+      setGPUEnabled(true);
+    }
+  } else {
+    t.ok(true, 'WebGPU is not available in this browser — timing the CPU path instead');
+  }
+  t.pixel(out, 900, 675, '255,0,0,255', 'the middle of the shape is untouched');
+  const edge = t.px(out, 205, 675).split(',').map(Number);
+  t.ok(edge[0] < 250 || edge[1] > 5, `the inner effects change the shape just inside its edge (${edge.join(',')})`);
+  t.pixel(out, 100, 675, '255,255,255,255', 'and nothing is drawn outside it');
+  // Measured on developer hardware: ~10-30 ms on WebGPU, ~150-250 ms on the CPU.
+  const limit = device ? 150 : 1500;
+  const path = device ? `WebGPU; CPU path ${cpuMs.toFixed(1)} ms` : 'CPU path, no WebGPU';
+  t.lt(ms, limit, `inner shadow + inner glow at ${MP} MP took ${ms.toFixed(1)} ms (limit ${limit}, ${path})`);
+});
+
+suite('perf / twirl, Liquify and Camera Raw at 3 MP run on WebGPU', async (t) => {
+  const device = await gpuReady();
+  if (!device) t.ok(true, 'WebGPU is not available in this browser — timing the CPU paths instead');
+  const base = new ImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      base.data[i] = (x * 255) / W; base.data[i + 1] = (y * 255) / H; base.data[i + 2] = ((x ^ y) & 64) ? 200 : 60;
+      base.data[i + 3] = 255;
+    }
+  }
+  const clone = () => new ImageData(new Uint8ClampedArray(base.data), W, H);
+  const mesh = createLiquifyMesh();
+  liquifyDab(mesh, { u: 0.5, v: 0.5, mode: 'bloat', radius: 500, pressure: 1, aspectW: W, aspectH: H });
+  const jobs = [
+    ['twirl 200°', () => runFilter('twirl', clone(), { angle: 200 }), (img) => img.data[0] === base.data[0],
+      'the corner, outside the twirl, is untouched'],
+    ['Liquify', () => applyLiquifyMesh(clone(), mesh), (img) => img.data[0] === base.data[0],
+      'a corner far from the dab is untouched'],
+    ['Camera Raw', () => runFilter('camera-raw', clone(), { exposure: 0.6, clarity: 40, vibrance: 30 }),
+      (img) => img.data[(750 * W + 1000) * 4 + 1] > base.data[(750 * W + 1000) * 4 + 1],
+      'exposure +0.6 brightens the middle'],
+  ];
+  for (const [label, job, check, what] of jobs) {
+    job(); // warm-up: pipelines
+    const before = gpuFilterStats().runs;
+    let out = null;
+    const ms = t.time(() => { out = job(); });
+    if (device) t.gt(gpuFilterStats().runs, before, `${label}: ran on WebGPU`);
+    t.ok(check(out), `${label}: ${what}`);
+    // Measured on developer hardware: ~20-60 ms each on WebGPU; the CPU loops
+    // take ~150-900 ms.
+    const limit = device ? 400 : 4000;
+    t.lt(ms, limit, `${label} at ${MP} MP took ${ms.toFixed(1)} ms (limit ${limit})`);
+  }
+});
+
+suite('perf / painting beside a shadowed layer reuses its effects', async (t) => {
+  // The effect cache's reason to exist: a brush frame on one layer used to
+  // re-run every other styled layer's effects. Here no renderer may run at all
+  // while painting next to a shadowed, stroked layer, and a frame stays cheap.
+  const doc = t.doc(W, H, '#ffffff', 'perf-fx-cache');
+  const S = createRasterLayer(W, H, 'styled');
+  t.fill(S, 'rgb(40,90,200)', 300, 250, 1200, 900);
+  S.styles = {
+    dropShadow: { ...DEFAULT_STYLES.dropShadow, enabled: true, size: 60, distance: 20 },
+    stroke: { ...DEFAULT_STYLES.stroke, enabled: true, size: 8, position: 'outside' },
+    innerGlow: { ...DEFAULT_STYLES.innerGlow, enabled: true, size: 20 },
+  };
+  doc.addLayer(S);
+  const P = doc.addLayer(createRasterLayer(W, H, 'paint'));
+  doc.commit('setup');
+  const ids = ['dropShadow', 'stroke', 'innerGlow'];
+  const originals = ids.map((id) => renderers.get(id));
+  let calls = 0;
+  ids.forEach((id, k) => renderers.set(id, (cfg, env) => { calls++; return originals[k](cfg, env); }));
+  // Verify mode re-renders every live composite from scratch; not while counting.
+  const verifying = compositeVerifyEnabled();
+  setCompositeVerify(false);
+  try {
+    getComposite(doc);
+    calls = 0;
+    doc.beginEdit(P);
+    const frames = [];
+    for (let f = 0; f < 5; f++) {
+      P.canvas.getContext('2d').fillRect(100 + f * 60, 1300, 50, 50);
+      doc.touch('paint');
+      frames.push(t.time(() => ctx2dRead(getComposite(doc)).getImageData(0, 0, 1, 1)));
+    }
+    doc.commit('paint');
+    t.eq(calls, 0, 'five frames of painting beside the styled layer ran none of its renderers');
+    const live = ctx2dRead(getComposite(doc)).getImageData(0, 0, W, H).data;
+    const fresh = ctx2dRead(compositeDocument(doc)).getImageData(0, 0, W, H).data;
+    let same = live.length === fresh.length;
+    for (let i = 0; same && i < live.length; i++) if (live[i] !== fresh[i]) same = false;
+    t.ok(same, 'and the live composite is exactly a fresh render');
+    frames.sort((a, b) => a - b);
+    // Measured on developer hardware: ~5-15 ms a frame; re-running the three
+    // effects instead costs ~60-200 ms.
+    t.lt(frames[2], 60, `a painting frame took ${frames[2].toFixed(1)} ms (median of 5, limit 60)`);
+  } finally {
+    ids.forEach((id, k) => renderers.set(id, originals[k]));
+    setCompositeVerify(verifying);
+  }
 });
