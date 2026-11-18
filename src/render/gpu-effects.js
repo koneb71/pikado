@@ -1,6 +1,8 @@
 import { createCanvas } from '../core/util.js';
 import { WGSL_MATH } from './wgsl-math.js';
-import { encodeDistance, distanceCap, MAX_DISTANCE_CAP, DT_GROW, DT_GLOW_EDGE } from './gpu-distance.js';
+import {
+  encodeDistance, distanceCap, MAX_DISTANCE_CAP, DT_GROW, DT_GLOW_EDGE, DT_DIST,
+} from './gpu-distance.js';
 import { gaussianKernel } from '../filters/registry.js';
 import {
   getGPUDevice, gpuGeneration, fitsTexture, fitsStorage,
@@ -48,6 +50,9 @@ const CLAMP_OFFSET = 2;     // extract: clamp the shifted read instead of zero-f
 const CLAMP_BLUR = 4;       // gauss: clamp at the region's border instead of zero
 const CLIP = 8;             // final: field * alpha (inner effects), not field * (1 - alpha)
 const RAMP_AFTER_NOISE = 16; // final: a gradient's ramp follows the noisy field (inner glow)
+const INVERT_FIELD = 32;    // final: 255 - field before anything else (satin's Invert)
+const NO_MATTE = 64;        // final: neither clip nor knock out (stroke)
+const SATIN = 128;          // extract: |alpha at -offset - alpha at -offset2|, zeros shifted in
 
 const PARAMS_WGSL = /* wgsl */`
 struct Params {
@@ -58,7 +63,9 @@ struct Params {
   noise: f32,
   flags: u32,
   color: vec3<f32>, // 0..255
-  _pad1: f32,
+  mode: u32,        // stroke position: 0 inside, 1 centre, 2 outside
+  dx2: i32, dy2: i32, // satin's second offset
+  _p0: u32, _p1: u32,
 };
 `;
 
@@ -80,7 +87,15 @@ fn main(@builtin(global_invocation_id) g: vec3<u32>) {
   var sx = i32(g.x) - P.dx;
   var sy = i32(g.y) - P.dy;
   var v = 0.0;
-  if ((P.flags & ${CLAMP_OFFSET}u) != 0u) {
+  if ((P.flags & ${SATIN}u) != 0u) {
+    var a1 = 0.0;
+    var a2 = 0.0;
+    let tx = i32(g.x) - P.dx2;
+    let ty = i32(g.y) - P.dy2;
+    if (sx >= 0 && sy >= 0 && sx < i32(P.w) && sy < i32(P.h)) { a1 = a255(sx, sy); }
+    if (tx >= 0 && ty >= 0 && tx < i32(P.w) && ty < i32(P.h)) { a2 = a255(tx, ty); }
+    v = abs(a1 - a2);
+  } else if ((P.flags & ${CLAMP_OFFSET}u) != 0u) {
     v = a255(clamp(sx, 0, i32(P.w) - 1), clamp(sy, 0, i32(P.h) - 1));
   } else if (sx >= 0 && sy >= 0 && sx < i32(P.w) && sy < i32(P.h)) {
     v = a255(sx, sy);
@@ -175,13 +190,16 @@ fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   let i = u32(pos.y) * P.w + u32(pos.x);
-  let f = field[i];
+  var f = field[i];
+  if ((P.flags & ${INVERT_FIELD}u) != 0u) { f = 255.0 - f; }
   var v = f;
   if (P.noise > 0.0) { v = v * (1.0 - P.noise * pk_hash(i)); }
   // Outer glow's gradient follows the field before noise; inner glow's after.
   var rampFrom = f;
   if ((P.flags & ${RAMP_AFTER_NOISE}u) != 0u) { rampFrom = v; }
-  if ((P.flags & ${CLIP}u) != 0u) {
+  if ((P.flags & ${NO_MATTE}u) != 0u) {
+    // the field already is the coverage (stroke)
+  } else if ((P.flags & ${CLIP}u) != 0u) {
     v = v * (alphaBuf[i] / 255.0);
   } else {
     v = v * (1.0 - alphaBuf[i] / 255.0);
@@ -198,6 +216,122 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   // Uint8ClampedArray rounds half to even, as WGSL round() does.
   let a8 = round(clamp(a, 0.0, 255.0)) / 255.0;
   return vec4<f32>(round(clamp(rgb, vec3(0.0), vec3(255.0))) / 255.0 * a8, a8);
+}
+`;
+
+/**
+ * Stroke's band, from the grown fields: inside = alpha - shrink(size),
+ * centre = grow(size/2) - shrink(size/2), outside = grow(size) - alpha.
+ * shrink(r) is 255 - grow(r) measured from the outside (seeds <= 127), which
+ * is what spreadField's shrink is.
+ */
+const STROKE_BAND_WGSL = /* wgsl */`${PARAMS_WGSL}
+@group(0) @binding(0) var<storage, read> grownAbove: array<f32>;   // fieldC (centre only)
+@group(0) @binding(1) var<storage, read_write> field: array<f32>;  // fieldA
+@group(0) @binding(2) var<storage, read> alphaBuf: array<f32>;
+@group(0) @binding(3) var<uniform> P: Params;
+
+@compute @workgroup_size(${WG}, ${WG})
+fn main(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (g.x >= P.w || g.y >= P.h) { return; }
+  let i = g.y * P.w + g.x;
+  let a = alphaBuf[i];
+  let f = field[i];
+  var band = 0.0;
+  if (P.mode == 0u) { band = a - (255.0 - f); }
+  else if (P.mode == 1u) { band = grownAbove[i] - (255.0 - f); }
+  else { band = f - a; }
+  field[i] = max(0.0, band);
+}
+`;
+
+const BEVEL_PARAMS_WGSL = /* wgsl */`
+struct Bevel {
+  w: u32, h: u32,
+  style: u32,       // 0 inner, 1 outer, 2 emboss, 3 pillow emboss
+  _p: u32,
+  size: f32, depth: f32, lz: f32, hiRange: f32,
+  lx: f32, ly: f32, shRange: f32, hiOp: f32,
+  hiColor: vec3<f32>, shOp: f32,
+  shColor: vec3<f32>, _q: f32,
+};
+`;
+
+/** signedDistance, the style's height (x 255, ready to blur) and the coverage mask. */
+const BEVEL_HEIGHT_WGSL = /* wgsl */`${BEVEL_PARAMS_WGSL}
+@group(0) @binding(0) var<storage, read_write> inner: array<f32>;  // fieldC: din in, mask out
+@group(0) @binding(1) var<storage, read_write> outer: array<f32>;  // fieldA: dout in, height out
+@group(0) @binding(2) var<storage, read> alphaBuf: array<f32>;
+@group(0) @binding(3) var<uniform> B: Bevel;
+
+@compute @workgroup_size(${WG}, ${WG})
+fn main(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (g.x >= B.w || g.y >= B.h) { return; }
+  let i = g.y * B.w + g.x;
+  let din = inner[i];
+  let dout = outer[i];
+  let a = alphaBuf[i];
+  var sd: f32;
+  if (din <= 1.5 && dout <= 1.5) { sd = a / 255.0 - 0.5; }
+  else if (din > 0.0) { sd = din - 0.5; }
+  else { sd = 0.5 - dout; }
+  var ht: f32;
+  if (B.style == 1u) { ht = clamp(1.0 + sd / B.size, 0.0, 1.0); }
+  else if (B.style == 2u) { ht = clamp(0.5 + sd / (2.0 * B.size), 0.0, 1.0); }
+  else if (B.style == 3u) { ht = clamp(abs(sd) / B.size, 0.0, 1.0); }
+  else { ht = clamp(sd / B.size, 0.0, 1.0); }
+  let grown = clamp((B.size - dout + 0.5) * 255.0, 0.0, 255.0);
+  var m = grown;
+  if (B.style == 0u) { m = a; } else if (B.style == 1u) { m = max(0.0, grown - a); }
+  outer[i] = ht * 255.0;
+  inner[i] = m;
+}
+`;
+
+/** Normals from the blurred height, the light, and the two tones, as one premultiplied canvas. */
+const BEVEL_FINAL_WGSL = /* wgsl */`${BEVEL_PARAMS_WGSL}
+@group(0) @binding(0) var<storage, read> height: array<f32>;  // fieldA, x 255
+@group(0) @binding(1) var<storage, read> mask: array<f32>;    // fieldC
+@group(0) @binding(2) var<uniform> B: Bevel;
+
+@vertex
+fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+  var p = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+  return vec4<f32>(p[vi], 0.0, 1.0);
+}
+
+fn H(x: i32, y: i32) -> f32 {
+  let cx = clamp(x, 0, i32(B.w) - 1);
+  let cy = clamp(y, 0, i32(B.h) - 1);
+  return height[u32(cy) * B.w + u32(cx)] / 255.0;
+}
+
+@fragment
+fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+  let x = i32(pos.x);
+  let y = i32(pos.y);
+  let m = mask[u32(y) * B.w + u32(x)];
+  if (m <= 0.0) { return vec4<f32>(0.0); }
+  let gx = ((H(x + 1, y) - H(x - 1, y)) / 2.0) * B.depth;
+  let gy = ((H(x, y + 1) - H(x, y - 1)) / 2.0) * B.depth;
+  let len = sqrt(gx * gx + gy * gy + 1.0);
+  let ndotl = (-gx * B.lx - gy * B.ly + B.lz) / len;
+  let delta = ndotl - B.lz;
+  var tone: f32;
+  var color: vec3<f32>;
+  var op: f32;
+  if (delta > 0.0) {
+    tone = 255.0 * clamp(delta / B.hiRange, 0.0, 1.0) * (m / 255.0);
+    color = B.hiColor; op = B.hiOp;
+  } else {
+    tone = 255.0 * clamp(-delta / B.shRange, 0.0, 1.0) * (m / 255.0);
+    color = B.shColor; op = B.shOp;
+  }
+  // alphaToCanvas stores the tone as a byte; drawing it at the tone's opacity
+  // scales that byte.
+  let a8 = round(clamp(tone, 0.0, 255.0));
+  let a = round(a8 * clamp(op, 0.0, 1.0)) / 255.0;
+  return vec4<f32>(round(clamp(color, vec3(0.0), vec3(255.0))) / 255.0 * a, a);
 }
 `;
 
@@ -219,6 +353,7 @@ function setup(d) {
   if (state && state.gen === gpuGeneration() && state.device === d) return state;
   d.pushErrorScope('validation');
   const finalModule = d.createShaderModule({ code: FINAL_WGSL });
+  const bevelModule = d.createShaderModule({ code: BEVEL_FINAL_WGSL });
   const s = {
     gen: gpuGeneration(),
     device: d,
@@ -233,11 +368,20 @@ function setup(d) {
       fragment: { module: finalModule, entryPoint: 'fs', targets: [{ format: presentFormat() }] },
       primitive: { topology: 'triangle-list' },
     }),
-    params: d.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+    strokeBand: compute(d, STROKE_BAND_WGSL),
+    bevelHeight: compute(d, BEVEL_HEIGHT_WGSL),
+    bevelFinal: d.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module: bevelModule, entryPoint: 'vs' },
+      fragment: { module: bevelModule, entryPoint: 'fs', targets: [{ format: presentFormat() }] },
+      primitive: { topology: 'triangle-list' },
+    }),
+    params: d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+    bevel: d.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
     kern: d.createBuffer({ size: 64 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }),
     lut: d.createBuffer({ size: 256 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }),
     fieldBytes: 0,
-    alphaBuf: null, fieldA: null, fieldB: null,
+    alphaBuf: null, fieldA: null, fieldB: null, fieldC: null,
   };
   d.popErrorScope().then((err) => {
     if (err) { broken = true; console.warn('[gpu-effects] pipeline creation failed:', err.message); }
@@ -247,12 +391,12 @@ function setup(d) {
 }
 
 /**
- * Grow (never shrink) the three field buffers to hold `bytes` each — about
- * 12 bytes a pixel of the largest region seen, ~150 MB after a 12 MP effect.
+ * Grow (never shrink) the four field buffers to hold `bytes` each — about
+ * 16 bytes a pixel of the largest region seen, ~190 MB after a 12 MP effect.
  */
 function ensureFields(s, bytes) {
   if (s.fieldBytes >= bytes) return;
-  for (const k of ['alphaBuf', 'fieldA', 'fieldB']) {
+  for (const k of ['alphaBuf', 'fieldA', 'fieldB', 'fieldC']) {
     if (s[k]) s[k].destroy();
     s[k] = s.device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE });
   }
@@ -279,24 +423,29 @@ function blurPlan(radius) {
 }
 
 /**
- * Render a drop shadow, outer glow, inner shadow or inner glow for the region
- * in `env`.
+ * Render an effect for the region in `env` on the GPU.
  *
  * @param {{w:number, h:number, src:HTMLCanvasElement}} env  the renderer environment
  * @param {object} p
- * @param {'outer'|'innerShadow'|'innerGlow'} [p.kind='outer']  'outer' is a drop
- *   shadow or an outer glow (they differ only in offset and fill)
+ * @param {'outer'|'innerShadow'|'innerGlow'|'satin'|'strokeBand'|'bevel'} [p.kind='outer']
+ *   'outer' is a drop shadow or an outer glow (they differ only in offset and fill)
  * @param {number} [p.dx] @param {number} [p.dy]  the whole-pixel offset, from
- *   `offsetVector` (outer: zeros shift in; inner shadow: edges clamp)
+ *   `offsetVector` (outer and satin: zeros shift in; inner shadow: edges clamp)
+ * @param {number} [p.dx2] @param {number} [p.dy2]  satin's second offset
  * @param {number} [p.spread]  Spread (outer) or Choke (inner shadow), in px
- * @param {number} p.blurRadius  what the CPU passes to blurField
+ * @param {number} [p.blurRadius]  what the CPU passes to blurField
  * @param {number} [p.size] @param {number} [p.span] @param {boolean} [p.fromCenter]
- *   inner glow's falloff, as its renderer computes them
- * @param {number} p.noise  0..1
- * @param {{r:number,g:number,b:number}} p.color
+ *   inner glow's falloff, as its renderer computes them; for a stroke, its size
+ * @param {'inside'|'center'|'outside'} [p.position]  stroke
+ * @param {boolean} [p.invert]  satin
+ * @param {object} [p.bevel]  bevel: {style, size, depth, lx, ly, lz, hiColor,
+ *   hiOp, shColor, shOp} as the renderer computes them
+ * @param {number} [p.noise]  0..1
+ * @param {{r:number,g:number,b:number}} [p.color]
  * @param {{r,g,b,a}|null} [p.lut]  from `gradientLUT`, for a gradient fill
  * @returns {HTMLCanvasElement|null} the coloured effect, region sized, or null
- *   for "use the CPU path".
+ *   for "use the CPU path". A stroke band with no colour comes back black,
+ *   ready to cut a gradient or pattern fill with.
  */
 export function effectFieldOnGPU(env, p) {
   if (broken) return null;
@@ -310,31 +459,46 @@ export function effectFieldOnGPU(env, p) {
   if (blur && blur.kind === 'gauss' && blur.kernel.length > 64) return null;
 
   const kind = p.kind || 'outer';
-  const inner = kind !== 'outer';
-  let dist = null;
+  const inner = kind === 'innerShadow' || kind === 'innerGlow';
+  // Distance passes: [{mode, cap, seedsAbove, rad?, out: 'A'|'C'}]
+  const dists = [];
   if (kind === 'innerGlow') {
-    dist = { mode: DT_GLOW_EDGE, cap: distanceCap(p.size), seedsAbove: false };
-  } else if (p.spread > 0) {
-    dist = { mode: DT_GROW, cap: distanceCap(p.spread), seedsAbove: true, rad: p.spread };
+    dists.push({ mode: DT_GLOW_EDGE, cap: distanceCap(p.size), seedsAbove: false, out: 'A' });
+  } else if (kind === 'strokeBand') {
+    const r = p.position === 'center' ? p.size / 2 : p.size;
+    if (p.position === 'center') {
+      dists.push({ mode: DT_GROW, cap: distanceCap(r), seedsAbove: true, rad: r, out: 'C' });
+    }
+    dists.push({ mode: DT_GROW, cap: distanceCap(r), seedsAbove: p.position === 'outside', rad: r, out: 'A' });
+  } else if (kind === 'bevel') {
+    const cap = distanceCap(p.bevel.size);
+    dists.push({ mode: DT_DIST, cap, seedsAbove: false, out: 'C' }); // din
+    dists.push({ mode: DT_DIST, cap, seedsAbove: true, out: 'A' });  // dout
+  } else if (kind !== 'satin' && p.spread > 0) {
+    dists.push({ mode: DT_GROW, cap: distanceCap(p.spread), seedsAbove: true, rad: p.spread, out: 'A' });
   }
-  if (dist && dist.cap > MAX_DISTANCE_CAP) return null;
+  if (dists.some((x) => x.cap > MAX_DISTANCE_CAP)) return null;
 
   let flags = 0;
   if (kind === 'innerShadow') flags |= INVERT | CLAMP_OFFSET;
   if (inner) flags |= CLAMP_BLUR | CLIP;
   if (kind === 'innerGlow') flags |= RAMP_AFTER_NOISE;
+  if (kind === 'satin') flags |= SATIN | CLIP | (p.invert ? INVERT_FIELD : 0);
+  if (kind === 'strokeBand') flags |= NO_MATTE;
+  if (kind === 'bevel') flags |= CLAMP_BLUR;
 
   try {
     const s = setup(d);
     ensureFields(s, w * h * 4);
 
-    const params = new ArrayBuffer(48);
+    const params = new ArrayBuffer(64);
     const u = new Uint32Array(params);
     const i = new Int32Array(params);
     const f = new Float32Array(params);
+    const shift = kind === 'outer' || kind === 'innerShadow' || kind === 'satin';
     u[0] = w; u[1] = h;
-    i[2] = kind === 'innerGlow' ? 0 : p.dx | 0;
-    i[3] = kind === 'innerGlow' ? 0 : p.dy | 0;
+    i[2] = shift ? p.dx | 0 : 0;
+    i[3] = shift ? p.dy | 0 : 0;
     i[4] = blur ? blur.kr : 0;
     u[5] = p.lut ? 1 : 0;
     f[6] = p.noise > 0 ? p.noise : 0;
@@ -342,6 +506,9 @@ export function effectFieldOnGPU(env, p) {
     f[8] = p.color ? p.color.r : 0;
     f[9] = p.color ? p.color.g : 0;
     f[10] = p.color ? p.color.b : 0;
+    u[11] = p.position === 'inside' ? 0 : p.position === 'center' ? 1 : 2;
+    i[12] = p.dx2 | 0;
+    i[13] = p.dy2 | 0;
     d.queue.writeBuffer(s.params, 0, params);
     if (blur && blur.kind === 'gauss') d.queue.writeBuffer(s.kern, 0, blur.kernel);
     if (p.lut) {
@@ -351,6 +518,7 @@ export function effectFieldOnGPU(env, p) {
       }
       d.queue.writeBuffer(s.lut, 0, L);
     }
+    if (kind === 'bevel') d.queue.writeBuffer(s.bevel, 0, bevelParams(w, h, p.bevel));
 
     d.pushErrorScope('validation');
     const tex = uploadCanvas(d, src);
@@ -367,18 +535,30 @@ export function effectFieldOnGPU(env, p) {
     pass.setBindGroup(0, bg(s.extract, [tex.createView(), buf(s.alphaBuf), buf(s.fieldA), buf(s.params)]));
     pass.dispatchWorkgroups(gx, gy);
 
-    // Spread / Choke grow the extracted field; Inner Glow builds its falloff
-    // from the layer's alpha. Either way the result lands in fieldA.
-    if (dist) {
+    // Spread / Choke grow the extracted field; Inner Glow builds its falloff,
+    // a stroke its grown fields and a bevel its two distances, all from the
+    // layer's alpha.
+    for (const x of dists) {
+      const fromAlpha = kind === 'innerGlow' || kind === 'strokeBand' || kind === 'bevel';
       encodeDistance(d, pass, {
-        src: dist.mode === DT_GLOW_EDGE ? s.alphaBuf : s.fieldA,
+        src: fromAlpha ? s.alphaBuf : s.fieldA,
         g: s.fieldB,
-        out: s.fieldA,
+        out: x.out === 'C' ? s.fieldC : s.fieldA,
         alpha: s.alphaBuf,
       }, {
-        w, h, mode: dist.mode, cap: dist.cap, seedsAbove: dist.seedsAbove,
-        rad: dist.rad, size: p.size, span: p.span, invert: !!p.fromCenter,
+        w, h, mode: x.mode, cap: x.cap, seedsAbove: x.seedsAbove,
+        rad: x.rad, size: p.size, span: p.span, invert: !!p.fromCenter,
       });
+    }
+    if (kind === 'strokeBand') {
+      pass.setPipeline(s.strokeBand);
+      pass.setBindGroup(0, bg(s.strokeBand, [buf(s.fieldC), buf(s.fieldA), buf(s.alphaBuf), buf(s.params)]));
+      pass.dispatchWorkgroups(gx, gy);
+    }
+    if (kind === 'bevel') {
+      pass.setPipeline(s.bevelHeight);
+      pass.setBindGroup(0, bg(s.bevelHeight, [buf(s.fieldC), buf(s.fieldA), buf(s.alphaBuf), buf(s.bevel)]));
+      pass.dispatchWorkgroups(gx, gy);
     }
 
     // Every blur ends back in fieldA, which is what the final pass reads.
@@ -407,8 +587,13 @@ export function effectFieldOnGPU(env, p) {
     const rp = enc.beginRenderPass({
       colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
     });
-    rp.setPipeline(s.final);
-    rp.setBindGroup(0, bg(s.final, [buf(s.fieldA), buf(s.alphaBuf), buf(s.lut), buf(s.params)]));
+    if (kind === 'bevel') {
+      rp.setPipeline(s.bevelFinal);
+      rp.setBindGroup(0, bg(s.bevelFinal, [buf(s.fieldA), buf(s.fieldC), buf(s.bevel)]));
+    } else {
+      rp.setPipeline(s.final);
+      rp.setBindGroup(0, bg(s.final, [buf(s.fieldA), buf(s.alphaBuf), buf(s.lut), buf(s.params)]));
+    }
     rp.draw(3);
     rp.end();
     d.queue.submit([enc.finish()]);
@@ -421,6 +606,20 @@ export function effectFieldOnGPU(env, p) {
     console.warn('[gpu-effects] failed, using the CPU path:', err && err.message);
     return null;
   }
+}
+
+/** The Bevel uniform, laid out as BEVEL_PARAMS_WGSL. */
+function bevelParams(w, h, b) {
+  const buf = new ArrayBuffer(80);
+  const u = new Uint32Array(buf);
+  const f = new Float32Array(buf);
+  const STYLE = { inner: 0, outer: 1, emboss: 2, 'pillow-emboss': 3 };
+  u[0] = w; u[1] = h; u[2] = STYLE[b.style] ?? 0;
+  f[4] = b.size; f[5] = b.depth; f[6] = b.lz; f[7] = Math.max(0.001, 1 - b.lz);
+  f[8] = b.lx; f[9] = b.ly; f[10] = Math.max(0.001, b.lz); f[11] = b.hiOp;
+  f[12] = b.hiColor.r; f[13] = b.hiColor.g; f[14] = b.hiColor.b; f[15] = b.shOp;
+  f[16] = b.shColor.r; f[17] = b.shColor.g; f[18] = b.shColor.b;
+  return buf;
 }
 
 /** True once a validation error has switched the GPU effects off for this session. */

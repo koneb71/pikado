@@ -772,6 +772,58 @@ suite('effects / an inner shadow does not depend on the crop', async (t) => {
 
 /* ================================================================== */
 
+suite('effects / a bevel keeps its width on a large layer', async (t) => {
+  // The bevel's height field runs 0..1, and Chrome blurs regions this size
+  // through Canvas2D's blur, which works in bytes: every height rounded to 0
+  // or 1 and the bevel collapsed to a line one or two pixels wide. Verified to
+  // fail before the bevel blurred its height in float: the lit span across
+  // the left edge was 2 px instead of 17. (Safari has no canvas blur, so its
+  // JS kernel never had the problem.)
+  const { doc, layer } = fxDoc(t, { size: 700, rect: [150, 150, 400, 400], shape: '#808080' });
+  only(layer, 'bevelEmboss', {
+    style: 'inner', technique: 'smooth', size: 12, depth: 1, direction: 'up', soften: 0,
+    useGlobalLight: false, angle: 180, altitude: 30, highlightMode: 'normal', highlightOpacity: 1,
+    shadowMode: 'normal', shadowOpacity: 1,
+  });
+  const cv = compositeDocument(doc);
+  // Light from the left (180°): the left inner edge is the lit one.
+  let lit = 0;
+  for (let x = 150; x < 190; x++) if (r(t, cv, x, 350) > 140) lit++;
+  t.gt(lit, 6, `the lit band inside the left edge is ${lit} px wide, not a hairline`);
+  t.eq(t.px(cv, 350, 350), '128,128,128,255', 'the middle of the shape is untouched');
+});
+
+/* ================================================================== */
+
+suite('effects / the overlays never read the layer back', async (t) => {
+  // Colour, gradient and pattern overlays are the layer's shape filled; they
+  // clip the fill to the layer with destination-in instead of reading its
+  // alpha out and writing it back. Verified to fail with the old alphaToCanvas
+  // renderers: each read env.alpha once.
+  const env = (() => {
+    const c = document.createElement('canvas');
+    c.width = 200; c.height = 120;
+    const x = c.getContext('2d');
+    x.fillStyle = '#123456';
+    x.fillRect(40, 20, 100, 70);
+    let reads = 0;
+    return { w: 200, h: 120, src: c, layer: {}, doc: {}, styles: {}, globalLight: 120,
+      get alpha() { reads++; return new Float32Array(200 * 120); }, reads: () => reads };
+  })();
+  const outs = [
+    renderers.get('colorOverlay')({ ...defaultStyle('colorOverlay'), enabled: true, color: '#ff0000' }, env),
+    renderers.get('gradientOverlay')({ ...defaultStyle('gradientOverlay'), enabled: true }, env),
+    renderers.get('patternOverlay')({ ...defaultStyle('patternOverlay'), enabled: true, patternId: 'checkerboard' }, env),
+  ];
+  t.eq(env.reads(), 0, 'no overlay read env.alpha');
+  t.eq(t.px(outs[0], 60, 40), '255,0,0,255', 'the colour overlay fills the shape');
+  t.eq(t.px(outs[0], 10, 10), '0,0,0,0', 'and nothing outside it');
+  t.eq(t.px(outs[1], 10, 10), '0,0,0,0', 'the gradient overlay is clipped to the shape');
+  t.gt(Number(t.px(outs[1], 60, 40).split(',')[3]), 250, 'and fills it');
+});
+
+/* ================================================================== */
+
 suite('effects / a tiny mark must keep its effects', async (t) => {
   /**
    * REAL BUG. `effectRegion` measures the content bounds with

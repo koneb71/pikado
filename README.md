@@ -550,7 +550,8 @@ src/
   core/        document, layer, selection, history, colour, blend modes,
                smart objects, snapping, app singleton
   render/      compositor, viewport, GPU blur, and WebGPU: blend modes, layer
-               effects, distortions, Liquify, Camera Raw
+               effects, adjustment layers, filters, distortions, Liquify,
+               Camera Raw
   paint/       brush engine, patterns, gradients
   tools/       one module per toolbar group
   filters/     filter registry + implementations by menu
@@ -789,9 +790,13 @@ Measured on a 4000×3000 (12 MP) document with 8 layers — a realistic photo ed
 | Painting beside a layer with a shadow, stroke and glow, per frame | 4 ms (101 ms re-rendering its effects) |
 | Twirl / Liquify | 29 / 28 ms with WebGPU (402 / 314 ms without) |
 | Camera Raw: exposure, clarity, vibrance | 37 ms with WebGPU (1.3 s without) |
+| Composite with Curves and Hue/Saturation adjustment layers | 43 ms with WebGPU (328 ms without) |
+| Bevel & Emboss / Satin / Stroke on a shape covering a quarter of the canvas | 36 / 26 / 11 ms with WebGPU (161 / 147 / 71 ms without) |
+| Unsharp Mask / High Pass / Surface Blur | 49 / 72 / 34 ms with WebGPU (0.7 / 0.8 / 1.2 s without) |
+| Median (radius 2) / Add Noise | 40 / 29 ms with WebGPU (554 / 746 ms without) |
 | History step (copy-on-write) | 0 ms |
 
-Five things make that possible:
+Six things make that possible:
 
 - **Blend modes on the GPU.** Canvas2D implements 17 of the 27 modes natively.
   The other ten used to run per-pixel in JS over the whole document — about
@@ -806,14 +811,22 @@ Five things make that possible:
 - **Region-cropped layer effects.** Effects used to process the full document
   even for a logo covering 5% of it. They now run on the content bounds expanded
   by each effect's reach — worth about 5× on a large canvas.
-- **Shadows and glows on WebGPU.** Cropping cannot help when the shape itself is
-  large. Drop shadow, outer glow, inner shadow and inner glow on a region over
-  ~300×300 px run as compute passes (`src/render/gpu-effects.js`) — Spread and
-  Choke included, through an exact distance transform that runs there too: one
-  upload, one draw back, 4–20× faster end to end at 12 MP, within 3 counts of
-  alpha of the CPU renderer. Distortions, Liquify and Camera Raw run the same
-  way (`src/render/gpu-filters.js`), and a smart filter stack runs consecutive
-  ones as a single chain.
+- **Layer effects on WebGPU.** Cropping cannot help when the shape itself is
+  large. Drop shadow, outer glow, inner shadow, inner glow, Satin, Stroke and
+  Bevel & Emboss on a region over ~300×300 px run as compute passes
+  (`src/render/gpu-effects.js`) — Spread, Choke and every distance included,
+  through an exact distance transform that runs there too: one upload, one draw
+  back, 4–20× faster end to end at 12 MP, within 3 counts of alpha of the CPU
+  renderer. Distortions, Liquify, Camera Raw and the heavy filters (sharpening,
+  High Pass, Surface and Smart Blur, Median, Despeckle, Add Noise) run the same
+  way (`src/render/gpu-filters.js`, `gpu-image-filters.js`), and a smart filter
+  stack runs consecutive ones as a single chain.
+- **Adjustment layers on WebGPU.** An adjustment layer re-processes everything
+  below it on every redraw, brush frames included. Each pixel is now looked up
+  in a table on the GPU (`src/render/gpu-adjust.js`), and the tables are built
+  by running the adjustment's own code over every colour, so they give its
+  exact output. Adjustments that need neighbouring pixels or whole-image
+  statistics (Shadows/Highlights, Equalize, the Auto commands) stay on the CPU.
 - **Effects are kept between frames.** A layer's shadow, glow or stroke is
   re-rendered only when something it depends on changes — its pixels, its
   settings, the global light — not on every brush frame of some other layer
@@ -826,7 +839,10 @@ Safari and a few counts at worst (Vivid Light, which divides by the source, up
 to ~25 at a handful of pixels); fully opaque pixels are exact. Where a mode
 makes a discrete choice (Hard Mix's threshold, Darker/Lighter Color picking by
 luminance) an exact tie can still fall either way. Effects and filters are
-within 1–3 counts, from float32 arithmetic against the CPU's float64. Documents
+within 1–3 counts, from float32 arithmetic against the CPU's float64; where a
+filter makes a hard cut (Unsharp Mask's threshold) a pixel sitting right on it
+can go the other way. Median and Dust & Scratches are exact, and adjustment
+layers give the adjustment's own output for every opaque pixel. Documents
 under ~400k pixels (blend modes) or regions under ~90k (effects and filters)
 use the exact CPU paths regardless.
 
@@ -847,7 +863,7 @@ error:
 | `navigator.storage.persist` | asking not to be evicted under disk pressure | best effort; Safari and private windows say no |
 | Service workers | offline start, installability | needs a network to load, then works as normal |
 | WebGL2 | the ten non-native blend modes at speed, where WebGPU is missing | exact CPU path, slower on large documents |
-| WebGPU | the non-native blend modes; shadows and glows, distortions, Liquify and Camera Raw on large images | WebGL2 for blend modes; the CPU renderers and filters, many times slower on a large image |
+| WebGPU | the non-native blend modes; on large images, layer effects, adjustment layers, distortions, Liquify, Camera Raw and the heavy filters, plus Gaussian Blur where Canvas2D cannot blur | WebGL2 for blend modes; the CPU renderers, adjustments and filters, many times slower on a large image |
 | Canvas2D `filter` that actually blurs (Safari accepts the property but ignores it) | GPU Gaussian blur | JS box-blur passes |
 
 ## Contributing

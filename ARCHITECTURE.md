@@ -621,6 +621,12 @@ against a render that cannot be stale. `?verifycomposite=1` (or
 `setCompositeVerify(true)`) renders each live composite both ways and warns
 on the first pixel that differs.
 
+An adjustment layer re-processes the accumulator below it on every composite.
+`drawAdjustmentLayer` asks `adjustCanvasOnGPU` (`gpu-adjust.js`, below) for the
+adjusted canvas first and falls back to `getImageData` → `applyAdjustment` →
+`putImageData` when it returns null; the mask, clip, opacity and blend steps
+after that are the same either way.
+
 ### `src/render/viewport.js` — `Viewport`
 ```
 vp.scale offsetX offsetY rotation viewWidth viewHeight
@@ -664,6 +670,11 @@ pixels from it. Fading there weakened the shadow along every side, by up to
 when Canvas2D filters are missing **or the surface is under ~90k px**, where the
 ImageData round trip wins nothing; pass the fallback or you get an unblurred
 result on small images. Used by `filters/blur.js` and `effects/styles.js`.
+Gaussian Blur (the filter) uses this canvas blur where `supportsCanvasFilter()`
+is true; elsewhere (Safari) it runs the JS passes' maths as a WebGPU stage
+(`gpu-image-filters.js`) before falling back to the passes themselves. The
+canvas blur stays first because it is the faster of the two: 24 ms against
+47 ms at 12 MP in Chrome, most of the GPU's time being the readback.
 
 ### `src/render/gpu-blend.js` — the ten non-native blend modes
 
@@ -742,16 +753,18 @@ refuses one without), which every layer and crop buffer does. Anything cached
 against the device — pipelines, buffers — keys on `gpuGeneration()` so a lost
 device's objects are never reused.
 
-### `src/render/gpu-effects.js` — shadows and glows on WebGPU
+### `src/render/gpu-effects.js` — layer effects on WebGPU
 
 ```
 effectFieldOnGPU(env, {kind?, dx, dy, spread?, blurRadius, size?, span?, fromCenter?,
-                       noise, color, lut?}) -> canvas|null
+                       noise, color, lut?, dx2?, dy2?, invert?, position?, bevel?}) -> canvas|null
 GPU_MIN_PIXELS        gpuEffectsBroken()
 ```
 
 Same contract as `blendOnGPU`: **`null` means run the CPU renderer.** Drop
-Shadow, Outer Glow (`kind: 'outer'`), Inner Shadow and Inner Glow call it first.
+Shadow, Outer Glow (`kind: 'outer'`), Inner Shadow, Inner Glow, Satin
+(`'satin'`), Stroke (`'strokeBand'`) and Bevel & Emboss (`'bevel'`) call it
+first.
 It declines a region under `GPU_MIN_PIXELS` (the CPU is a few ms there and
 bit-exact, which is why small effect tests stay exact), a Spread, Choke or glow
 size past `MAX_DISTANCE_CAP` (256 px), anything too large for the device, and
@@ -769,8 +782,22 @@ passes above — then `noiseField` (`pk_hash`, indexed by region pixel),
 `knockOutField` or `clipField`, and the colour or gradient LUT (Inner Glow's ramp
 follows the noisy field, Outer Glow's the clean one), drawn once. Agreement with
 the CPU is within 3 counts of alpha, held by `tests/suites/gpu-effects.test.js`;
-change one side and you must change the other. The three field buffers grow to
-the largest region seen (about 12 bytes a pixel) and are kept.
+change one side and you must change the other. The four field buffers grow to
+the largest region seen (about 16 bytes a pixel) and are kept.
+
+The three later kinds reuse those passes:
+
+- **Satin** reads the alpha at two offsets (`offsetVector(angle)` and
+  `offsetVector(angle + 180)`, each rounded as the CPU rounds it), takes their
+  difference, blurs it unclamped, inverts when asked, and clips to the layer.
+- **Stroke** builds its band from the exact distance field: inside
+  `a − (255 − shrink)`, centre and outside from the grown field. A colour fill
+  is drawn here; a gradient or pattern fill keeps its CPU fill canvas and only
+  takes the band from the GPU, clipped with `destination-in`.
+- **Bevel & Emboss** turns two distance passes (inside and outside) into the
+  style's height field, blurs it clamped, takes central-difference normals
+  against the light vector, and draws highlight and shadow in one pass: the two
+  never overlap, so each pixel is one tone or the other.
 
 ### `src/render/gpu-distance.js` — the distance field on WebGPU
 
@@ -841,6 +868,69 @@ invocation, blurs as `gaussianBlurBuffer` does them (a true kernel up to sigma
 2.5, three box passes above). **Dehaze stays on the CPU**: its airlight is the
 99.9th percentile of the dark channel, a whole-image sort. The stage needs about
 32 bytes a pixel of scratch and declines when that does not fit.
+
+### `src/render/gpu-image-filters.js` — the heavy filters
+
+```
+imageFilterStage(op, options) -> stage     filterOnGPU(imageData, stage|stage[]|null) -> bool
+xorshiftJump(seed, steps)                  // Add Noise's generator, jumped ahead (for tests)
+```
+
+The `imgf` stage, one op per filter family, each mirroring the CPU function
+line for line, including where it rounds and the alpha cut-off it unpremultiplies
+with (0.4 in `unpremultiplyInto`, 0.5 in `separableConvolve`):
+
+| op | filters | mirrors |
+|---|---|---|
+| `blur` | Gaussian Blur (no canvas blur), Box Blur, Blur, Blur More | premultiply, `convolveBuffer` or box passes, unpremultiply |
+| `unsharp` | Unsharp Mask, Sharpen, Sharpen More, Sharpen Edges, Smart Sharpen (Gaussian) | `unsharpPass`: thresholds, the Sobel gate, a pixel kept where the blur's alpha is ≤ 0.4 |
+| `highpass` | High Pass | four premultiplied planes, `blurPlane`'s three boxes, the combine |
+| `range` | Surface Blur, Smart Blur (Normal) | `rangePass`: horizontal into float, vertical out to bytes |
+| `median` | Median, Dust & Scratches (radius ≤ 5) | the exact window median, selected bit by bit |
+| `despeckle` | Despeckle | SOFT3, unpremultiply, the Sobel blend back |
+| `noise` | Add Noise | `makeRandom`'s xorshift, jumped ahead to each pixel's draw |
+
+A blur plan is `{kernel}` or `{boxes}`, built by the filter from the same
+helpers its CPU path uses (`gaussianBlurPlan` in `filters/blur.js`). Add Noise's
+generator is linear over GF(2) even with its arithmetic `>> 17`, so the stage
+holds the step matrix raised to 2⁰…2²⁶ and each pixel jumps straight to its own
+draws: the CPU's sequence, draw for draw (to about 44 MP). The ops that blur
+need two float planes, 32 bytes a pixel, and decline when that does not fit.
+Declined, and so CPU-only: Median above radius 5, Smart Blur's edge modes,
+Smart Sharpen's Lens and Motion removal, and every other filter.
+
+### `src/render/gpu-adjust.js` — adjustment layers
+
+```
+adjustCanvasOnGPU(canvas, kind, params) -> canvas|null   adjustmentGPUMode(kind, params)
+gpuAdjustStats() -> {probes1d, probes3d, runs, tables3d}  clearAdjustmentTables()
+```
+
+Called by the compositor for each adjustment layer. **The tables are the
+adjustments themselves**: rather than a second implementation of each
+adjustment in WGSL, every table is built by running the adjustment's own
+`apply` over every input it can see.
+
+- `lut1d`: Levels, Curves, Brightness/Contrast, Exposure, Invert, Posterize,
+  and Color Balance and Photo Filter without Preserve Luminosity. A 256-pixel
+  grey ramp gives the three channel tables, cheap enough for every slider move.
+- `lut3d`: every other adjustment that depends only on the pixel's own colour
+  (Hue/Saturation, Vibrance, Black & White, Channel Mixer, Color Lookup,
+  Threshold, Selective Color, Desaturate, Replace Color, Gradient Map without
+  dither, HDR Toning's Exposure and Highlight methods, Color Balance and Photo
+  Filter with Preserve Luminosity). All 256³ colours as one 4096 × 4096 image
+  give a 64 MB 3D table indexed by the exact bytes. It costs about a CPU frame
+  to build, so it is built only when the same settings come round a second
+  time: dragging a slider keeps the CPU path, painting with the layer in place
+  reuses one table. At most three are kept.
+
+So the output is the adjustment's own output for those bytes, discontinuities
+included. The shader looks pixels up by what `getImageData` would return
+(`pk_unpremultiply8`), leaves alpha 0 transparent as the CPU skips it, and
+stores the result premultiplied as `putImageData` would. Shadows/Highlights,
+Equalize, HDR Toning's other methods, the Auto commands and Gradient Map with
+dither decline. Image > Adjustments (the destructive commands) still runs on
+the CPU.
 
 ---
 
@@ -1063,9 +1153,12 @@ does the same work on the GPU, null when it cannot (the CPU runs it), or
 `IDENTITY_STAGE` when its settings change nothing. The ten warp distortions and
 Liquify get theirs by running their own `apply` with `warp` set to record rather
 than draw, so the stage is built by exactly the code a direct run uses; Camera
-Raw's comes from `developPlan`. Run directly, those filters try the GPU first
-inside `apply` (`warp`, `developOnGPU`); in a smart filter stack, consecutive
-ones run as one chain (below).
+Raw's comes from `developPlan`; the heavy filters (`gpu-image-filters.js`
+above) build theirs with `imageFilterStage`. A filter may return an array of
+stages — Blur More's three passes, each rounded to bytes as on the CPU — and a
+chain takes them whole. Run directly, those filters try the GPU first inside
+`apply` (`warp`, `developOnGPU`, `filterOnGPU`); in a smart filter stack,
+consecutive ones run as one chain (below).
 
 ## Camera Raw — `src/filters/camera-raw.js`
 
@@ -1228,8 +1321,16 @@ can (`gpu-distance.js`). Select and Mask's `edgeBand` keeps its own chamfer:
 its matting is tuned to that band.
 
 `env.alpha` is read back from `env.src` **on first access**, not up front: the
-drop shadow, outer glow, inner shadow and inner glow try `effectFieldOnGPU`
-first, and when the GPU takes them the readback never happens. A renderer that needs the alpha just reads it.
+shadows, glows, Satin, Stroke and Bevel & Emboss try `effectFieldOnGPU` first,
+and when the GPU takes them the readback never happens. The three overlays
+never read it: they fill (or pattern) the region and cut it to the layer with
+`destination-in` against `env.src`, which is exactly what drawing the alpha
+field and clipping to it gave.
+
+Bevel & Emboss blurs its height field in float on the CPU too
+(`blurField(…, precise)`). Through the canvas blur it was quantised to bytes,
+and a field that runs 0..1 collapsed to a 1–2 px line on any region of 90k
+pixels or more. A renderer that needs the alpha just reads it.
 `applyLayerStyles` builds no environment at all when none of the effects it is
 asked for are enabled — the compositor calls it with `skipBelow` for every
 styled layer, so a layer with only a drop shadow would otherwise pay for a bounds
@@ -1906,7 +2007,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/io/{store,session,offline}.js` + `public/sw.js`, `public/manifest.webmanifest`
 - `src/edit/{clipboard,fill-stroke}.js`
 - `src/render/{fast-blur,gpu-blend,gpu-blend-wgsl,gpu-device,gpu-effects,gpu-distance}.js`
-- `src/render/{gpu-filters,gpu-warp,gpu-develop,wgsl-math}.js`
+- `src/render/{gpu-filters,gpu-warp,gpu-develop,gpu-image-filters,gpu-adjust,wgsl-math}.js`
 - `src/core/{distance,pixel-revision}.js`
 - `src/ui/{welcome,canvas-menu,brand,curve-editor,gradient-editor}.js`
 - `src/ui/cross-doc-drag.js` — dragging pixels between two open documents
@@ -1946,7 +2047,8 @@ tests/run.js          imports /src/main.js to boot the app, then every suite
 tests/harness.js      suite() + the assertion context
 tests/suites/*.test.js  core, compositor, distance, paint, filters, adjustments, layers,
                         effects, gpu-effects, pixel-revision, effect-cache, gpu-filters,
-                        gpu-camera-raw, gpu-chains, text-vector, io, smart, liquify,
+                        gpu-camera-raw, gpu-chains, gpu-adjustments, gpu-image-filters,
+                        text-vector, io, smart, liquify,
                         channels, select, camera-raw, animation, color-management, i18n, perf
 ```
 
