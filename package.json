@@ -34,7 +34,7 @@
     "desktop:install": "npm --prefix desktop install",
     "desktop:dev": "node desktop/scripts/dev.mjs",
     "desktop:test": "node desktop/scripts/dev.mjs --tests",
-    "desktop:unit": "node --test desktop/test/",
+    "desktop:unit": "node --test \"desktop/test/*.test.cjs\"",
     "desktop": "vite build && node desktop/scripts/dev.mjs --built",
     "desktop:build": "vite build && npm --prefix desktop run dist"
   },
