@@ -1,0 +1,23 @@
+{
+  "name": "pikado-desktop",
+  "productName": "Pikado",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pikado's desktop app: the web build in an Electron shell.",
+  "license": "MIT",
+  "author": "Neiell Care L. Paradiang",
+  "homepage": "https://github.com/koneb71/pikado#readme",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/",
+    "dist": "electron-builder --config electron-builder.config.cjs --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "electron": "45.3.4",
+    "electron-builder": "26.18.0"
+  }
+}

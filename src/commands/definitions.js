@@ -2282,7 +2282,12 @@ export const MENU_TREE = [
   },
   {
     label: 'Help',
-    items: ['help.ai-guide', '---', 'help.about', '---', 'edit.keyboard-shortcuts'],
+    items: [
+      'help.ai-guide', '---', 'help.about',
+      // Registered by src/io/desktop.js, in the desktop app only.
+      { id: 'help.check-updates', when: () => typeof window !== 'undefined' && !!window.pikadoDesktop },
+      '---', 'edit.keyboard-shortcuts',
+    ],
   },
 ];
 

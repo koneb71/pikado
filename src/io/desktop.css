@@ -1,0 +1,20 @@
+/* The desktop app (src/io/desktop.js). Nothing here applies in a browser: every
+   rule hangs off a class only the desktop bridge puts on <html>. */
+
+/* macOS: the menus live in the system menu bar, and the app bar becomes the
+   window's title strip — draggable, with room for the window buttons, which
+   desktop/main.cjs centres in its 42px. */
+html.pk-native-menu .pk-menus {
+  display: none;
+}
+html.pk-desktop-darwin #menubar {
+  padding-inline-start: 84px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+html.pk-desktop-darwin.pk-fullscreen #menubar {
+  padding-inline-start: 12px;
+}
+html.pk-desktop-darwin #menubar :is(button, a, input, select, .pk-net) {
+  -webkit-app-region: no-drag;
+}

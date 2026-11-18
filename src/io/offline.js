@@ -24,6 +24,8 @@ const ONLINE_TOAST = msg('Back online.');
 let installed = false;
 let indicator = null;
 let updateBtn = null;
+/** What the update pill does when clicked; reloading, unless the desktop app set it. */
+let updateAction = null;
 
 /** Debounce timer, so a flapping connection announces itself once. */
 let settleTimer = null;
@@ -73,6 +75,9 @@ export function installOffline() {
 
 function registerWorker() {
   if (!('serviceWorker' in navigator)) return;
+  // The desktop app ships every file with it and updates itself
+  // (src/io/desktop.js); a worker cannot run on its app:// origin anyway.
+  if (window.pikadoDesktop) return;
 
   // A worker in front of the Vite dev server is actively harmful: it answers
   // module requests from its own cache, so source edits appear to do nothing and
@@ -147,7 +152,7 @@ function buildIndicator() {
     hidden: true,
     type: 'button',
     title: tr('Reload to run the newest version of Pikado.'),
-    onclick: () => location.reload(),
+    onclick: () => (updateAction ? updateAction() : location.reload()),
   },
   el('span.pk-net-dot'),
   el('span.pk-net-label.pk-micro', { text: tr('Update ready') }));
@@ -178,4 +183,18 @@ function onNetworkChange() {
     if (state === 'offline') app.toast(tr(OFFLINE_TOAST), 'info', 5000);
     else app.toast(tr(ONLINE_TOAST), 'ok', 2000);
   }, SETTLE_MS);
+}
+
+/**
+ * Show the update pill for something other than a reloaded worker: the desktop
+ * app's downloaded update ("Restart to update") or its release page.
+ * @param {{label: string, title?: string, onClick: () => void}} opts
+ */
+export function showUpdatePill({ label, title = '', onClick }) {
+  if (!updateBtn) return;
+  const text = updateBtn.querySelector('.pk-net-label');
+  if (text) text.textContent = label;
+  updateBtn.title = title;
+  updateAction = onClick;
+  updateBtn.hidden = false;
 }

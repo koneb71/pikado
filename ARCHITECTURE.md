@@ -1900,11 +1900,14 @@ deliberately closed.
 ```
 installOffline() -> bool    // register the worker, wire the menu-bar pills; idempotent
 isOffline() -> bool         // navigator.onLine === false
+showUpdatePill({label, title?, onClick})   // the desktop app's update, in the same pill
 ```
 
 `installOffline` appends two pills to `#menubar` (an "Offline" readout and an
 "Update ready" button) — safe because `buildMenubar` only ever replaces the
-children of its own nav and title nodes.
+children of its own nav and title nodes. The desktop app registers no worker
+(its `app://` origin cannot run one, and it ships every file); it reuses the
+update pill for *Restart to update*.
 
 **Registration is production-only.** A worker in front of the Vite dev server
 answers module requests from its own cache, so source edits appear to do nothing;
@@ -1931,6 +1934,82 @@ PNG icons (iOS ignores the manifest icons, hence the `apple-touch-icon` link in
 warms `effects/styles-dialog.js`, `core/smart.js` and `ui/dialogs/smart-object.js`
 on idle — otherwise the worker would have nothing cached for them and going
 offline before opening Layer Styles would give you a 503.
+
+## Desktop app — `desktop/` and `src/io/desktop.js`
+
+The same build in an Electron window. `desktop/` is a package of its own
+(`npm run desktop:install`), so the web app's install and the Docker build never
+download Electron. `desktop/README.md` covers running, building, releasing and
+signing.
+
+**Serving.** `main.cjs` registers `app` as a privileged scheme (standard, secure,
+fetch, CORS) and answers `app://pikado/…` from the bundled `dist/` (packaged as
+`renderer/`) through `lib/protocol.cjs`, which refuses any path that would leave
+that directory. The module scripts need a real secure origin, which `file://` is
+not; on `app://` IndexedDB, File System Access, WebGPU and the clipboard behave
+as on https. The desktop app's storage is its own origin's, apart from any
+browser's.
+
+**The bridge.** `preload.cjs` (sandboxed, context-isolated, main frame only)
+exposes `window.pikadoDesktop`; its absence is how the page knows it is in a
+browser. Every IPC handler in `main.cjs` checks the sender is that frame on the
+app's origin.
+
+```
+platform  version  memoryDefaultMB  updates  nativeMenu
+ready()                         the page is listening: deliver queued files
+onOpenFiles(cb)                 cb([{token, name, bytes}]) — files from the OS
+tokenForFile(file) -> token|null   a File the user picked or dropped, if on disk
+readFile(token)  writeFile(token, bytes)  saveDialog({suggestedName, filters})
+setMenu(payload)  onMenuAction(cb)  nativeEdit(op)  setStrings(map)  onFullScreen(cb)
+onUpdateState(cb)  checkForUpdates()  installUpdate()  setAutoUpdate(bool)  openReleases(url)
+```
+
+**Files are tokens.** The page never names a path. `lib/files.cjs` mints a token
+only for a path that came from the user: the OS (Finder, Explorer, the Dock, the
+command line), the main process's own save dialog, or `webUtils.getPathForFile`
+on a real `File` (which a page cannot forge). Writes go to a temporary file that
+is then renamed over the original. On the page, `standInHandle(bridge, token,
+name)` gives a token the methods Save, Revert and Open Recent call on a File
+System Access handle (`getFile`, `createWritable`, `queryPermission`,
+`requestPermission`), so `src/io/save.js` writes through it unchanged.
+`setHandleProvider` in `src/io/open.js` attaches one to a `.pkd` opened without a
+handle, which is how *File > Open* then *Save* writes back to the file.
+
+**The macOS menu bar.** The page owns the menus. `menuSnapshot(MENU_TREE)` in
+`src/ui/menubar.js` turns the same entries the in-window menu bar draws into
+plain data — labels translated, enabled and checked states evaluated, dynamic
+sections expanded, an `actionId` on each leaf — and `src/io/desktop.js` sends it
+at most every 100 ms after any event that could change it. `lib/menu.cjs` builds
+the template: Pikado's menus, About, Settings and Check for Updates in the app
+menu, the window commands at the top of Pikado's Window menu. Only shortcuts with
+Cmd become menu shortcuts (a bare letter would fire while typing), and Hide,
+Minimize and the like give up any key Pikado already binds. A click runs the
+item; a key press the menu caught (`triggeredByAccelerator`) is **replayed into
+the page** as a keydown, so the active tool still gets first refusal exactly as
+when the page receives the key itself. In a text field the editing keys (Cmd+C,
+X, V, A, Z, Shift+Z) run the field's own command through `nativeEdit`. On macOS
+`html.pk-native-menu` hides the in-window menus and the app bar becomes the
+window's title strip (`titleBarStyle: 'hiddenInset'`). Windows and Linux have no
+system menu; the in-window one works as in a browser.
+
+A `MENU_TREE` entry may carry `when: () => boolean`; *Help > Check for Updates…*
+uses it to exist only in the desktop app.
+
+**Quitting.** The page blocks unload while it holds work autosave is not keeping;
+a browser asks, Electron would silently refuse to close. `will-prevent-unload`
+shows a native prompt with the page's translated strings (`setStrings`).
+
+**Updates.** `lib/updater.cjs` (electron-updater, GitHub Releases) runs in a
+packaged build while *Check for updates automatically* is on: at launch and
+every six hours, downloading in the background. macOS only lets a signed app
+replace itself, so a build without a certificate (`pikadoSigned` false in its
+packaged `package.json`) only checks and offers the release page.
+
+**Development and automation flags** (ignored when packaged): `--pikado-url`
+loads the Vite dev server, `--pikado-tests[=query]` runs the browser suite and
+exits with its result. `--pikado-smoke` works in any build: start, wait for
+Pikado to boot, print what it found, exit.
 
 ## `src/ui/welcome.js` — the start screen
 
@@ -2005,6 +2084,7 @@ Never write outside your own list — parallel work depends on it.
 - `src/io/{open,save,psd-read,psd-write,svg,pkd,gif}.js`
 - `src/io/{decode,heif-info,heif-read,heif-write,icns}.js` + `scripts/make-apple-fixtures.py`, `tests/fixtures/`
 - `src/io/{store,session,offline}.js` + `public/sw.js`, `public/manifest.webmanifest`
+- `desktop/` + `src/io/desktop.{js,css}` + `.github/workflows/desktop-release.yml` — the desktop app
 - `src/edit/{clipboard,fill-stroke}.js`
 - `src/render/{fast-blur,gpu-blend,gpu-blend-wgsl,gpu-device,gpu-effects,gpu-distance}.js`
 - `src/render/{gpu-filters,gpu-warp,gpu-develop,gpu-image-filters,gpu-adjust,wgsl-math}.js`
@@ -2048,7 +2128,7 @@ tests/harness.js      suite() + the assertion context
 tests/suites/*.test.js  core, compositor, distance, paint, filters, adjustments, layers,
                         effects, gpu-effects, pixel-revision, effect-cache, gpu-filters,
                         gpu-camera-raw, gpu-chains, gpu-adjustments, gpu-image-filters,
-                        text-vector, io, smart, liquify,
+                        desktop, text-vector, io, smart, liquify,
                         channels, select, camera-raw, animation, color-management, i18n, perf
 ```
 
@@ -2059,13 +2139,16 @@ language must put English back before it returns. The i18n suite's sweep opens
 every menu, every tool's options and a set of dialogs in the pseudo-language and
 fails on any English that escaped `tr()`.
 
-**Running it:** open `http://localhost:5174/tests/` on the dev server. Automation
+**Running it:** open `/tests/` on the dev server (`npm test`). Automation
 reads `window.__pikadoTests` (the full report) once `window.__pikadoTestsDone` is
 true. Run it a second time as `/tests/?webgpu=off` to take every WebGPU fallback;
 the GPU-only checks then say in a visible assertion that they were not exercised.
 `/tests/?grep=gpu|effect cache` runs only the suites whose names contain one of
 the `|`-separated terms; `/tests/?verifycomposite=1` also checks every live
-composite against a fresh render. Node is not an option: essentially every subsystem depends on working
+composite against a fresh render. `npm run desktop:test` runs the same suite
+inside the desktop app and exits with its result; `npm run desktop:unit` runs the
+main process's own tests, which do run in Node because they touch no canvas.
+Node is not an option for the suite itself: essentially every subsystem depends on working
 Canvas2D or WebGL, and a jsdom canvas would make the suite meaningless.
 `tests/index.html` boots the genuine app off-screen at 1280×860 so tool
 registration, panels, menus and `ResizeObserver` are all exercised.

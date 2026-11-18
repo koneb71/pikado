@@ -46,7 +46,10 @@ import {
 let budget = 256 * 1024 * 1024;
 
 export function setEffectCacheBudget(bytes) {
-  budget = Math.max(0, bytes | 0);
+  // Not `bytes | 0`: that is a 32-bit integer, so the 2 GiB a 4096 MB memory
+  // limit gives (the Preferences maximum) wrapped negative and became 0.
+  const n = Math.floor(Number(bytes));
+  budget = Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 export function effectCacheBudget() {

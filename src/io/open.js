@@ -240,6 +240,20 @@ async function noteProfileOf(blob, doc) {
 }
 
 /**
+ * Supplies a file handle for a `.pkd` that was opened without one, so Save
+ * writes back to it. Only the desktop app sets one (src/io/desktop.js): there a
+ * file picked in the Open dialog is a real file on disk. In a browser, File >
+ * Open yields no handle and Save asks where to save.
+ * @type {((file: File) => Promise<object|null>)|null}
+ */
+let handleProvider = null;
+
+/** @param {((file: File) => Promise<object|null>)|null} fn */
+export function setHandleProvider(fn) {
+  handleProvider = typeof fn === 'function' ? fn : null;
+}
+
+/**
  * Open a single file, dispatching on its extension and MIME type.
  * @param {File} file
  * @param {{asLayer?:boolean, doc?:PikaDocument}} [opts]
@@ -261,7 +275,8 @@ export async function openFile(file, opts = {}) {
   } else if (ext === 'pkd' || type === 'application/x-pikado') {
     doc = await loadPKD(await readFileAsArrayBuffer(file));
     if (!doc.name || doc.name === 'Untitled') doc.name = stemOf(name);
-    if (file.handle) doc.fileHandle = file.handle;
+    const handle = file.handle || (handleProvider ? await handleProvider(file).catch(() => null) : null);
+    if (handle) doc.fileHandle = handle;
   } else if (ext === 'svg' || type === 'image/svg+xml') {
     doc = await importSVG(await readFileAsText(file), stemOf(name));
   } else {

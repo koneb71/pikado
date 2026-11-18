@@ -16,6 +16,9 @@ import { setEffectCacheBudget } from '../../effects/effect-cache.js';
 
 const STORAGE_KEY = 'pikado.prefs';
 
+/** The desktop bridge (desktop/preload.cjs), or null in a browser. */
+const desktop = () => (typeof window !== 'undefined' && window.pikadoDesktop) || null;
+
 export const PREF_DEFAULTS = {
   /* General */
   /* 'auto' follows the browser's languages; otherwise a tag from LANGUAGES in
@@ -45,8 +48,10 @@ export const PREF_DEFAULTS = {
   /* History */
   historyStates: 60,
   autoPurgeHistory: true,
-  /* Performance */
-  memoryLimitMB: 512,
+  /* Performance.
+     The desktop app knows the machine's memory and defaults to a quarter of it
+     (at most 4096 MB); a browser tab has to guess, and guesses low. */
+  memoryLimitMB: (desktop() && desktop().memoryDefaultMB) || 512,
   maxDocPixels: 80,
   previewQuality: 'accurate',
   /* AI.
@@ -65,6 +70,8 @@ export const PREF_DEFAULTS = {
      someone who has only picked a font from a list. See src/text/font-manager.js. */
   webfonts: 'auto',
   webfontNoticeSeen: false,
+  /* The desktop app's update checks (src/io/desktop.js). */
+  desktopAutoUpdate: true,
   /* Guides & Grid */
   showGuides: true,
   showRulers: true,
@@ -107,6 +114,12 @@ const CATEGORIES = [
         hint: 'Fonts come from Google Fonts. Nothing of yours is sent — this is a '
           + 'download — and a family is kept once fetched, so it works offline afterwards. '
           + 'Turning it off leaves the built-in Google families showing a substitute face.',
+      },
+      {
+        key: 'desktopAutoUpdate', label: 'Check for updates automatically', type: 'checkbox',
+        hint: 'At launch and every six hours, Pikado asks GitHub whether there is a newer release '
+          + 'and downloads it in the background. Nothing of yours is sent.',
+        when: () => !!(desktop() && desktop().updates),
       },
     ],
   },
@@ -294,6 +307,7 @@ export function applyStoredPreferences() {
   // rebuilt from the layers whenever needed, so they are the first to give way.
   setEffectCacheBudget((p.memoryLimitMB || 512) * 1048576 / 2);
   app.autoPurgeHistory = !!p.autoPurgeHistory;
+  if (desktop()) desktop().setAutoUpdate(p.desktopAutoUpdate !== false);
   app.recentLimit = p.recentLimit;
   app.confirmBeforeClosing = !!p.confirmBeforeClosing;
 

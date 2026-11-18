@@ -188,7 +188,9 @@ Two things to know:
 Pikado autosaves. Open documents survive a refresh, a crash, and a laptop lid.
 There is no server and no account, and nothing is uploaded — with the single,
 opt-in exception of [Generative Fill](#generative-fill), which needs your own API
-key and asks before it sends anything.
+key and asks before it sends anything. The [desktop app](#desktop-app) adds one
+request of its own, asking GitHub whether there is a newer release, and
+Preferences turns that off.
 
 - **Where.** IndexedDB, with the metadata and the payload in *separate* object
   stores: a small record per project (name, size, layer count, timestamp,
@@ -243,6 +245,42 @@ a quiet pill in the menu bar and one reassuring line, not a red banner, because
 in an app that keeps your work locally it is not an error. When a new version has
 been fetched you get an "Update ready" button; Pikado will not reload the page on
 your behalf, since you might be halfway through a brush stroke.
+
+## Desktop app
+
+The same build also runs as a desktop app for macOS, Windows and Linux, in an
+Electron window (`desktop/`). A tagged release builds the installers for all
+three (see [desktop/README.md](desktop/README.md)); from source:
+
+```bash
+npm run desktop:install   # once: Electron and the packager, into desktop/
+npm run desktop:dev       # the app, running against the dev server
+npm run desktop:build     # installers for this machine, in desktop/release/
+```
+
+What changes outside a browser tab:
+
+- **Files open from the system.** Double-click a `.pkd`, choose Pikado under
+  *Open With* for a PSD (it never takes PSDs over from Photoshop), or drop files
+  on the Dock icon. A second launch hands its files to the window already open.
+- **Save writes back.** A `.pkd` you opened — from Finder or Explorer, or with
+  *File > Open* — saves to the same file. In a browser *File > Open* gives Pikado
+  no way back to the file, so Save asks where.
+- **On a Mac the menus are in the menu bar**, built from Pikado's own menus with
+  their shortcuts, and the strip at the top of the window becomes its title bar.
+  Windows and Linux keep Pikado's menu bar in the window.
+- **Quitting with unsaved work asks first.** As in a browser, only when autosave
+  is not keeping that work.
+- **More memory to work with.** The memory budget defaults to a quarter of the
+  machine's memory, up to 4 GB, rather than the 512 MB a browser tab assumes.
+- **Updates.** The app asks GitHub for a newer release at launch and every six
+  hours, downloads it in the background and offers *Restart to update*.
+  *Preferences > General* turns the checks off; *Check for Updates…* asks by hand.
+  macOS only lets a signed app replace itself, so an unsigned Mac build links to
+  the release page instead.
+- **No service worker.** Everything ships inside the app.
+- **Its own storage.** The desktop app's autosaved projects are its own:
+  projects autosaved in a browser stay in that browser.
 
 ## Selecting the hard things
 
@@ -565,10 +603,12 @@ src/
   edit/        clipboard, fill & stroke
   commands/    command registry + every menu command
   io/          open/save, PSD read & write, SVG, GIF, HEIC, ICNS, native .pkd
-               format, IndexedDB store, session autosave, offline registration
+               format, IndexedDB store, session autosave, offline registration,
+               the desktop app's side of its bridge
   ui/          menubar, toolbar, options bar, panels, dialogs, canvas view,
                start screen, canvas context menu, brand
 public/        service worker, web manifest, install icons
+desktop/       the desktop app: Electron main process, preload bridge, packaging
 tests/         the regression suite (see below)
 ```
 
@@ -617,6 +657,9 @@ thing meaningless. The runner boots the genuine app off-screen first, so tool
 registration, panels and menus are exercised on the way in, then asserts against
 the live registries. It reports counts at the top of the page and leaves the full
 report on `window.__pikadoTests` for automation.
+
+The same suite runs inside the desktop app with `npm run desktop:test`, and the
+desktop app's own main-process code has unit tests: `npm run desktop:unit`.
 
 The assertions are about measurements, not smoke: exact pixel values, mean
 absolute difference between before and after, pixel counts, and timings with

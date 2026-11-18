@@ -30,3 +30,5 @@ scratch/
 .DS_Store
 .env
 .env.*
+# The Electron app is built separately (desktop/README.md).
+desktop
