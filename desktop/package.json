@@ -10,7 +10,7 @@
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/",
+    "test": "node --test \"test/*.test.cjs\"",
     "dist": "electron-builder --config electron-builder.config.cjs --publish never"
   },
   "dependencies": {

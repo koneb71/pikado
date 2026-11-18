@@ -59,7 +59,7 @@ jobs:
           npm --prefix desktop ci
 
       - name: Unit tests
-        run: node --test desktop/test/
+        run: npm run desktop:unit
 
       - name: Build the web app
         run: npm run build
